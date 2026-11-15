@@ -95,4 +95,37 @@ decode-side change does not show in it.
 
 ## W2/0.7 repeat
 
-Pending.
+Three more rounds, 2026-11-15: in each, one lane served the baseline and the other W2/0.7 (swapped
+every round), both ran 8k/1k as above and then the three accuracy sets (`../scripts/lockstep_ab.sh
+baseline:fly_w2_t0.7 fly_w2_t0.7:baseline baseline:fly_w2_t0.7`, summary `../scripts/ab_table.py`).
+
+8k/1k, mean over c32 / 64 / 128 against the 3 baselines of this repeat (35,832 / 45,550 / 54,971 total
+tok/s):
+
+| | total tok/s | TPOT mean | TPOT median | accept length (bench) | total tok/s, paired by round |
+|---|---|---|---|---|---|
+| W2/0.7, 3 runs | +1.4% (+0.5 .. +2.4) | −1.2% | +0.7% | +3.1% | +1.4% (+1.2 .. +1.7) |
+| earlier 3 runs (table above) | +2.8% (+2.5 .. +3.1) | −1.8% | −0.9% | +4.2% | |
+
+Accuracy, single runs (accept length in brackets):
+
+| run | gsm8k | gpqa_diamond | simple_qa |
+|---|---|---|---|
+| baseline, round 1 | 0.9719 (3.49) | 0.8990 (3.14) | 0.4431 (3.05) |
+| baseline, round 2 | 0.9697 (3.80) | 0.9343 (3.14) | 0.4438 (3.03) |
+| baseline, round 3 | 0.9682 (3.80) | 0.8990 (3.15) | 0.4538 (3.04) |
+| W2/0.7, round 1 | 0.9727 (3.99) | 0.9192 (3.34) | 0.4394 (3.21) |
+| W2/0.7, round 2 | 0.9757 (3.98) | 0.9091 (3.38) | 0.4422 (3.24) |
+| W2/0.7, round 3 | 0.9704 (3.98) | 0.9394 (3.36) | 0.4355 (3.23) |
+
+All W2/0.7 runs together (5 accuracy runs, 6 benchmark runs) against all baselines (8 accuracy runs):
+
+- simple_qa 0.4397 vs 0.4458: −0.61pp, standard error 0.17pp. Every W2/0.7 run (at most 0.4422) scored
+  below every baseline run (at least 0.4431): a small loss, but a real one; the first two runs alone
+  (−0.4pp) could not separate it from the noise.
+- gsm8k +0.17pp (s.e. 0.12pp), gpqa_diamond +1.1pp (s.e. 0.66pp): no loss.
+- Accept length on the three sets +5.9% (+6.3% with the round-1 baseline's gsm8k accept length of
+  3.49, an unexplained outlier against 3.76–3.81 in the other seven baseline runs).
+- 8k/1k total tok/s: +2.1% over the 6 runs (campaign means +2.8% and +1.4%, single runs +0.5 .. +3.1%),
+  TPOT mean −1.5%. The direction held in every run; the size moved by more than either campaign's own
+  spread, so quote it as about +1.5 to +3%.

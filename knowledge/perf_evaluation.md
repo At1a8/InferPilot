@@ -61,7 +61,9 @@ outputs never triggered it.
   and never put all the baselines in the first round (`feature_skills/fly-dspark`).
 - Two arms on one node: run them on disjoint GPU sets at the same time, swap them between the sets every
   round, and repeat ≥3 rounds. On DeepSeek-V4.1-Flash 8k/1k a single run is noisy (two runs of the same
-  baseline differed by 7.9% at concurrency 32); three runs per arm brought the mean to about ±0.5%
+  baseline differed by 7.9% at concurrency 32); three runs per arm bring a campaign's mean to about
+  ±0.5%, yet two such campaigns a day apart measured +2.8% and +1.4% for the same setting. A gain of a
+  few percent needs a repeat campaign and is quoted as a range
   (`feature_skills/fly-dspark/scripts/lockstep_ab.sh`).
 
 ## 4. Admission and capacity checks

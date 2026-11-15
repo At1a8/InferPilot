@@ -12,7 +12,7 @@ match:
 depends_on: ["vllm-project/vllm#53987", "vllm-project/vllm#66593"]   # FLy in vLLM; normalized entropy gate
 reference_pr: "sgl-project/sglang#50238"
 expects:
-  accuracy: "lossy by design: gsm8k and gpqa_diamond within noise; simple_qa loss grows with the deferral rate (W2/0.7 -0.4pp, W2/0.3 -1.9pp vs a 5-run baseline mean)"
+  accuracy: "lossy by design: gsm8k and gpqa_diamond within noise; simple_qa loss grows with the deferral rate (W2/0.7 -0.6pp over 5 runs, W2/0.3 -1.9pp)"
   long_context: "not claimed: FLy changes only the accept decision (G3 not run)"
   stability: "no crash or failed launch over every sweep server (G4 as a dedicated stress test not run)"
   perf: "8k/1k total tok/s +2.5..4% for W2, accept length +6..12% on the accuracy datasets; 100k/1k unchanged (prefill-bound)"
@@ -25,9 +25,9 @@ validation:
   measured:
     unit: "123 passed + 33 subtests: scripts/test_dspark_fly.py plus 7 DSPARK accept suites, on the merged tree"
     ci_gsm8k: "0.9674 at accept length 4.53 (threshold 0.91), test_deepseek_v41_flash_fly_eval_mi35x.py, W2/0.3"
-    accuracy_w2_t0.7: "gsm8k 0.9720 / gpqa_diamond 0.9192 / simple_qa 0.4407 (2 runs) vs baseline 0.9713 / 0.9101 / 0.4452 (5 runs)"
-    accept_w2_t0.7: "+6.0% averaged over gsm8k, gpqa_diamond and simple_qa"
-    perf_w2_t0.7: "8k/1k total tok/s +2.8% (3 runs x c32/64/128, range +2.5..+3.1) vs 6 baseline runs; TPOT mean -1.8%"
+    accuracy_w2_t0.7: "gsm8k 0.9725 / gpqa_diamond 0.9212 / simple_qa 0.4397 (5 runs) vs baseline 0.9708 / 0.9103 / 0.4458 (8 runs): simple_qa -0.61pp (s.e. 0.17pp; every W2/0.7 run below every baseline run)"
+    accept_w2_t0.7: "+5.9% averaged over gsm8k, gpqa_diamond and simple_qa (5 runs)"
+    perf_w2_t0.7: "8k/1k total tok/s +2.1% over 6 runs in two campaigns (campaign means +2.8% and +1.4%, single runs +0.5..+3.1), TPOT mean -1.5%"
     perf_100k: "every configuration within +-0.6% total tok/s at 100k/1k (single runs)"
   artifact: "sglang PR #50238, branch fangyuan/dspark_fly; tables in references/results.md"
 role: advisory_prior
@@ -184,7 +184,7 @@ over the three datasets; 8k is the mean change over 3 runs x c32/64/128 (W1 and 
 | W2/0.2 | −1.9pp | +12.3% | +4.1% |
 | W2/0.3 (vLLM's evaluation) | −1.9pp | +10.9% | +3.4% |
 | W2/0.5 | −0.9pp | +9.7% | +2.5% |
-| **W2/0.7** | **−0.4pp** | **+6.0%** | **+2.8%** |
+| **W2/0.7** | **−0.4pp** (all 5 runs: −0.6pp) | **+6.0%** | **+2.8%** (all 6 runs: +2.1%) |
 | W3/0.3 | −0.9pp | +6.1% | +1.8% |
 | W3/0.7 | +0.0pp | +2.4% | −0.2% |
 | W4/0.3 (vLLM's default at gamma 5) | +0.7pp | +2.1% | +0.1% |
@@ -195,8 +195,14 @@ over the three datasets; 8k is the mean change over 3 runs x c32/64/128 (W1 and 
   better than W2 at an equal cost.
 - gsm8k stayed within ±0.4pp and gpqa_diamond within its noise (±2pp) for every setting: only the
   recall-heavy set shows the loss.
-- Recommended: **W2/0.7**. More speed at about 1pp of simple_qa: W2/0.6 (+3.1%). Full tables, W1–W4 at
-  thresholds 0.2–0.7: `references/results.md`.
+- W2/0.7 was repeated (3 more rounds of both tests). Over 5 accuracy runs against 8 baselines its
+  simple_qa loss is −0.6pp (standard error 0.17pp; every W2/0.7 run scored below every baseline run);
+  over 6 benchmark runs in two campaigns its 8k gain is +2.1% (campaign means +2.8% and +1.4%); the
+  accept-length gain held at +5.9%.
+- Recommended: **W2/0.7** — about +1.5 to +3% 8k throughput and +6% accept length for a small but real
+  simple_qa loss (−0.6pp), gsm8k and gpqa unchanged. The settings without a measurable loss (W3/0.6,
+  W3/0.7, W4) gain at most +1.7%. More speed at about 1pp of simple_qa: W2/0.6 (+3.1%). Full tables,
+  W1–W4 at thresholds 0.2–0.7 and the repeat: `references/results.md`.
 
 ## Pitfalls
 

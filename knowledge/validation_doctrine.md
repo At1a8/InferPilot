@@ -24,7 +24,8 @@ Notes per gate:
 - **A lossy feature needs a recall set in G2.** Relaxed speculative verification (FLy) left gsm8k within
   ±0.4pp at every setting while simple_qa lost up to 3pp (`feature_skills/fly-dspark`). Add a
   knowledge-recall set, record the feature's own engagement number per dataset (accept length), and
-  compare with ≥3 baseline runs: one simple_qa run is good to about ±0.5pp.
+  compare with ≥3 baseline runs: one simple_qa run is good to about ±0.5pp, and a 0.6pp loss took 5
+  runs against 8 baselines to separate from the noise (two runs had called it noise).
 - **G3/G4 must be sized so the feature engages.** For a memory-tier feature that means total context
   well above the device pool (force eviction/demotion), and concurrency high enough that several engaged
   requests decode in the same batch. Log the engagement (e.g. demotion counters) and attach it.
