@@ -77,3 +77,22 @@ Format: symptom · reproduction · what was excluded · workaround · status.
 - **Workaround:** pass `--no-enable-decoder-swa-bounded-replay` to disable it; read `server_args=` to
   confirm any toggle.
 - **Status:** by design; listed because it silently invalidated one bisection experiment.
+
+## KI-006 — sglang main on ROCm (gfx950): unit tests that fail on main itself
+
+- **Symptom:** in `test/registered/`, on an untouched worktree of main (`1be399bd11`, 2026-11-14), one
+  GPU visible, one pytest process per file:
+  - `unit/server_args/test_server_args.py`: 4 subtests of `TestMuseSparkLaunchDefaults` (the
+    blackwell and hopper platform cases);
+  - `unit/spec/test_eagle_post_verify_graphs.py`: 4 (`test_forced_acceptance*`, `test_fused_accept_greedy`,
+    `test_greedy`);
+  - `unit/spec/test_verify_target_probs.py`: 2 (`test_matches_full_vocab_temperature[151936-top_ks5/6-True-cuda]`);
+  - `kernels/ops/speculative/test_draft_sampling.py`: 3; `kernels/ops/speculative/test_speculative_sampling.py`: 7;
+  - `unit/spec/test_dflash_mla.py`: the process aborts (`Fatal Python error: Aborted`) in
+    `test_matches_specforge_reference`, which also ends a combined pytest run of the directory;
+  - collection errors: `unit/spec/test_uno_tree_sparse_sampling.py`, `unit/spec/test_weight_update_runners.py`
+    (no `flashinfer` on ROCm), `kernels/ops/speculative/test_dspark_npu_dispatch.py`.
+- **Excluded:** a feature branch (FLy) showed the same failures with the same counts.
+- **Workaround:** run files one per process and judge a change only by failures the untouched worktree
+  does not have.
+- **Status:** open as of 2026-11-14.
