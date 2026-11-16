@@ -25,6 +25,9 @@
 
 ## Acceptance criteria
 
+<!-- The gates are the core of a feature's profile; the full matrix (every dimension, its rule, runs and
+     who confirms it) follows acceptance.md and ../knowledge/acceptance.md. -->
+
 | Gate | Suite | Threshold (relative to baseline in the same pattern) |
 |---|---|---|
 | G0 feature off | | identical to baseline |

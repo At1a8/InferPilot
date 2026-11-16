@@ -296,6 +296,7 @@ inferpilot/
 ├── knowledge/
 │   ├── dev_methodology.md   # 阶段、产物、门禁（契约）
 │   ├── validation_doctrine.md, debugging_playbook.md, perf_evaluation.md, env_hygiene.md, pr_playbook.md
+│   ├── acceptance.md        # 每类任务要验收什么、由谁确认
 │   ├── guardrails.md        # 安全约束与社区行为准则
 │   ├── reward_hacks.md      # 让数字变好却违背其本意的改动：怎么识别、用什么堵住
 │   ├── dispatch.md, issue_triage.md, ci_triage.md, system_perf.md, composability.md, kernel_backends.md
@@ -304,7 +305,7 @@ inferpilot/
 │   ├── kernels/aklr/skills.md, playbook.md   # AKLR 自带文档的索引；kernel 收益何时落到 AKLR
 │   └── feature_skills/      # 按特性整理的已验证方案（首个是 hisparse-v2）
 ├── templates/               # task_definition, feature_spec, design, experiment_ledger, validation_report,
-│                            # pr_body, issue_triage, ci_triage, perf_analysis, task_queue
+│                            # pr_body, issue_triage, ci_triage, perf_analysis, task_queue, acceptance
 ├── scripts/                 # 任务收集、审计、run_docker.sh、latest_image.py、run_lock.py、
 │                            # restore_owner.sh
 ├── inferpilot/bootstrap.py  # 第 3 步的配置脚本，在容器内运行；可以重复执行

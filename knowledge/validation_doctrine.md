@@ -5,6 +5,9 @@ pass rates mean little on a low-precision serving stack: the baseline itself has
 rate on long-context tests, so the question is always "does the feature change the failure rate or the
 failure kind beyond the measured noise?".
 
+Which of these gates a task needs, how its acceptance criteria are written and who confirms them:
+[`acceptance.md`](acceptance.md).
+
 ## Gates
 
 | Gate | What it shows | Typical suite |
