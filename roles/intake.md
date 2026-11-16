@@ -27,6 +27,10 @@ they win over anything you infer), `answers` (the user's replies to earlier ques
    - an issue or PR: fetch its title and state (`scripts/scan_issues.py --issue <n>` for issues).
    - `workload` and any target number: only what the request states or the user answers; never invent
      numbers.
+   - `server_script` and `client_script` (`task_definition.md` §1.1): the user's own scripts. Check that
+     each exists and is readable, and that the server script passes `$PORT` and `$EXTRA_ARGS` to the
+     server; say what is missing. Never write them for the user: a script you wrote is not the user's
+     baseline.
    - feature skills (feature mode): `python3 <inferpilot_dir>/scripts/find_skill.py "<request, task title>"`;
      list each candidate in `assumptions` as `feature skill candidate: <id> (<status>)`. The director
      makes the choice at Spec.

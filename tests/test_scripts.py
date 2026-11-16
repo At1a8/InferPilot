@@ -6,6 +6,8 @@ import io
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -227,6 +229,82 @@ class DailyReportTest(unittest.TestCase):
     def test_it_never_writes(self):
         src = (Path(__file__).resolve().parent.parent / "scripts" / "daily_report.py").read_text()
         self.assertNotRegex(src, r"method=|\"POST\"|\"PATCH\"|\"PUT\"|\"DELETE\"")
+
+
+@unittest.skipUnless(shutil.which("bash"), "needs bash")
+class EvalAccuracyTest(unittest.TestCase):
+    """scripts/eval_accuracy.sh against a fake server (curl) and a fake evalscope."""
+
+    SCRIPT = SCRIPTS / "eval_accuracy.sh"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        fake = self.tmp / "bin"
+        fake.mkdir()
+        self.calls = self.tmp / "evalscope_calls.txt"
+        # The server answers /models and /server_info; the judge probe (the call with -w) answers FAKE_JUDGE.
+        (fake / "curl").write_text(textwrap.dedent("""\
+            #!/bin/bash
+            url="${@: -1}"
+            case " $* " in *" -w "*) echo -n "${FAKE_JUDGE:-401}"; exit 0 ;; esac
+            case "$url" in
+              */v1/models) echo '{"data": [{"id": "fake-model"}]}' ;;
+              */server_info) echo '{"internal_states": [{"avg_spec_accept_length": 4.0}]}' ;;
+            esac
+            """))
+        (fake / "evalscope").write_text(textwrap.dedent("""\
+            #!/bin/bash
+            echo "$*" >> "$CALLS"
+            while [ $# -gt 0 ]; do
+              case "$1" in --work-dir) wd=$2; shift ;; --datasets) ds=$2; shift ;; esac
+              shift
+            done
+            mkdir -p "$wd/run/reports/fake-model"
+            echo '{"metrics": [{"name": "mean_acc", "score": 0.97, "num": 1319}]}' > "$wd/run/reports/fake-model/$ds.json"
+            """))
+        for f in fake.iterdir():
+            f.chmod(0o755)
+        self.env = {"PATH": "%s:/usr/bin:/bin" % fake, "HOME": str(self.tmp), "CALLS": str(self.calls),
+                    "API_URL": "http://fake:30010/v1", "RESULT_ROOT": str(self.tmp / "results")}
+
+    def run_script(self, *args, **env):
+        return subprocess.run(["bash", str(self.SCRIPT), *args], env={**self.env, **env},
+                              capture_output=True, text=True, timeout=60)
+
+    def test_parses_and_holds_no_secret(self):
+        self.assertEqual(subprocess.run(["bash", "-n", str(self.SCRIPT)]).returncode, 0)
+        text = self.SCRIPT.read_text()
+        self.assertIsNone(re.search(r"\b[0-9a-f]{32}\b", text), "a hex key in the script")
+        self.assertIsNone(re.search(r"hf_[A-Za-z0-9]{20,}", text), "a Hugging Face token in the script")
+        self.assertIsNone(re.search(r"(KEY|TOKEN|NTID):-[^}$]", text), "a key, token or user name as a default")
+
+    def test_gsm8k_once_by_default(self):
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        calls = [line for line in self.calls.read_text().splitlines() if line.startswith("eval ")]
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--datasets gsm8k", calls[0])
+        self.assertIn("--repeats 1", calls[0])
+        summary = (self.tmp / "results" / "summary.txt").read_text()
+        self.assertIn("eval gsm8k: accept_length=[4.0]", summary)
+        self.assertIn("'num': 1319", summary)
+
+    def test_a_judged_set_without_a_key_is_skipped(self):
+        r = self.run_script("simple_qa")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("needs an LLM judge", r.stderr)
+        self.assertFalse(self.calls.exists(), "evalscope ran without a judge")
+
+    def test_the_key_comes_from_the_environment_and_stays_out_of_the_results(self):
+        r = self.run_script("simple_qa", LLM_GATEWAY_KEY="key-from-env", JUDGE_NTID="someone", FAKE_JUDGE="200")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertIn("key-from-env", self.calls.read_text())
+        self.assertNotIn("key-from-env", r.stdout + r.stderr)
+        for f in (self.tmp / "results").rglob("*"):
+            if f.is_file():
+                self.assertNotIn("key-from-env", f.read_text(errors="replace"), f)
 
 
 def git(*args, cwd=None):

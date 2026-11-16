@@ -14,7 +14,7 @@ Which of these gates a task needs, how its acceptance criteria are written and w
 |---|---|---|
 | G0 feature off | the change is inert when disabled | baseline suites on the feature branch with the switch off |
 | G1 unit / oracle | each new kernel or data structure does what it claims | standalone tests vs a reference implementation, each able to fail: on the parent commit when the change alters behaviour, on a copy of the change broken in one way when it keeps behaviour (`reward_hacks.md` T1) |
-| G2 accuracy | short-context quality is unchanged | GSM8K (5-shot, greedy, full set or ≥200 sampled) |
+| G2 accuracy | short-context quality is unchanged | GSM8K, all 1319 questions, once per arm (`scripts/eval_accuracy.sh`); more suites or runs only when the task asks |
 | G3 long context | the feature's own data path is exercised and correct | needle-in-a-haystack: single and multi-needle |
 | G4 stability | no crash / hang / collapse under capacity pressure | many long prompts at high concurrency |
 | G5 performance | the claimed benefit exists, guards hold | see `perf_evaluation.md` |
@@ -96,7 +96,8 @@ A debugging check that reports a false positive costs as much as a missed bug.
 
 The `hisparse-v2` skill records concrete settings and expected numbers; in short:
 
-- **G2:** GSM8K 5-shot greedy, 1319 questions (or a fixed 200-question subset for quick loops).
+- **G2:** GSM8K, all 1319 questions, once, with `scripts/eval_accuracy.sh` (the `hisparse-v2` runs used 5-shot
+  greedy).
 - **G3:** NIAH single-needle and 8-needle prompts of ~30–37k tokens at concurrency 1, 8 and 16.
 - **G4:** 32 prompts × ~37k tokens, 8 needles, concurrency 32, `max_new_tokens` 120, fixed seed, on a
   device pool small enough to force the feature's memory path, plus the same-pattern baseline control.

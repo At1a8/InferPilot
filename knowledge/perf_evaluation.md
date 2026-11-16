@@ -16,6 +16,11 @@ A feature usually spends a resource to save another. Hold the scarce resource eq
 
 ## 2. Choose workloads on purpose
 
+The benchmark is the task's: its `client_script` and `workload` (`../templates/task_definition.md` §1.1),
+run unchanged, against servers started from its `server_script`. InferPilot never edits or retunes it.
+The table below is for the workloads a task lists beside it, and for choosing one with the user when a
+task has none. When the task lists no guard workload, the report says that none was measured.
+
 | Workload | Why |
 |---|---|
 | where the feature should help | e.g. long context, many concurrent requests, decode-heavy, capacity-bound |
@@ -29,6 +34,9 @@ outputs never triggered it.
 
 ## 3. Procedure
 
+- **Warm up a fresh container first.** Its first launch compiles kernels and runs slower, which once
+  spread one baseline over 9.6% at c32: one discarded launch and client run come before the first
+  measured round.
 - **Fix the benchmark before reading any profile.** The workload (cases, lengths, concurrency, budget)
   is set before the first trace and never changed after results are seen: no case dropped because the
   change loses there, no shape added because it wins there. A workload that must change restarts the
@@ -39,7 +47,8 @@ outputs never triggered it.
   different system; it is not evidence for or against the change.
 - **Hold out an operating point before claiming a win.** A gain counts only if it also holds where
   nobody tuned: the same workload with another seed (or another slice of a trace), at half the
-  concurrency (at least 1). It is fixed with the workload at Setup and measured like the claim; the
+  concurrency (at least 1), through `CONCURRENCY` when the client reads it; otherwise the report says no
+  held-out point was measured. It is fixed with the workload at Setup and measured like the claim; the
   change must still win beyond the noise band there, if not by as much. A gain that vanishes is fitted
   to the benchmark (`reward_hacks.md` P7), not evidence.
 - Check the measurement entries of [`reward_hacks.md`](reward_hacks.md) (P) on both arms before
