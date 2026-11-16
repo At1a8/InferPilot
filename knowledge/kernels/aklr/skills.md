@@ -5,17 +5,17 @@ vLLM through runtime plugins: a route replaces one framework function and dispat
 the call's workload has a qualifying kernel, and falls back to the framework's own code otherwise.
 AKLR is maintained by its own team, and it keeps its conventions in its repository: tutorials, the
 acceptance criteria, the PR template and agent skills under `harness/skills/`. They change with AKLR
-(AKLR #153 set one 5% kernel bar for admission and dispatch), so Petra **references them in place and
+(AKLR #153 set one 5% kernel bar for admission and dispatch), so InferPilot **references them in place and
 never copies them**: a role reads the file in a checkout of AKLR's latest `main`, and takes every
 threshold from there. Index checked against AKLR main `78496c03` (2026-11-16).
 
-What Petra adds on top — when a kernel gain belongs in AKLR at all, and what AKLR's reviewers have asked
+What InferPilot adds on top — when a kernel gain belongs in AKLR at all, and what AKLR's reviewers have asked
 of GEAK kernels — is in [`playbook.md`](playbook.md).
 
 ## Precedence
 
-1. `../../guardrails.md` and Petra's gates come first. AKLR's `aklr-open-pr` pushes, labels and opens
-   PRs: Petra reads it for what the PR must carry and stops before those steps; a human pushes and
+1. `../../guardrails.md` and InferPilot's gates come first. AKLR's `aklr-open-pr` pushes, labels and opens
+   PRs: InferPilot reads it for what the PR must carry and stops before those steps; a human pushes and
    opens the PR (as AKLR's own `harness/rules.md` rule 8 also says).
 2. Within those limits, AKLR's documents decide how a thing is done in AKLR: layout, names, thresholds,
    the PR body. Follow the version on AKLR's latest `main`.
@@ -36,6 +36,6 @@ Paths are relative to the AKLR checkout.
 | reviewer | review | `harness/skills/aklr-review-kernel-pr/SKILL.md`, `harness/skills/aklr-bad-cases/SKILL.md`, `harness/rules.md` | reviewing the AKLR branch as AKLR's maintainers would |
 | pr_engineer | pr | `.github/pull_request_template.md`, `harness/skills/aklr-open-pr/SKILL.md` | the PR body, title and the evidence each kind of change needs |
 
-Not used by Petra: `harness/skills/aklr-build-runtime-image`, `aklr-monitor-upstreams`,
+Not used by InferPilot: `harness/skills/aklr-build-runtime-image`, `aklr-monitor-upstreams`,
 `aklr-qualify-downstream`, `aklr-read-validation`, `aklr-kb`, `forge-loop-campaign`, `remote-gpu*`,
 `report-progress` (AKLR's own release and campaign work).

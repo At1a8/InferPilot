@@ -180,7 +180,7 @@ by which rule.
 
 ## Validation recipe
 
-All on the PR's head commit; Petra's own gates (`../../validation_doctrine.md`,
+All on the PR's head commit; InferPilot's own gates (`../../validation_doctrine.md`,
 `../../perf_evaluation.md`) still apply to the serving runs.
 
 1. `pre-commit run --all-files`, `pytest tests`, `python -m aklr export check`,
@@ -224,7 +224,7 @@ All on the PR's head commit; Petra's own gates (`../../validation_doctrine.md`,
 
 - Triage rules come from three reviews of one model's fusions; AKLR has not written them down. Confirm
   with AKLR's maintainers before relying on them for a different kind of change.
-- Petra's PR phase prepares framework PRs; for AKLR this playbook is advisory. The AKLR branch and body
+- InferPilot's PR phase prepares framework PRs; for AKLR this playbook is advisory. The AKLR branch and body
   are prepared by the roles that read it, not by a dedicated phase.
 - Validated so far only on SGLang routes; vLLM routes follow AKLR's `docs/vllm_plugin_tutorial.md`.
 
