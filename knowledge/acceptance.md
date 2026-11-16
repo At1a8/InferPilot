@@ -33,10 +33,10 @@ Two rules hold across the dimensions:
 
 - **Lossless changes** (a kernel swap, scheduling, parallelism, memory layout): greedy outputs match
   the baseline on a fixed prompt set, and every divergence is checked (a near-tie between the top
-  logits is acceptable, a systematic difference is not); GSM8K on all 1319 questions stays within the
-  baseline's noise.
-- **Lossy changes** (relaxed draft verification, quantization, sparse attention, KV compression): the
-  budget is declared before anything is measured — the suite, the metric and the largest acceptable
+  logits is acceptable, a systematic difference is not); GSM8K on all 1319 questions, one run per arm
+  (`scripts/eval_accuracy.sh`), at most 1 point below the baseline.
+- **Lossy changes** (relaxed draft verification, quantization, sparse attention, KV compression): GSM8K
+  as above by default; when the goal asks for more, the budget is declared before anything is measured — the suite, the metric and the largest acceptable
   loss. It includes at least one set that is sensitive to the loss: a recall-heavy set such as
   simple_qa for relaxed verification, a long-context set for KV compression. Run at least 3 times per
   arm, since a single run of such a set moves by about ±0.5 points (`feature_skills/fly-dspark`).
@@ -55,7 +55,7 @@ Two rules hold across the dimensions:
 - **Metrics:** total and output throughput; TTFT and TPOT, mean and P99; throughput within an SLA
   (requests per second that meet their TTFT and TPOT targets); memory and capacity (KV tokens, the
   concurrency the scheduler reached); startup time when the change touches loading or compilation.
-- **Gain items:** on the fixed target workload at an equal budget, the change wins beyond the noise
+- **Gain items:** on the task's own workload (its `client_script`, run unchanged) at an equal budget, the change wins beyond the noise
   band, and still wins at the held-out operating point (`perf_evaluation.md` §1, §3).
 - **Guard items:** workloads where the change should be neutral, or where it costs. The change stays
   inside the noise band (a decode-side change at 100k in / 1k out, where prefill sets the total), or its
@@ -144,7 +144,7 @@ Three items for FLy on DSPARK (`feature_skills/fly-dspark`), written in this for
 
 - **Noise band:** set from repeated baseline runs (their range, or the standard error of the mean) and
   stated next to every result.
-- **Runs:** failure rates at least 4 per configuration (`validation_doctrine.md`); performance at least
+- **Runs:** GSM8K once per arm by default; failure rates at least 4 per configuration (`validation_doctrine.md`); performance at least
   2 timed runs per arm after a warm-up, more when the spread is wide (`perf_evaluation.md` §3); a lossy
   accuracy budget at least 3 runs per arm; a flaky test passes in every one of at least 10 runs.
 - **Distribution tests** (a sampler or a lossless verification change): per tested prompt, compare the

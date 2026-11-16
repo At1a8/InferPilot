@@ -13,13 +13,16 @@ read from the task worktree.
 Inputs: `extra_gates` (mode gates such as `issue_repro` or `failing_test`), `round`, `known_issues`
 (failures already proven pre-existing in this run).
 
-1. Launch the feature build and the baseline with the run's launch script; confirm the effective flags
-   from the `server_args=` line of each log.
+1. Launch the feature build and the baseline with the task's `server_script` as Setup did (the feature
+   arm's flags in `EXTRA_ARGS`, each arm's tree on `PYTHONPATH`; the run's own launch script when the
+   task has none); confirm the effective flags from the `server_args=` line of each log.
 2. Run the gates the spec or the plan names, in this order, each against the baseline **in the same
    scheduling pattern**:
-   - G0 feature off; G2 accuracy; G3 long context sized so the feature engages; G4 stability under
-     capacity pressure. G3/G4 at two or more concurrencies, at least 4 runs each (6 when an
-     intermittent failure is being judged), fixed seeds, prefix cache flushed between runs.
+   - G0 feature off; G2 accuracy: GSM8K on all 1319 questions, once per arm, with
+     `<inferpilot_dir>/scripts/eval_accuracy.sh` (other suites or more runs only when `goal` or the
+     acceptance matrix asks); G3 long context sized so the feature engages; G4 stability under capacity
+     pressure. G3/G4 at two or more concurrencies, at least 4 runs each (6 when an intermittent failure
+     is being judged), fixed seeds, prefix cache flushed between runs.
    - Composability gates for every dimension the task touches (acceptance length for speculative
      decoding, accuracy bounds per KV dtype, PD transfer checks).
    - Every gate in `extra_gates`: `issue_repro` (the reproduction no longer fails), `failing_test`

@@ -1,10 +1,10 @@
 export const meta = {
   name: 'inferpilot',
   description: 'InferPilot: the framework agent for open-source LLM inference frameworks on AMD GPUs (sglang first). It turns one task (an upstream feature to bring to AMD, an AMD user issue, a red AMD CI job, a system-level performance gap) into a verified, reviewable pull request: correct first (independent unit gates, G0-G4 against a same-pattern baseline, an investigation loop with controls), then fast (equal-budget G5), within the community rules of knowledge/guardrails.md. mode=scan writes the day\'s report on the framework (the AMD CI on main, user issues by priority, upstream changes AMD needs to follow) and ranks the tasks in it, changing no code. InferPilot never pushes and never posts upstream: it prepares the branch, the PR body and the reply drafts for a human; the one thing it posts is the knowledge a run proved, as a pull request to its own repository for a human to merge; a scan\'s daily report is a local file for a human to share.',
-  whenToUse: 'Pass args.inferpilot_dir (absolute path of the InferPilot checkout, required) and the task, either as args.request (the user\'s words, any language; the Intake phase turns it into a task definition) or as the task-definition fields of templates/task_definition.md: args.mode (feature | issue | ci | perf | scan), args.task (the upstream PR or design, issue URL, CI job or tracker cluster, or performance goal), args.framework_dir (the framework checkout; for sglang the image\'s /sgl-workspace/sglang by default), args.model_path (required for feature and perf), args.workload (required for perf: the fixed benchmark every measurement uses), args.goal (what done means), args.framework (default sglang), args.platform, args.gpu_ids, args.container, args.apply_prs (perf), args.sources, args.since, args.upstream_repos and args.rescan (scan: a report from the last 24 hours makes the run ask before scanning again), args.image (the image a task must run on; by default the newest daily one, and another stops Setup to ask) and args.image_ok, args.stop_after (a phase title), args.resume_from="implement" with args.run_dir (feature: continue after a human approved design.md), args.kernel_backend (none | geak | command) with args.kernel_backend_dir (geak) or args.kernel_backend_command (command), args.kernel_budget. A definition that lacks something its mode needs returns status=needs_input with questions and starts nothing: answer them and run again with the same args plus args.answers ({"<field>": <value>}). Operator settings: args.exp_root, args.review_model (the reviewer\'s model, where the runtime takes one per call), args.max_fix_rounds, args.max_investigate_rounds, args.max_review_rounds, args.max_work_packages, args.agent_retries, args.agent_timeout_ms.',
+  whenToUse: 'Pass args.inferpilot_dir (absolute path of the InferPilot checkout, required) and the task, either as args.request (the user\'s words, any language; the Intake phase turns it into a task definition) or as the task-definition fields of templates/task_definition.md: args.mode (feature | issue | ci | perf | scan), args.task (the upstream PR or design, issue URL, CI job or tracker cluster, or performance goal), args.framework_dir (the framework checkout; for sglang the image\'s /sgl-workspace/sglang by default), args.model_path (required for feature and perf), args.workload (required for perf: the fixed benchmark every measurement uses), args.server_script (required for feature and perf: a script that starts the baseline server; InferPilot sets PORT, HIP_VISIBLE_DEVICES and PYTHONPATH, and EXTRA_ARGS carries the feature flags) and args.client_script (required for perf, and for a feature with a workload: runs the fixed workload against PORT and writes to OUT_DIR), args.goal (what done means), args.framework (default sglang), args.platform, args.gpu_ids, args.container, args.apply_prs (perf), args.sources, args.since, args.upstream_repos and args.rescan (scan: a report from the last 24 hours makes the run ask before scanning again), args.image (the image a task must run on; by default the newest daily one, and another stops Setup to ask) and args.image_ok, args.stop_after (a phase title), args.resume_from="implement" with args.run_dir (feature: continue after a human approved design.md), args.kernel_backend (none | geak | command) with args.kernel_backend_dir (geak) or args.kernel_backend_command (command), args.kernel_budget. A definition that lacks something its mode needs returns status=needs_input with questions and starts nothing: answer them and run again with the same args plus args.answers ({"<field>": <value>}). Operator settings: args.exp_root, args.review_model (the reviewer\'s model, where the runtime takes one per call), args.max_fix_rounds, args.max_investigate_rounds, args.max_review_rounds, args.max_work_packages, args.agent_retries, args.agent_timeout_ms.',
   phases: [
     { title: 'Intake', detail: 'intake: turn a request, or a definition with gaps, into a complete task definition; questions when something is missing' },
-    { title: 'Setup', detail: 'director: run dir, the task\'s branch in the framework checkout, launch scripts, baseline (not in scan)' },
+    { title: 'Setup', detail: 'director: run dir, the task\'s branch in the framework checkout, the server and client scripts, baseline (not in scan)' },
     { title: 'Spec', detail: 'director: feature_spec.md with measurable acceptance criteria [feature]' },
     { title: 'Recon', detail: 'analyst: code map and assumption table, gap type and level [feature]' },
     { title: 'Design', detail: 'architect: work packages, invariants, memory budget, startup rejections [feature]' },
@@ -89,7 +89,7 @@ const strs = arr(str);
 // stay outside it.
 // ---------------------------------------------------------------------------
 const TASK_KEYS = ['mode', 'task', 'goal', 'framework', 'framework_dir', 'model_path', 'platform', 'gpu_ids',
-  'container', 'workload', 'apply_prs', 'sources', 'since', 'stop_after', 'resume_from', 'run_dir',
+  'container', 'workload', 'server_script', 'client_script', 'apply_prs', 'sources', 'since', 'stop_after', 'resume_from', 'run_dir',
   'kernel_backend', 'kernel_backend_dir', 'kernel_backend_command', 'kernel_budget', 'rescan', 'upstream_repos',
   'image', 'image_ok'];
 // '' is accepted for the enums so an undecided field costs no schema retry; pick() drops it.
@@ -104,6 +104,8 @@ const TASK_DEF = S({
   gpu_ids: str,
   container: str,
   workload: { type: ['object', 'string'] },
+  server_script: str,
+  client_script: str,
   apply_prs: strs,
   sources: strs,
   since: str,
@@ -171,6 +173,14 @@ function missingFields(a) {
   if (mode === 'perf' && !a.workload) {
     ask('workload', 'Which fixed workload should every measurement use (input/output lengths, concurrency, dataset)?',
       'performance numbers count only on a workload fixed before any profile is read');
+  }
+  if ((mode === 'feature' || mode === 'perf') && !a.server_script) {
+    ask('server_script', 'Which script starts the server for the baseline (absolute path)? It must pass --port $PORT and $EXTRA_ARGS to the server.',
+      'every arm, baseline and feature, is launched with it: the feature arm adds its flags through EXTRA_ARGS');
+  }
+  if ((mode === 'perf' || (mode === 'feature' && a.workload)) && !a.client_script) {
+    ask('client_script', 'Which script runs the workload against the server (absolute path)? It reads PORT and writes its logs to OUT_DIR.',
+      'it is the benchmark: every performance measurement runs it unchanged');
   }
   const kb = String(a.kernel_backend || 'none').trim().toLowerCase();
   if (!KERNEL_BACKENDS.includes(kb)) {
@@ -269,6 +279,8 @@ const C = {
   gpu_ids: String(A.gpu_ids || ''),
   container: String(A.container || ''),
   workload: A.workload ? (typeof A.workload === 'string' ? A.workload : JSON.stringify(A.workload)) : '',
+  server_script: String(A.server_script || ''),
+  client_script: String(A.client_script || ''),
   goal: String(A.goal || ''),
   assumptions: START.assumptions || [],
   kernel_backend: KERNEL_BACKEND,

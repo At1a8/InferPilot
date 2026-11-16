@@ -60,27 +60,37 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
    process and no memory in use, as many as the task needs (`env_hygiene.md`). Every later role uses
    exactly these, through `HIP_VISIBLE_DEVICES`. Servers, tests and benchmarks run where InferPilot runs,
    normally inside the container. When `container` is set (InferPilot on the host), run them with
-   `docker exec <container> ...` and check the worktree is visible there at the same path. Write one
-   launch script with a mode switch (baseline / feature) and a tag; one log per launch,
-   `RUN_DIR/logs/<tag>_<time>.log` with the same UTC time; poll the health endpoint; read the effective
-   `server_args=` line.
-   - The launch script and every test command put the tree they run first on `PYTHONPATH` (sglang:
-     `<tree>/python`): the worktree for the feature mode, `RUN_DIR/base` for the baseline mode when there
+   `docker exec <container> ...` and check the worktree is visible there at the same path. Every server
+   is started from the task's `server_script` (`task_definition.md` §1.1; copy it and `client_script`
+   to `RUN_DIR/scripts/` for the record): `PORT=<port> HIP_VISIBLE_DEVICES=<gpus>
+   PYTHONPATH=<tree>/python EXTRA_ARGS='<the feature flags, empty for the baseline>' bash <server_script>`,
+   in the background, one log per launch, `RUN_DIR/logs/<tag>_<time>.log` with the same UTC time; poll
+   the health endpoint; read the effective `server_args=` line. A task without a `server_script` (issue,
+   ci) gets one launch script written by you, with the same variables.
+   - The server and every test command put the tree they run first on `PYTHONPATH` (sglang:
+     `<tree>/python`): the worktree for the feature arm, `RUN_DIR/base` for the baseline arm when there
      is one. The first log shows `sglang.__file__` inside that tree (`env_hygiene.md`, *The code under
      test*).
+   - A script that ignores `PORT`, `EXTRA_ARGS` or the tree on `PYTHONPATH` fails the baseline, with
+     what to change in `baseline`: never edit the user's script.
    - Record the image and what the check before step 0 found (an older image the user accepted
      goes in `notes`), the version of the image's own sglang (`pip show sglang`) and the worktree's
      base commit.
    - An image too old for the worktree (sgl-kernel or aiter rejected at import or startup) fails the
      baseline; `baseline` names the newer image to start a container from.
 4. **Baseline.**
-   - `feature`, `perf`: run each suite the task will need once per configuration, at least twice, and
-     record the spread (`validation_doctrine.md`). The baseline passes when repeat runs agree within the
-     recorded spread.
-   - `perf`: `workload` is the task's fixed benchmark. Record it in `RUN_DIR/run.json` as given; every
-     later measurement uses it unchanged, and the baseline runs exactly it. Record its held-out
-     operating point next to it (`perf_evaluation.md` §3: another seed or trace slice, half the
-     concurrency), before any number is seen.
+   - First, one discarded warm-up per GPU set: a launch and a short run of the client, so the first
+     launch in a fresh container, which compiles kernels and is slower, is not measured.
+   - `feature`, `perf`: accuracy is GSM8K on all 1319 questions, once
+     (`API_URL=http://127.0.0.1:<port>/v1 TAG=baseline RESULT_ROOT=RUN_DIR/accuracy
+     bash <inferpilot_dir>/scripts/eval_accuracy.sh`); other suites or more runs only when `goal` asks.
+     Performance is the task's `client_script` with `OUT_DIR=RUN_DIR/bench/<tag>`, at least twice, and
+     the spread recorded (`validation_doctrine.md`). The baseline passes when repeat runs agree within
+     the recorded spread.
+   - `perf`, and a feature with a workload: the `client_script` and `workload` are the task's fixed
+     benchmark. Record them in `RUN_DIR/run.json` as given; every later measurement runs them unchanged.
+     Record the held-out operating point next to them (`perf_evaluation.md` §3: half the concurrency,
+     when the client reads `CONCURRENCY`), before any number is seen.
    - `issue`, `ci`: prepare the environment the reproduction needs; run a baseline only if the task
      needs one now. Report `baseline_status: "skip"` with the reason otherwise.
 5. **Artifact:** the environment and baseline sections of `RUN_DIR/experiment_ledger.md`

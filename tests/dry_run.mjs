@@ -123,8 +123,8 @@ async function run(args, overrides) {
     },
   });
   const modeDefaults = {
-    feature: { model_path: '/models/m' },
-    perf: { model_path: '/models/m', workload: '{"isl":8192,"osl":1024,"conc":64}' },
+    feature: { model_path: '/models/m', server_script: '/s/server.sh' },
+    perf: { model_path: '/models/m', workload: '{"isl":8192,"osl":1024,"conc":64}', server_script: '/s/server.sh', client_script: '/s/client.sh' },
   }[args.mode] || {};
   const result = await rt.runScript(SCRIPT, { inferpilot_dir: INFERPILOT, framework_dir: '/tmp/sglang', agent_retries: 1, ...modeDefaults, ...args }, 0);
   return { result, phases, calls, keys: calls.map((c) => c.key) };
@@ -684,6 +684,13 @@ const scenarios = [
     check(asks(await run({ mode: 'perf', task: 'p', workload: '' }), 'workload'), 'perf without a workload asked');
     check(asks(await run({ mode: 'perf', task: 'p', model_path: '' }), 'model_path'), 'perf without a model asked');
     check(asks(await run({ mode: 'feature', task: 't', model_path: '' }), 'model_path'), 'feature without a model asked');
+    check(asks(await run({ mode: 'feature', task: 't', server_script: '' }), 'server_script'), 'feature without a server script asked');
+    check(asks(await run({ mode: 'perf', task: 'p', client_script: '' }), 'client_script'), 'perf without a client script asked');
+    check(asks(await run({ mode: 'feature', task: 't', workload: '{"isl":8000}' }), 'client_script'), 'a feature with a workload but no client script asked');
+    const plain = await run({ mode: 'feature', task: 't' });
+    check(!asks(plain, 'client_script'), 'a feature without a workload needs no client script');
+    const setupIns = plain.calls.find((c) => c.key === 'director:setup');
+    check(setupIns && setupIns.ins.server_script === '/s/server.sh', 'the server script reaches the roles');
   }],
   ['perf: a profile of the wrong path stops before any plan', async () => {
     const r = await run({ mode: 'perf', task: 'p' }, {
@@ -756,7 +763,8 @@ const scenarios = [
     const r = await run({ request: 'DeepSeek-V4.1 在 MI355X 上 decode 太慢，8k 输入 1k 输出 64 并发，目标提升 5%', framework_dir: '' }, {
       'intake:define': () => ({ status: 'ready', summary: 'perf task',
         task_def: { mode: 'perf', task: 'DeepSeek-V4.1 decode throughput on MI355X', goal: '+5% output tok/s at c64',
-          framework_dir: '/tmp/sglang', model_path: '/models/dsv41', workload: { isl: 8192, osl: 1024, conc: 64 } },
+          framework_dir: '/tmp/sglang', model_path: '/models/dsv41', workload: { isl: 8192, osl: 1024, conc: 64 },
+          server_script: '/s/server.sh', client_script: '/s/client.sh' },
         provenance: { mode: 'inferred', workload: 'inferred', gpu_ids: 'default' }, assumptions: ['Setup picks free GPUs'], questions: [] }),
     });
     check(r.result.status === 'ready_for_review' && r.phases[0] === 'Intake' && r.phases[1] === 'Setup', `${r.result.status}: ${r.phases}`);
@@ -772,8 +780,8 @@ const scenarios = [
   }],
   ['intake: missing information comes back as questions, and answers continue the task', async () => {
     const intake = { 'intake:define': (ins) => (ins.answers && ins.answers.workload
-      ? { status: 'ready', task_def: { mode: 'perf', task: 'p', framework_dir: '/tmp/sglang', model_path: '/models/m', workload: ins.answers.workload }, questions: [] }
-      : { status: 'needs_input', task_def: { mode: 'perf', task: 'p', framework_dir: '/tmp/sglang', model_path: '/models/m' },
+      ? { status: 'ready', task_def: { mode: 'perf', task: 'p', framework_dir: '/tmp/sglang', model_path: '/models/m', workload: ins.answers.workload, server_script: '/s/server.sh', client_script: '/s/client.sh' }, questions: [] }
+      : { status: 'needs_input', task_def: { mode: 'perf', task: 'p', framework_dir: '/tmp/sglang', model_path: '/models/m', server_script: '/s/server.sh', client_script: '/s/client.sh' },
         questions: [{ field: 'workload', question: 'Which workload?', why: 'fixed before profiling', default: '{"isl":8192}' }] }) };
     const first = await run({ request: 'make it faster' }, intake);
     check(asks(first, 'workload') && first.result.next.includes('answers='), `first: ${JSON.stringify(first.result.questions)}`);

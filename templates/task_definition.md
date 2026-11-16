@@ -14,6 +14,8 @@ of it.
 | `framework_dir` | the framework checkout each task works in, on its own branch from the current main (absolute path; for sglang the image's `/sgl-workspace/sglang` when not given, which the image installs sglang from) | required | required | required | required | the upstream scan reads it |
 | `model_path` | the model the baseline and the gates run | required | recommended: the reporter's model | — | required | — |
 | `workload` | the fixed benchmark, e.g. `{"isl": 8192, "osl": 1024, "conc": 64}` | when the task claims a gain | for a performance issue | — | required | — |
+| `server_script` | the user's script that starts one server for `model_path` (§1.1) | required | recommended | — | required | — |
+| `client_script` | the user's script that runs the fixed workload against that server (§1.1) | when a workload is given | for a performance issue | — | required | — |
 | `goal` | what done means, measurable when the mode measures | recommended | — | — | recommended | — |
 | `framework` | default `sglang` | | | | | |
 | `platform`, `gpu_ids`, `container` | target and environment; empty `gpu_ids` lets Setup pick free GPUs | | | | | |
@@ -26,6 +28,36 @@ of it.
 `inferpilot.js` checks the required fields (and a back end's own field) for every definition; one that
 lacks something returns `needs_input` and starts nothing. The intake asks for the recommended fields
 when the likely path of the task needs them.
+
+### 1.1 Server and client scripts
+
+A task that measures accuracy or performance brings the scripts that run its baseline, so every arm is
+launched and measured the way the user runs the model, not the way an agent guessed.
+
+- **`server_script`** starts one server in the foreground. InferPilot runs it with `PORT`,
+  `HIP_VISIBLE_DEVICES`, `PYTHONPATH` (the tree under test) and `EXTRA_ARGS` (the feature's flags; empty
+  for the baseline) set. The script passes `--port $PORT` and `$EXTRA_ARGS` to the server and sets
+  neither `HIP_VISIBLE_DEVICES` nor `PYTHONPATH` itself.
+- **`client_script`** runs the fixed workload against `PORT` and writes its logs to `OUT_DIR`. It is the
+  benchmark: InferPilot runs it unchanged and never edits it. If it reads `CONCURRENCY` (a
+  space-separated list), the held-out point can be measured at half the concurrency.
+- **Accuracy** needs no client of the user's: InferPilot's `scripts/eval_accuracy.sh` measures GSM8K on
+  all 1319 questions, once, by default; a task that needs other suites or more runs says so in `goal`.
+
+```bash
+# server.sh
+sglang serve --trust-remote-code --model-path /models/DeepSeek-V4.1-Flash --tp 4 --ep-size 4 \
+  --speculative-algorithm DSPARK --speculative-dspark-block-size 5 --port "$PORT" $EXTRA_ARGS
+```
+
+```bash
+# client.sh
+for c in ${CONCURRENCY:-32 64 128}; do
+  python3 -m sglang.benchmark.serving --port "$PORT" --dataset-name random \
+    --random-input-len 8000 --random-output-len 1000 --random-range-ratio 1 --max-concurrency "$c" \
+    --num-prompts $((4 * c)) --warmup-requests $((2 * c)) --flush-cache > "$OUT_DIR/bench_c$c.log" 2>&1
+done
+```
 
 ## 2. Telling the modes apart
 
@@ -42,7 +74,8 @@ when the likely path of the task needs them.
 ```json
 {"mode": "feature", "task": "https://github.com/sgl-project/sglang/pull/<n>",
  "goal": "the feature passes G0–G5 on DeepSeek-V4.1 at TP4",
- "model_path": "/mnt/models/DeepSeek-V4.1-Flash", "gpu_ids": "0-3"}
+ "model_path": "/mnt/models/DeepSeek-V4.1-Flash", "gpu_ids": "0-3",
+ "server_script": "/workspace/scripts/server.sh"}
 ```
 
 ```json
@@ -57,7 +90,8 @@ when the likely path of the task needs them.
 ```json
 {"mode": "perf", "task": "DeepSeek-V4.1 decode throughput on MI355X",
  "goal": "+5% output tok/s at equal memory, guards unchanged",
- "model_path": "/mnt/models/DeepSeek-V4.1-Flash", "workload": {"isl": 8192, "osl": 1024, "conc": 64}}
+ "model_path": "/mnt/models/DeepSeek-V4.1-Flash", "workload": {"isl": 8192, "osl": 1024, "conc": 64},
+ "server_script": "/workspace/scripts/server.sh", "client_script": "/workspace/scripts/client.sh"}
 ```
 
 ```json
