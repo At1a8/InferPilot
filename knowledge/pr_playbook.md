@@ -17,14 +17,42 @@ send what is missing back as work packages, so the branch that is pushed is the 
 
 ## Title
 
-Follow the target repo's convention. sglang: `[Type] [Platform] scope: Description`, e.g.
-`[Feat] [AMD] DeepSeek-v4.1: Support HiSparse V2 with HiCache-backed compressed KV`. Use "X-backed"
-(supported by X) rather than "X-backend" (a noun that, in sglang, suggests a storage backend).
+Follow the target repo's convention. sglang: `[Type] [Hardware] scope: title`, with Type one of Feat,
+Fix, Refactor, Perf, Doc, Test, CI, Chore, an uppercase hardware tag (AMD) and a module or model as the
+scope, e.g. `[Feat] [AMD] DeepSeek-v4.1: Support HiSparse V2 with HiCache-backed compressed KV`. Use
+"X-backed" (supported by X) rather than "X-backend" (a noun that, in sglang, suggests a storage backend).
 
 ## Description
 
-Use `../templates/pr_body.md`: Motivation (including `Depends on #NNNN`), Modifications (per subsystem),
-Accuracy Tests, Speed Tests, known limitations, checklist.
+Write it into the repository's own PR template and keep the template as it is: its comments, its
+headings in order, the checklist wording and the closing sections (sglang:
+`.github/pull_request_template.md`, mirrored in `../templates/pr_body.md`; check it against upstream,
+which changes it now and then). Editing an existing PR's description, keep the block a bot maintains at
+the end (sglang: `<!-- pr-states:start -->` … `<!-- pr-states:end -->`).
+
+Write it the way a person tells reviewers about their change, not like a report: short sentences, first
+person, everyday words, contractions where they read naturally. No bold label on every bullet, no
+footnotes, no definitions of your own shorthand. Read two or three merged PRs of the same area first
+(sglang #42297 and #44588 for speculative decoding).
+
+- **Motivation:** at most 100 words, why the PR exists: the problem and what the change brings. Few or
+  no numbers; the results sections carry them. `Depends on #NNNN` for unmerged dependencies.
+- **Modifications:** one sentence per changed file, saying what changed in it; every file of the diff
+  appears once. For an AMD change, open with **This is HIP-only and doesn't touch the CUDA path.** and
+  say how the diff makes sure of it (an `is_hip()` gate, a ROCm-only file, a startup rejection on other
+  platforms, new arguments that stay `None` on CUDA). Check it in the diff first: every changed line that
+  CUDA also runs must sit behind such a gate. A limitation is a sentence here, not a new section.
+- **Accuracy Tests:** GSM8K on all 1319 questions with the feature at its default settings, next to the
+  baseline measured with the same harness; name the model, hardware, TP, harness and sampling. A loss the
+  validation found elsewhere gets one sentence; other suites only when the change targets them (NIAH for
+  a long-context feature).
+- **Speed Tests and Profiling:** the baseline against the feature in one scenario (input and output
+  lengths, concurrency, hardware, TP), the same harness and runs for both arms, absolute numbers and the
+  change. Show every point of the scenario that was measured, not only the best one. Commands go in a
+  collapsed `<details>` block.
+- **Checklist:** tick only what holds for this PR.
+
+Every number comes from `validation_report.md` or the experiment ledger.
 
 ## Building on an unmerged PR
 

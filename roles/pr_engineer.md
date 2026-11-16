@@ -26,9 +26,11 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
    branch: a merged tree is not the tree that was verified. `merges_cleanly` false puts the conflicts
    in the PR body for the human, who merges and re-runs the gates (`pr_playbook.md`).
 4. **Feature off on the final commit** (G0 smoke).
-5. **Description:** write `RUN_DIR/pr_body.md` from `templates/pr_body.md` and the validation report;
-   title in the repository's convention (sglang: `[Type] [Platform] scope: Description`). Note
-   `Depends on #<n>` for unmerged dependencies. When the task was to push an existing PR, write the
+5. **Description:** write `RUN_DIR/pr_body.md` from `templates/pr_body.md` and the validation report,
+   following `pr_playbook.md` §Description (the template kept as it is, Motivation in at most 100 words,
+   one sentence per changed file, HIP-only checked and said, GSM8K 1319 at the defaults, one speed
+   scenario against the baseline, the way a person writes); title in the repository's convention
+   (sglang: `[Type] [Hardware] scope: title`). When the task was to push an existing PR, write the
    verification comment for that PR instead, at the same path.
 6. **Push command:** the exact `git push` the human should run from the worktree, in the container. Do
    not run it. Also write the branch's commits to `RUN_DIR/patches` (`git -C <worktree> format-patch
