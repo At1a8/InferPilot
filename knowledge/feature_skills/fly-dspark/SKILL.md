@@ -5,7 +5,7 @@ kind: feature_skill
 authors: [At1a8]
 match:
   framework: sglang
-  framework_ref: 4e85e85498          # PR branch with the W2/0.5 defaults (Nov 2026); sweeps measured on ed3831842a (main 410e64bb84)
+  framework_ref: 58241600c5          # PR head: the W2/0.5 defaults (4e85e85498) merged with main 55ceff1114 (Nov 2026); sweeps measured on ed3831842a (main 410e64bb84)
   feature: fly_speculative_verification
   model_arch: [deepseek_v4]          # DeepSeek-V4.1-Flash with its bundled DSPARK block drafter
   platforms: [rocm-gfx950]

@@ -86,6 +86,8 @@ Format: symptom · reproduction · what was excluded · workaround · status.
     blackwell and hopper platform cases);
   - `unit/spec/test_eagle_post_verify_graphs.py`: 4 (`test_forced_acceptance*`, `test_fused_accept_greedy`,
     `test_greedy`);
+  - `unit/spec/test_eagle_draft_sampling.py`: 2 (`ValueError: Pointer argument ... cannot be accessed
+    from Triton (cpu tensor?)`), seen on main `552e16968b` (2026-11-16);
   - `unit/spec/test_verify_target_probs.py`: 2 (`test_matches_full_vocab_temperature[151936-top_ks5/6-True-cuda]`);
   - `kernels/ops/speculative/test_draft_sampling.py`: 3; `kernels/ops/speculative/test_speculative_sampling.py`: 7;
   - `unit/spec/test_dflash_mla.py`: the process aborts (`Fatal Python error: Aborted`) in
