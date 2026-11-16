@@ -1,52 +1,68 @@
-<!-- PR description template (sglang layout). Title: `[Type] [Platform] scope: Description`, see
-     ../knowledge/pr_playbook.md. Fill from validation_report.md; keep every number traceable. -->
+<!-- Thank you for your contribution! Please follow these guidelines to enhance your pull request. If anything is unclear, submit your PR and reach out to maintainers for assistance. Join our Slack community at https://slack.sglang.io to discuss further. -->
+
+<!-- PR title: [Type] scope: title, or [Type] [Hardware] scope: title.
+Type: Feat, Fix, Refactor, Perf, Doc, Test, CI, or Chore.
+Scope: any module or model name (no fixed list or letter-case restriction), e.g. attention, qwen3, or flash-attn.
+Hardware: optional single tag without spaces. Use uppercase hardware tags (AMD, NVIDIA, NPU, MI300X), except for exactly these four spellings: Intel, Apple, Huawei, Ascend.
+Title: no letter-case restriction.
+Reverts: use GitHub's default title, Revert "original title".
+Examples: [Fix] attention: Fix KV cache indexing; [Perf] [AMD] flash-attn: Optimize decode performance. -->
 
 ## Motivation
 
-<!-- The user-visible problem and what the feature changes. -->
+<!-- Describe the purpose and goals of this pull request. -->
 
-Depends on #<NNNN> <!-- unmerged PRs this branch builds on; say which commits are theirs -->
+<Why this PR exists, in at most 100 words: the problem and what the change brings. Few or no numbers.>
+
+<Depends on #NNNN, when the branch builds on unmerged PRs; else delete this line.>
 
 ## Modifications
 
-<!-- One bullet group per subsystem: kernel, memory pools / budget, scheduler / admission, prefix cache,
-     attention backend, startup validation. Name the files. -->
+<!-- Detail the changes made in this pull request. -->
 
-- **Kernel:**
-- **Memory pools:**
-- **Scheduler / admission:**
-- **Prefix cache:**
-- **Attention backend:**
-- **Startup validation:** requires … ; rejects …
+<For an AMD change: **This is HIP-only and doesn't touch the CUDA path.** Then how the diff makes sure of it.>
+
+- `<path>`: <what changed in this file, in one sentence>
 
 ## Accuracy Tests
 
-| Suite | Baseline | This PR | Notes |
-|---|---|---|---|
-| GSM8K (<n> questions) | | | |
-| NIAH single-needle (<prompts> × <tokens>, c<k>) | | | |
-| NIAH multi-needle | | | |
-| Kernel unit test | | | |
+<!-- If this pull request affects model outputs (e.g., changes to the kernel or model forward code), provide accuracy test results. -->
 
-<!-- Say which suites actually engage the feature, and which pre-existing failures were seen on baseline
-     in the same pattern (link issues). -->
+<GSM8K on all 1319 questions with the feature at its defaults: model, hardware, TP, harness and sampling in one or two sentences.>
+
+| GSM8K (1319 questions) | Baseline | <feature> (defaults) |
+|---|---:|---:|
+| Accuracy | | |
 
 ## Speed Tests and Profiling
 
-<!-- Workload, equal budget, both arms, runs. -->
+<!-- If this pull request impacts inference speed, provide benchmarking and profiling results. -->
 
-| Workload | Reference | This PR | Delta |
-|---|---|---|---|
-| | | | |
+<The scenario in one or two sentences: input / output lengths, concurrency, hardware, TP, runs per arm.>
 
-## Limitations
+| <scenario> | Baseline | <feature> | Change |
+|---|---:|---:|---:|
+| Total throughput (tok/s) | | | |
 
-<!-- Unsupported combinations, platforms, known gaps. -->
+<details>
+<summary>Commands</summary>
+
+<server and benchmark commands for both arms>
+
+</details>
 
 ## Checklist
 
-- [ ] Format the code with `pre-commit run --all-files`
-- [ ] Add unit tests (registered for CI)
-- [ ] Update documentation
-- [ ] Provide accuracy and speed results
-- [ ] Feature-off behaviour unchanged
+- [ ] Format your code according to the [Format code with pre-commit](https://docs.sglang.io/developer_guide/contribution_guide.html#format-code-with-pre-commit).
+- [ ] Add unit tests according to the [Run and add unit tests](https://docs.sglang.io/developer_guide/contribution_guide.html#run-and-add-unit-tests).
+- [ ] Update documentation according to [Write documentations](https://docs.sglang.io/developer_guide/contribution_guide.html#write-documentations).
+- [ ] Provide accuracy and speed benchmark results according to [Test the accuracy](https://docs.sglang.io/developer_guide/contribution_guide.html#test-the-accuracy) and [Benchmark the speed](https://docs.sglang.io/developer_guide/contribution_guide.html#benchmark-the-speed).
+- [ ] Follow the SGLang code style [guidance](https://docs.sglang.io/developer_guide/contribution_guide.html#code-style-guidance).
+
+## Review and Merge Process
+
+1. Ping Merge Oncalls to start the process. See the [PR Merge Process](https://github.com/sgl-project/sglang/blob/main/.github/MAINTAINER.md#pull-request-merge-process).
+2. Get approvals from [CODEOWNERS](https://github.com/sgl-project/sglang/blob/main/.github/CODEOWNERS) and other reviewers.
+3. Trigger CI tests with [comments](https://docs.sglang.io/developer_guide/contribution_guide.html#how-to-trigger-ci-tests) or contact authorized users to do so.
+   - Common commands include `/tag-and-rerun-ci`, `/tag-run-ci-label`, `/rerun-failed-ci`
+4. After green CI and required approvals, ask Merge Oncalls or people with Write permission to merge the PR.
