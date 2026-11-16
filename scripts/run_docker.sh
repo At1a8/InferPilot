@@ -15,7 +15,8 @@
 # it, /workspace as it was left, and says so when its image is no longer the newest daily one (tasks there
 # stop at Setup to ask). A new task gets a new container under another NAME; `docker rm -f <name>`
 # removes one you are done with, and its /workspace with it. Your Claude Code, its state and your keys
-# stay in your home on the host, mounted at the same path and named in PETRA_HOST_HOME. Run README step
+# stay in your home on the host, mounted at the same path and named in PETRA_HOST_HOME, which the shell
+# it opens in an existing container gets too, also in one this script did not start. Run README step
 # 3 once in every new container.
 #
 # The host's Docker socket is not mounted by default: Petra's agents run as root with permissions
@@ -51,7 +52,7 @@ if OLD=$($SUDO docker inspect -f '{{.Config.Image}}' "$NAME" 2>/dev/null); then
                 "which deletes its /workspace)" >&2 ;;
   esac
   $SUDO docker start "$NAME" >/dev/null || exit 1
-  exec $SUDO docker exec -it -w /workspace "$NAME" bash
+  exec $SUDO docker exec -it -w /workspace -e PETRA_HOST_HOME="$HOST_HOME" -e PETRA_CONTAINER="$NAME" "$NAME" bash
 fi
 
 if [ -z "$IMAGE" ]; then

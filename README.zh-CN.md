@@ -105,7 +105,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/Petra/main/scripts/run
 
 - **镜像。** 任务要在最新的 sglang 上测试，所以默认使用 ROCm 10、MI35x 下最新的每日 `rocm/sgl-dev` 镜像（[`scripts/latest_image.py`](scripts/latest_image.py)，例如 `v0.5.23-rocm10-mi35x-20261103`；同一页面上的 `miles` 镜像用于强化学习，会被跳过）。每天的新镜像在第一次使用时拉取，约 43 GB。MI30x 设置 `IMAGE_VARIANT=rocm10-mi30x`；要固定镜像，设置 `IMAGE=rocm/sgl-dev:<tag>`。容器一直使用它启动时的镜像：回到一个镜像已经不是最新每日镜像的容器时，run_docker.sh 会提醒；在里面跑任务，会在 Setup 阶段、创建任何东西之前停下来，问你是否仍在这个镜像上运行（`image_ok`），除非任务指定的就是这个镜像（`image`）。scan 会照常进行，并在日报里写明所用的镜像。
 - **测的是哪份代码。** 镜像提供 PyTorch、aiter、sgl-kernel，以及它自带的 sglang checkout `/sgl-workspace/sglang`（带完整历史），sglang 就是以 editable 方式从这里安装的：这里检出的是什么，运行的就是什么，所以不需要另外克隆或指定 sglang。第 3 步把它切到当前的 main；之后每个任务都在它上面、从最新的 main 开自己的分支，Setup 会先 fetch。在基础 commit 上跑的 baseline 和 scan 读的当前 main，用的是同一个仓库在运行目录下的 worktree（每个约 0.2 GB）。运行记录会写下镜像、镜像里 sglang 的版本和任务的基础 commit。
-- **一个任务一个容器。** 用同一个 `NAME` 再次运行时，run_docker.sh 会回到那个容器（已停止的会先启动），`/workspace` 保持你离开时的样子：它从不删除容器。下一个任务换个名字开新容器（`NAME=<name>`），用的是最新的镜像；不再需要的容器用 `docker rm -f <name>` 删除，它的 `/workspace` 也随之删除。不管有多少个容器，一台机器同时只跑一个 Petra 任务（[运行](#运行)）。你自己的 run_docker.sh 也可以用，只要它以相同路径挂载你的 home，并把它作为 `PETRA_HOST_HOME` 传进容器（`-e PETRA_HOST_HOME=$HOME`）。
+- **一个任务一个容器。** 用同一个 `NAME` 再次运行时，run_docker.sh 会回到那个容器（已停止的会先启动），`/workspace` 保持你离开时的样子：它从不删除容器。下一个任务换个名字开新容器（`NAME=<name>`），用的是最新的镜像；不再需要的容器用 `docker rm -f <name>` 删除，它的 `/workspace` 也随之删除。不管有多少个容器，一台机器同时只跑一个 Petra 任务（[运行](#运行)）。你自己的 run_docker.sh 也可以用，只要它以相同路径挂载你的 home。把 home 作为 `PETRA_HOST_HOME` 传进容器（`-e PETRA_HOST_HOME=$HOME`）；没传时，bootstrap 会按容器名去找你的 home（第 3 步）。
 
 此时还不能调用 `claude`：宿主机上的程序通过 `/home` 挂载出现在容器里，但不在 root 的 `PATH` 上（`claude: command not found`）。第 3 步会创建链接；容器里不安装任何东西。
 
@@ -122,7 +122,7 @@ claude --version    # 宿主机上的 Claude Code
 
 | 步骤 | 在新容器里做什么 |
 |---|---|
-| 你宿主机上的 home | 通过 `PETRA_HOST_HOME` 找到（run_docker.sh 会传进来）：你的 Claude Code、它的状态和 `~/.petra_env` 都在那里。没有它就启动的容器什么都不会配置，因为那样的容器里 Claude Code 没有 key，会要求你登录；bootstrap 会报错，并说明怎样启动一个有它的容器 |
+| 你宿主机上的 home | 通过 `PETRA_HOST_HOME` 找到（run_docker.sh 会传进来）：你的 Claude Code、它的状态和 `~/.petra_env` 都在那里。没有它时，bootstrap 会发出警告，改用容器名对应的那个用户的 home（`<you>`、`<you>-0116`；容器名来自 `PETRA_CONTAINER`，挂载了 Docker socket 时也可以问 Docker），前提是那个 home 里有 Claude Code 或 `~/.petra_env`，并把它记在 root 的 `~/.bashrc` 里。一个都找不到时，其他什么都不配置，因为那样 Claude Code 没有 key，会要求你登录；bootstrap 会说明怎么做：`PETRA_HOST_HOME=/home/<you> python3 -B -m petra.bootstrap`，或者新建一个容器 |
 | `claude` | 创建链接 `/usr/local/bin/claude`，指向你在宿主机上的 `~/.local/bin/claude`；只有宿主机上没有 Claude Code 时才在容器里安装 |
 | Claude Code 状态 | 保存在你宿主机上的 `~/.petra/claude`（`CLAUDE_CONFIG_DIR`，与你自己的 `~/.claude` 分开），你的各个容器共用：首次启动时的回答和 `/login` 登录只需做一次 |
 | git | 信任宿主机挂载目录里的 checkout，它们属于你而不是 root（`safe.directory '*'`） |
@@ -205,7 +205,7 @@ cp -r /workspace/Petra/exp/<run> "$PETRA_HOST_HOME"/ && /workspace/Petra/scripts
 | `DOCKER_SOCKET` | `scripts/run_docker.sh` | 不设置；设为 `1` 时额外挂载宿主机的 Docker socket 和 `docker` |
 | `PETRA_LOCK_FILE` | `scripts/run_lock.py` | `/dev/shm/petra-run.lock`，这台机器"一个任务"的锁 |
 | `PETRA_HOME` | bootstrap | `./Petra`，或你所在的 checkout |
-| `PETRA_HOST_HOME` | `scripts/run_docker.sh`、bootstrap | 你在宿主机上的 home（`$HOME`），容器从这里找到你的 Claude Code、它的状态和 `~/.petra_env` |
+| `PETRA_HOST_HOME` | `scripts/run_docker.sh`、bootstrap | 你在宿主机上的 home（`$HOME`），容器从这里找到你的 Claude Code、它的状态和 `~/.petra_env`；没有它时，bootstrap 按容器名去找 |
 | `PETRA_REPO_URL`、`PETRA_REF` | bootstrap | `https://github.com/At1a8/Petra.git`，它的默认分支 |
 | `CLAUDE_VERSION`、`CLAUDE_BIN_DIR` | bootstrap | `latest`，`~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | bootstrap、Claude Code | 容器里的 root 用你宿主机上的 `~/.petra/claude`；已经设置时原样使用 |
