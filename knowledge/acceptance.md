@@ -12,13 +12,22 @@ until it does, the director and the reviewer apply this document by hand.
 
 | Dimension | What it shows | Typical checks |
 |---|---|---|
-| Correctness | the change does what it claims, and nothing when it is off | G0 feature off, G1 unit / oracle, startup rejection of unsupported combinations |
+| Correctness | the change does what it claims, and nothing when it is off | G0 feature off, G1 unit / oracle, startup rejection of unsupported combinations; parity with a reference implementation for a new model, kernel or refactor (§1.1) |
 | Accuracy | model outputs keep their quality, or lose no more than a declared budget | §1.1 |
 | Performance | the claimed gain exists, and nothing else regresses | gain items and guard items, §1.2 |
-| Stability | no crash, hang or leak, under pressure and over time | G4 stress; a soak (at least 1 h at the target concurrency, memory flat); cancelled requests, oversized inputs, out-of-memory fallback; a restart |
+| Stability | no crash, hang or leak, under pressure and over time | G4 stress; a soak (at least 1 h at the target concurrency, memory flat); cancelled requests, oversized inputs, out-of-memory fallback; a restart; injected faults for a feature that spans instances, a network or storage (a timeout, a peer down, a backend unavailable): requests fail cleanly and nothing hangs |
 | Compatibility | other platforms, features and configurations behave as before | the CUDA path untouched by a HIP change (`pr_playbook.md`); the combinations in `composability.md`; the platform matrix the task asks for |
 | Engineering | upstream can take it | lint, tests registered in CI, docs, the PR description (`pr_playbook.md`), upstream CI green, a maintainer's approval |
 | Requirement | the requester's own definition of done | §1.3 |
+
+Two rules hold across the dimensions:
+
+- **Engagement.** Every item that measures a feature also shows that the feature engaged: its counters,
+  its log lines, its accept length or hit rate. Without that, a gate may have measured the baseline
+  (`reward_hacks.md` C2).
+- **Sweeps.** Where an effect can turn around with length, concurrency or batch size, one point is not
+  evidence: speculative decoding is measured over concurrency, a long-context feature over length up to
+  the longest supported, a kernel over the batch sizes and shapes the models use.
 
 ### 1.1 Accuracy
 
@@ -33,6 +42,13 @@ until it does, the director and the reviewer apply this document by hand.
   arm, since a single run of such a set moves by about ±0.5 points (`feature_skills/fly-dspark`).
 - **Capability suites**, for what the change touches: long context (needle-in-a-haystack, G3),
   reasoning (GPQA, AIME), tool calls, multimodal input.
+- **Parity with a reference**, for a new model, a new kernel or a refactor: logprobs or the KL
+  divergence against the reference implementation (Hugging Face, or the model's official one) on a fixed
+  prompt set, and the official benchmark scores matched. sglang's own skills do this
+  (`kl-consistency-test`, `processor-model-parity`; `frameworks/sglang/skills.md`).
+- **Sampling**, for a change to a sampler or to speculative verification that claims to keep the target
+  distribution: greedy agreement does not show it. Test the output distribution at a temperature above
+  0 against the target's (§4).
 
 ### 1.2 Performance
 
@@ -44,6 +60,12 @@ until it does, the director and the reviewer apply this document by hand.
 - **Guard items:** workloads where the change should be neutral, or where it costs. The change stays
   inside the noise band (a decode-side change at 100k in / 1k out, where prefill sets the total), or its
   cost is measured and stated.
+- **The resource held equal** is named in every item: HBM for a memory feature (`perf_evaluation.md`
+  §1), the GPU count for distributed serving (8 GPUs serving together against 4 for prefill and 4 for
+  decode), the memory fraction, or the cost.
+- **The load model:** a fixed concurrency measures capacity. A claim about latency or an SLA is measured
+  with a request arrival rate swept up to saturation, reporting the throughput of the requests that meet
+  the SLA.
 
 ### 1.3 Requirement
 
@@ -53,10 +75,30 @@ the workload (an input / output length distribution or a trace, the concurrency)
 accuracy on the requester's data set, and the delivery date. The **requirement owner**, the person who
 represents the requester, confirms these items before the work starts and signs off at the end (§6).
 
+### 1.4 Feature classes
+
+Some kinds of change need items that the dimensions alone do not suggest. A feature takes the extra
+items of every class it belongs to.
+
+| Class | Examples | Extra items |
+|---|---|---|
+| KV movement and memory tiers | HiCache, KV offload, prefix cache, lossless KV compression | KV read back through the reload path byte-identical with what was written (or with a recompute); hit counters per tier; a reuse workload whose working set exceeds HBM; equal HBM; a full pool evicting under load; an unavailable storage backend falling back to recompute |
+| Distributed and multi-instance serving | PD disaggregation, multi-node TP / PP / EP, DP attention, routers, elastic scaling | outputs identical to serving on one instance, also with different TP sizes on the two sides; equal GPU count; an arrival-rate sweep with the SLA throughput; the transfer's share of TTFT; scaling efficiency over node counts; injected faults (a timeout, a peer down, a cancellation mid-transfer); the topology and transfer-backend matrix |
+| Model support | a new architecture, a multimodal model | parity with the reference implementation; the official benchmark scores; the tokenizer, chat template, tool-call and reasoning parsers; every parallelism and checkpoint precision the model card lists |
+| Sampling and speculative decoding | samplers, draft verification, draft models | a distribution test at a temperature above 0 for a lossless claim (a lossy one declares a budget, §1.1); the accept length reported; a concurrency sweep, since the gain can turn into a loss at high concurrency; the greedy and the sampled paths both |
+| Determinism | deterministic inference, batch-invariant kernels | bitwise-identical outputs over repeated runs, batch compositions, concurrency and, where claimed, TP sizes; the cost in throughput |
+| API and protocol | OpenAI-compatible API, structured output, function calling, streaming, logprobs, multi-LoRA | contract tests of the API; structured outputs valid against their schema; streaming equal to non-streaming; the official client SDK working; the overhead of constrained decoding; adapters switched under load |
+| Scheduling | priority, preemption, chunked-prefill policy, overlap scheduling | P99 under mixed and bursty traffic; fairness between long and short requests; no request starving; results unchanged after a preemption or retraction |
+| Online updates and operations | weight updates for RL, graceful shutdown, metrics | outputs after an update equal to a fresh load of the same weights; no request lost while updating or draining; metrics correct and cheap |
+| Platform bring-up | a new GPU architecture | the pass rate over the model × feature matrix; performance against the previous generation; the known issues listed |
+| Kernels | attention, MoE, GEMM, communication | the shapes the models use, small batches, unaligned sizes and padding included; tolerances per data type; an op-level gain shown end to end, or why it cannot show (`reward_hacks.md` P11) |
+| Long context | context parallelism, sparse attention, long-context KV layouts | a length sweep up to the longest supported; multi-task long-context suites (RULER-style), not one needle test alone; memory over length |
+
 ## 2. Default profiles
 
 Which dimensions each kind of task must show. "When" names the condition under which an item becomes
-required; the task may add items, never drop a required one.
+required; the task may add items, never drop a required one. On top of its profile, a change takes the
+extra items of its feature classes (§1.4).
 
 | Dimension | Upstream feature | Issue fix | CI fix | Performance | Requirement |
 |---|---|---|---|---|---|
@@ -105,6 +147,11 @@ Three items for FLy on DSPARK (`feature_skills/fly-dspark`), written in this for
 - **Runs:** failure rates at least 4 per configuration (`validation_doctrine.md`); performance at least
   2 timed runs per arm after a warm-up, more when the spread is wide (`perf_evaluation.md` §3); a lossy
   accuracy budget at least 3 runs per arm; a flaky test passes in every one of at least 10 runs.
+- **Distribution tests** (a sampler or a lossless verification change): per tested prompt, compare the
+  sampled tokens with the target distribution using a stated test, sample size and significance level,
+  e.g. a chi-square test on at least 10,000 samples at p = 0.01.
+- **Determinism:** identical outputs over at least 3 runs and at least 3 batch compositions; one
+  differing token fails the item.
 - **Two lanes at once** (two servers on one node): swap the arms between the lanes every round, and
   report the result both pooled and paired by round.
 - **Verdicts:** a gain counts when it exceeds the noise band and holds at the held-out point; a guard
