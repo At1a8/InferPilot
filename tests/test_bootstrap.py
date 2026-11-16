@@ -80,6 +80,9 @@ class VersionAndSettingsTest(unittest.TestCase):
             s = bs.settings({"PWD": str(work), "HOME": d, "INFERPILOT_FRAMEWORK_DIR": "~/sglang"}, {"framework_repo": "/r"})
             self.assertEqual((s["framework_dir"], s["framework_repo"]), (os.path.join(d, "sglang"), "/r"))
             self.assertEqual(s["claude_bin_dir"], os.path.join(d, ".local", "bin"))
+            self.assertEqual((s["evalscope_venv"], s["evalscope_version"]), (bs.EVALSCOPE_VENV, ""))
+            s = bs.settings({"PWD": str(work), "HOME": d, "EVALSCOPE_VENV": "~/es", "EVALSCOPE_VERSION": "1.15.0"})
+            self.assertEqual((s["evalscope_venv"], s["evalscope_version"]), (os.path.join(d, "es"), "1.15.0"))
 
 
 class KeysTest(unittest.TestCase):
@@ -667,6 +670,66 @@ class FrameworkTest(unittest.TestCase):
             back.assert_called_once_with(str(fw))
 
 
+class EvalscopeTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        (self.tmp / "bin").mkdir()
+        self.s = dict(S(tmp.name), evalscope_venv=str(self.tmp / "evalscope"),
+                      evalscope_link=str(self.tmp / "bin" / "evalscope"))
+        self.exe = self.tmp / "evalscope" / "bin" / "evalscope"
+
+    def pip_installs_it(self, cmd):
+        if "pip" in cmd:
+            make_exe(self.exe)
+        return OK
+
+    def test_one_on_path_is_kept(self):
+        with mock.patch.object(bs.shutil, "which", return_value="/opt/venv/bin/evalscope"), \
+                mock.patch.object(bs, "_run") as run, Quiet():
+            self.assertEqual(bs.ensure_evalscope(self.s), ("kept", "/opt/venv/bin/evalscope"))
+        run.assert_not_called()
+
+    def test_installed_in_a_venv_of_its_own_and_linked(self):
+        s = dict(self.s, evalscope_version="1.15.0")
+        venv = s["evalscope_venv"]
+        with mock.patch.object(bs.shutil, "which", return_value=None), \
+                mock.patch.object(bs, "_run", side_effect=self.pip_installs_it) as run, Quiet() as q:
+            self.assertEqual(bs.ensure_evalscope(s), ("installed", str(self.exe)))
+        self.assertEqual([c[0][0] for c in run.call_args_list], [
+            [sys.executable, "-m", "venv", venv],
+            [os.path.join(venv, "bin", "python"), "-m", "pip", "install", "-q", "--disable-pip-version-check",
+             "evalscope==1.15.0"]])
+        self.assertEqual(os.readlink(s["evalscope_link"]), str(self.exe))
+        self.assertIn("is not on PATH", q.err.getvalue(), "the link's directory is not on PATH here")
+
+    def test_an_existing_venv_is_linked_not_installed_again(self):
+        make_exe(self.exe)
+        with mock.patch.object(bs.shutil, "which", side_effect=[None, self.s["evalscope_link"]]), \
+                mock.patch.object(bs, "_run") as run, Quiet() as q:
+            self.assertEqual(bs.ensure_evalscope(self.s), ("added", str(self.exe)))
+        self.assertEqual(q.err.getvalue(), "")
+        with mock.patch.object(bs.shutil, "which", return_value=None), Quiet():
+            self.assertEqual(bs.ensure_evalscope(self.s)[0], "kept")
+        run.assert_not_called()
+
+    def test_a_failed_install_says_what_needs_it(self):
+        with mock.patch.object(bs.shutil, "which", return_value=None), \
+                mock.patch.object(bs, "_run", side_effect=[OK, SimpleNamespace(returncode=1)]), Quiet() as q:
+            self.assertEqual(bs.ensure_evalscope(self.s), ("failed", self.s["evalscope_venv"]))
+        self.assertIn("scripts/eval_accuracy.sh", q.err.getvalue())
+        self.assertFalse(os.path.lexists(self.s["evalscope_link"]))
+
+    def test_another_file_at_the_link_is_left_alone(self):
+        make_exe(self.exe)
+        Path(self.s["evalscope_link"]).write_text("mine\n")
+        with mock.patch.object(bs.shutil, "which", return_value=None), Quiet() as q:
+            self.assertEqual(bs.ensure_evalscope(self.s), ("skipped", str(self.exe)))
+        self.assertEqual(Path(self.s["evalscope_link"]).read_text(), "mine\n")
+        self.assertIn("EVALSCOPE=%s" % self.exe, q.err.getvalue())
+
+
 class ReportTest(unittest.TestCase):
     def test_check_environment(self):
         with tempfile.TemporaryDirectory() as d:
@@ -675,6 +738,7 @@ class ReportTest(unittest.TestCase):
             self.assertTrue(found["git"] and found["github_token"] and found["docker"])
             self.assertFalse(found["api"] or found["repo_token"])
             self.assertIn("sglang", found)
+            self.assertTrue(found["evalscope"])
             with mock.patch.object(bs, "_has", return_value=True), mock.patch.object(bs, "in_container", return_value=True), Quiet():
                 self.assertNotIn("docker", bs.check_environment({"HOME": d}))
             self.assertTrue(bs.api_configured({"ANTHROPIC_BASE_URL": "u", "ANTHROPIC_CUSTOM_HEADERS": "h"}, d))
@@ -727,7 +791,7 @@ class ReportTest(unittest.TestCase):
 
 class MainTest(unittest.TestCase):
     STEPS = ["ensure_checkout", "ensure_keys", "ensure_claude_code", "ensure_path", "ensure_claude_config",
-             "ensure_git_trust", "ensure_git_identity", "ensure_shell_env", "ensure_framework"]
+             "ensure_git_trust", "ensure_git_identity", "ensure_shell_env", "ensure_framework", "ensure_evalscope"]
 
     def run_main(self, argv, container=False, root=False, failing=None, status=None):
         env = {k: v for k, v in os.environ.items() if not k.startswith("INFERPILOT_")}

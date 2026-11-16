@@ -232,7 +232,8 @@ claude --version    # installed in this container
 | git identity | root commits as `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` from the keys file (or the environment), so no commit reads `root@<this host>`; with neither it says so and sets nothing |
 | shell | root's `~/.bashrc` gets `PYTHONDONTWRITEBYTECODE=1` (no root-owned `__pycache__` in checkouts on host mounts) and `DISABLE_AUTOUPDATER=1`, and loads the keys file, also one put in place later; with `LLM_GATEWAY_KEY` and no `ANTHROPIC_BASE_URL`, it points Claude Code at the AMD LLM gateway |
 | framework | the image's `/sgl-workspace/sglang`, still as the image left it (detached at the commit it built, its packaging files rewritten for ROCm), is put on main: the packaging changes discarded, then `git checkout main` and `git pull`. Never `pip install -e` from it afterwards: its `pyproject.toml` is then upstream's, which would pull CUDA packages. A checkout already on a branch, or with other changes, is left as it is; `--framework-dir` names a host checkout instead (used as it is, or cloned with its whole history when missing) |
-| checks | GPUs, sglang, API access, `GITHUB_TOKEN`, counting what the keys file sets (detect only) |
+| evalscope | for `scripts/eval_accuracy.sh`: installed in a venv of its own, `/opt/evalscope` (about a minute and 1.2 GB), and linked as `/usr/local/bin/evalscope`. Not in the image's Python, where it would downgrade `datasets` and `fsspec` below what sglang ships with; an `evalscope` already on `PATH` is kept |
+| checks | GPUs, sglang, evalscope, API access, `GITHUB_TOKEN`, counting what the keys file sets (detect only) |
 
 The clone runs only when `/workspace/inferpilot` is not there yet; the bootstrap never writes keys.
 
@@ -333,8 +334,8 @@ with the base commit the report names, then `git am ~/<run>/patches/*.patch`, an
 
 Each step of `inferpilot.bootstrap` reports `kept`, `installed`, `updated`, `added`, `created`, `skipped` or
 `failed`; a summary lists them, the next steps list only what is still missing, and the exit code is 1
-when a step failed. In a new container it installs Claude Code, which takes a minute or two, and writes
-its config and the git and shell settings. `--claude-only` runs only the keys and Claude Code steps,
+when a step failed. In a new container it installs Claude Code and evalscope, a minute or two each, and
+writes Claude Code's config and the git and shell settings. `--claude-only` runs only the keys and Claude Code steps,
 `--check` only the checks. Inside a container, `cd /workspace && pip install -v git+https://github.com/At1a8/inferpilot` runs
 step 3 the GEAK way, cloning InferPilot to `/workspace/inferpilot` (pip shows the output only with `-v`; a cached wheel skips it).
 
@@ -350,6 +351,7 @@ step 3 the GEAK way, cloning InferPilot to `/workspace/inferpilot` (pip shows th
 | `INFERPILOT_REPO_URL`, `INFERPILOT_REF` | bootstrap | `https://github.com/At1a8/inferpilot.git`, its default branch |
 | `CLAUDE_VERSION`, `CLAUDE_BIN_DIR` | bootstrap | `latest`, `~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code, bootstrap | unset (`~`): Claude Code's own, where its config lives; the bootstrap writes the first-start answers there |
+| `EVALSCOPE_VERSION`, `EVALSCOPE_VENV` | bootstrap | `latest`, `/opt/evalscope` |
 | `INFERPILOT_GIT_NAME`, `INFERPILOT_GIT_EMAIL` | `~/.inferpilot_env`, bootstrap | unset; the identity root commits with in the container |
 | `INFERPILOT_REPO_TOKEN` | `~/.inferpilot_env`, `scripts/propose_knowledge.py` | unset; a fine-grained token for InferPilot's own repository alone (Contents, Pull requests: read and write), with which the curator opens its pull request |
 | `LLM_GATEWAY_KEY` | `~/.inferpilot_env`, the container's shell settings | unset; set, Claude Code runs on the AMD LLM gateway unless `ANTHROPIC_BASE_URL` names another |
@@ -437,7 +439,7 @@ GitHub allows 60 requests an hour and 10 searches a minute per IP address).
 |---|---|
 | `scripts/scan_issues.py` | open AMD issues with linked PRs, replies and the projected 60-day auto-close date |
 | `scripts/scan_ci.py` | the AMD CI on main from its own runs and logs (each failing job: since when, last passed, failed tests, first errors), and the Failure Trackers' clusters |
-| `scripts/eval_accuracy.sh` | accuracy of a running server with evalscope: GSM8K on all 1319 questions, once, by default; other sets by name; keys only from the environment |
+| `scripts/eval_accuracy.sh` | accuracy of a running server with evalscope (the bootstrap installs it): GSM8K on all 1319 questions, once, by default; other sets by name; keys only from the environment |
 | `scripts/scan_upstream.py` | merged upstream commits: new CUDA gates, CUDA-first features, new models |
 | `scripts/audit_platform_gates.py` | platform gates to re-check on a new architecture (capability checks true on gfx1250, wave32 assumptions) |
 | `scripts/audit_host_syncs.py` | host-device sync and copy candidates on the hot path (leads for a profile) |

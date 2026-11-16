@@ -30,7 +30,11 @@ framework step puts on main once, discarding only the image build's changes to i
                 editable mode: still as the image left it, it is put on main and pulled, so the current
                 main is what runs and what tasks branch from; --framework-dir names a host checkout
                 instead, cloned with its whole history if missing
-  checks        git, docker (host only), ROCm, sglang, Node.js, API access, GitHub token (detect only)
+  evalscope     (root in a container) evalscope for scripts/eval_accuracy.sh, in a venv of its own
+                (/opt/evalscope, linked as /usr/local/bin/evalscope): installed into the image's Python it
+                would downgrade packages sglang ships with. One already on PATH is kept
+  checks        git, docker (host only), ROCm, sglang, evalscope, Node.js, API access, GitHub token
+                (detect only)
 
   python3 -B -m inferpilot.bootstrap [--framework-dir DIR]
   python3 -B -m inferpilot.bootstrap --claude-only   # the keys, claude, path and claude-config steps
@@ -46,6 +50,9 @@ Environment (a flag wins over its variable):
   CLAUDE_VERSION, CLAUDE_BIN_DIR
                                 native-installer target (latest), its bin dir (~/.local/bin)
   CLAUDE_CONFIG_DIR             Claude Code's own: where its config lives (default ~)
+  EVALSCOPE_VERSION, EVALSCOPE_VENV
+                                (container) the evalscope version to install (latest), its venv
+                                (/opt/evalscope)
   INFERPILOT_FRAMEWORK_DIR, INFERPILOT_FRAMEWORK_REPO
                                 --framework-dir (default: the image's checkout), --framework-repo
                                 (default: sglang)
@@ -90,6 +97,10 @@ AMD_GATEWAY_URL = "https://llm-api.amd.com/Unified"
 # becomes the ROCm one) and leaves it detached at the commit it built.
 IMAGE_SGLANG = "/sgl-workspace/sglang"
 PACKAGING = re.compile(r"(^|/)pyproject[^/]*\.toml$")
+# scripts/eval_accuracy.sh reaches the server over HTTP, so evalscope needs nothing of sglang's Python, and
+# installed into it, it would change it: evalscope 1.15 downgrades datasets and fsspec below the image's.
+EVALSCOPE_VENV = "/opt/evalscope"
+EVALSCOPE_LINK = "/usr/local/bin/evalscope"
 GATEWAY_ENV = (
     'if [ -n "$LLM_GATEWAY_KEY" ] && [ -z "$ANTHROPIC_BASE_URL" ]; then\n'
     '  export ANTHROPIC_BASE_URL=%s\n'
@@ -205,6 +216,9 @@ def settings(env=None, opts=None) -> dict:
         "shell": env.get("SHELL") or "",
         "framework_dir": _expand(framework_dir, env) if framework_dir else "",
         "framework_repo": opts.get("framework_repo") or env.get("INFERPILOT_FRAMEWORK_REPO") or DEFAULT_FRAMEWORK_REPO,
+        "evalscope_version": env.get("EVALSCOPE_VERSION") or "",
+        "evalscope_venv": _expand(env.get("EVALSCOPE_VENV") or EVALSCOPE_VENV, env),
+        "evalscope_link": EVALSCOPE_LINK,
     }
 
 
@@ -704,6 +718,46 @@ def ensure_framework(s: dict) -> tuple[str, str]:
     return "failed", "git clone"
 
 
+# --- evalscope -------------------------------------------------------------------
+
+def ensure_evalscope(s: dict) -> tuple[str, str]:
+    """evalscope for scripts/eval_accuracy.sh (gate G2), in a venv of its own linked onto PATH, so the
+    image's Python stays as the image built it. One already on PATH is kept, wherever it lives."""
+    found = shutil.which("evalscope")
+    if found:
+        log("evalscope: kept (%s)" % found)
+        return "kept", found
+    venv, link = s["evalscope_venv"], s["evalscope_link"]
+    exe = os.path.join(venv, "bin", "evalscope")
+    status = "kept"
+    if not os.access(exe, os.X_OK):
+        spec = "evalscope==%s" % s["evalscope_version"] if s["evalscope_version"] else "evalscope"
+        log("evalscope: installing %s in a venv of its own, %s (a minute or two)" % (spec, venv))
+        pip = [os.path.join(venv, "bin", "python"), "-m", "pip", "install", "-q", "--disable-pip-version-check", spec]
+        if _run([sys.executable, "-m", "venv", venv]).returncode != 0 or _run(pip).returncode != 0:
+            warn("evalscope: could not install %s in %s; scripts/eval_accuracy.sh (accuracy, gate G2) needs it. "
+                 "Check the network and run this again" % (spec, venv))
+            return "failed", venv
+        status = "installed"
+    if not os.path.lexists(link):
+        try:
+            os.symlink(exe, link)
+        except OSError as e:
+            warn("evalscope: could not link %s (%s); scripts/eval_accuracy.sh finds it with EVALSCOPE=%s"
+                 % (link, e, exe))
+            return "failed", exe
+        status = "added" if status == "kept" else status
+    elif os.path.realpath(link) != os.path.realpath(exe):
+        warn("evalscope: %s is another file; left as it is. scripts/eval_accuracy.sh finds this one with "
+             "EVALSCOPE=%s" % (link, exe))
+        return "skipped", exe
+    if not shutil.which("evalscope"):
+        warn("evalscope: %s is not on PATH; scripts/eval_accuracy.sh finds it with EVALSCOPE=%s"
+             % (os.path.dirname(link), exe))
+    log("evalscope: %s %s, linked as %s" % (status, exe, link))
+    return status, exe
+
+
 # --- checks (detect only) --------------------------------------------------------
 
 def api_configured(env, user_home: str) -> bool:
@@ -745,6 +799,7 @@ def check_environment(env=None, keys_path: str = "") -> dict:
     checks += [
         ("rocm", _has("rocminfo") or _has("rocm-smi"), "ROCm not detected (rocminfo / rocm-smi): GPU work needs AMD Instinct GPUs with ROCm"),
         ("sglang", _importable("sglang"), "sglang is not importable here: run InferPilot where the framework is installed (the container)"),
+        ("evalscope", _has("evalscope"), "evalscope not found: scripts/eval_accuracy.sh (accuracy, gate G2) needs it; the bootstrap installs it as root in a container"),
         ("node", _has("node"), "Node.js not found: needed only for tests/dry_run.mjs and for running inferpilot.js outside Claude Code"),
         ("api", api_configured(env, _expand("~", env)), "no Claude Code API access in this shell (see the next steps)"),
         ("github_token", bool(env.get("GITHUB_TOKEN") or env.get("GH_TOKEN")),
@@ -864,6 +919,8 @@ def main(argv=None) -> int:
         if container and is_root():
             steps += [("git", ensure_git_trust), ("git-identity", ensure_git_identity), ("shell", ensure_shell_env)]
         steps.append(("framework", ensure_framework))
+        if container and is_root():
+            steps.append(("evalscope", ensure_evalscope))
     results = [(name,) + step(s) for name, step in steps]
     statuses = {step: status for step, status, _ in results}
     keys = keys_file(s) if container else ""
