@@ -124,6 +124,60 @@ class HostHomeTest(unittest.TestCase):
                 self.assertEqual(bs.owner_dirs(s), [])
                 self.assertIn("PETRA_HOST_HOME is not set", bs.host_home_missing(s))
 
+    def test_a_home_from_the_container_name(self):
+        """As run_docker.sh names containers: your login, or your login and a suffix."""
+        with tempfile.TemporaryDirectory() as d:
+            homes = Path(d)
+            (homes / "alice").mkdir()
+            (homes / "alice" / ".petra_env").write_text("")
+            make_exe(homes / "ali" / ".local" / "bin" / "claude")
+            (homes / "bare").mkdir()
+            for name in ("alice", "alice-0116", "alice_sgl", "alice.dev"):
+                self.assertEqual(bs.home_from_container_name(name, str(homes)), str(homes / "alice"), name)
+            self.assertEqual(bs.home_from_container_name("ali-test", str(homes)), str(homes / "ali"))
+            for name in ("alicex", "bare", "bare-1", "nobody", "a"):
+                self.assertEqual(bs.home_from_container_name(name, str(homes)), "", name)
+            self.assertEqual(bs.home_from_container_name("alice", str(homes / "missing")), "")
+
+    def test_container_name_from_the_variable_or_docker(self):
+        self.assertEqual(bs.container_name({"PETRA_CONTAINER": "box"}), "box")
+        cid = "a" * 64
+        info = "1 0 8:1 /var/lib/docker/containers/%s/resolv.conf /etc/resolv.conf rw - ext4 /dev/sda1 rw\n" % cid
+        with mock.patch.object(bs, "_read", return_value=info), mock.patch.object(bs, "_has", return_value=True), \
+                mock.patch.object(bs, "_out", return_value=(0, "/alice", "")) as out:
+            self.assertEqual(bs.container_name({}), "alice")
+        self.assertEqual(out.call_args[0][0][-1], cid)
+        with mock.patch.object(bs, "_read", return_value=info), mock.patch.object(bs, "_has", return_value=False):
+            self.assertEqual(bs.container_name({}), "", "no Docker CLI")
+        with mock.patch.object(bs, "_read", return_value=info), mock.patch.object(bs, "_has", return_value=True), \
+                mock.patch.object(bs, "_out", return_value=(1, "", "Cannot connect to the Docker daemon")):
+            self.assertEqual(bs.container_name({}), "", "no socket")
+        with mock.patch.object(bs, "_read", return_value=""):
+            self.assertEqual(bs.container_name({}), "", "not in a container")
+
+    def test_a_container_named_after_you_finds_your_home(self):
+        """A container your own docker run started: no PETRA_HOST_HOME, named after your login."""
+        with tempfile.TemporaryDirectory() as d:
+            homes = Path(d)
+            exe = make_exe(homes / "alice" / ".local" / "bin" / "claude")
+            s = S("/", HOME="/root", PETRA_HOME="/nonexistent/Petra")
+            with mock.patch.object(bs, "HOMES", str(homes)), \
+                    mock.patch.object(bs, "container_name", return_value="alice-0116"), Quiet() as q:
+                self.assertEqual(bs.ensure_host_home(s), ("found", str(homes / "alice")))
+            self.assertIn("PETRA_HOST_HOME is not set", q.err.getvalue())
+            self.assertIn("named after (alice-0116)", q.err.getvalue())
+            self.assertEqual((bs.host_claude(s), bs.keys_file(s)), (str(exe), str(homes / "alice" / ".petra_env")))
+            s = S("/", HOME="/root", PETRA_HOME="/nonexistent/Petra")
+            with mock.patch.object(bs, "HOMES", str(homes)), \
+                    mock.patch.object(bs, "container_name", return_value="box"), Quiet() as q:
+                self.assertEqual(bs.ensure_host_home(s)[0], "failed")
+            self.assertIn("matches this container's name (box)", q.err.getvalue())
+            given = S("/", HOME="/root", PETRA_HOME="/nonexistent/Petra", PETRA_HOST_HOME=str(homes / "elsewhere"))
+            with mock.patch.object(bs, "HOMES", str(homes)), \
+                    mock.patch.object(bs, "container_name", return_value="alice") as name, Quiet():
+                self.assertEqual(bs.ensure_host_home(given)[0], "failed", "a PETRA_HOST_HOME you set wins")
+            name.assert_not_called()
+
 
 class CheckoutTest(unittest.TestCase):
     def test_existing_checkouts_are_kept(self):
@@ -207,8 +261,10 @@ class RunDockerTest(unittest.TestCase):
         self.assertEqual(subprocess.run(["bash", "-n", str(ROOT / "scripts" / "run_docker.sh")]).returncode, 0)
 
     def test_an_existing_container_is_entered_again(self):
+        """With your home, also in a container this script did not start."""
         inspect = "inspect -f {{.Config.Image}} tester"
-        enter = [inspect, "start tester", "exec -it -w /workspace tester bash"]
+        enter = [inspect, "start tester",
+                 "exec -it -w /workspace -e PETRA_HOST_HOME=%s -e PETRA_CONTAINER=tester tester bash" % (self.tmp / "home")]
         self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old"), (0, enter))
         self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", image="rocm/sgl-dev:old"), (0, enter))
         self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", image="rocm/sgl-dev:new"), (1, [inspect]))
@@ -222,7 +278,7 @@ class RunDockerTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("not the newest daily image any more; that is rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261109", r.stderr)
         self.assertIn("NAME=tester-", r.stderr)
-        self.assertEqual(self.log.read_text().splitlines()[-1], "exec -it -w /workspace tester bash", "it still goes in")
+        self.assertTrue(self.log.read_text().splitlines()[-1].startswith("exec -it -w /workspace "), "it still goes in")
 
     def test_a_new_container_starts_in_workspace(self):
         rc, calls = self.run_docker(image="rocm/sgl-dev:new")
@@ -375,6 +431,19 @@ class ShellRcTest(unittest.TestCase):
         out = subprocess.run(["bash", "-c", 'source "$1"; echo "$PYTHONDONTWRITEBYTECODE $DISABLE_AUTOUPDATER $ANTHROPIC_API_KEY"',
                               "_", str(self.rc)], env={"PATH": "/usr/bin:/bin"}, capture_output=True, text=True).stdout
         self.assertEqual(out.strip(), "1 1 sk-test")
+
+    def test_a_home_the_container_does_not_carry_is_kept_for_later_shells(self):
+        host = self.home / "u"
+        make_exe(host / ".local" / "bin" / "claude")
+        s = S("/", HOME=str(self.home), SHELL="/bin/bash", PETRA_HOME="/nonexistent/Petra")
+        s["host_home"] = str(host)
+        with mock.patch.object(bs, "container_env", return_value={}), Quiet():
+            self.assertEqual(bs.ensure_shell_env(s)[0], "added")
+        self.assertIn('export PETRA_HOST_HOME="%s"' % host, self.rc.read_text())
+        self.rc.unlink()
+        with mock.patch.object(bs, "container_env", return_value={"PETRA_HOST_HOME": str(host)}), Quiet():
+            self.assertEqual(bs.ensure_shell_env(s)[0], "added")
+        self.assertNotIn("PETRA_HOST_HOME", self.rc.read_text(), "the container already has it")
 
     @unittest.skipUnless(shutil.which("bash"), "needs bash")
     def test_an_amd_gateway_key_points_claude_code_at_the_gateway(self):
@@ -600,11 +669,12 @@ class MainTest(unittest.TestCase):
     STEPS = ["ensure_checkout", "ensure_host_home", "ensure_claude_link", "ensure_claude_code", "ensure_path",
              "ensure_claude_state", "ensure_git_trust", "ensure_shell_env", "ensure_framework"]
 
-    def run_main(self, argv, container=False, root=False, failing=None):
+    def run_main(self, argv, container=False, root=False, failing=None, status=None):
         env = {k: v for k, v in os.environ.items() if not k.startswith("PETRA_")}
+        status = dict(status or {}, **({failing: "failed"} if failing else {}))
         with ExitStack() as stack:
             stack.enter_context(mock.patch.dict(os.environ, env, clear=True))
-            m = {n: stack.enter_context(mock.patch.object(bs, n, return_value=("failed" if n == failing else "kept", "")))
+            m = {n: stack.enter_context(mock.patch.object(bs, n, return_value=(status.get(n, "kept"), "")))
                  for n in self.STEPS}
             m["check_environment"] = stack.enter_context(mock.patch.object(bs, "check_environment", return_value={"api": True}))
             stack.enter_context(mock.patch.object(bs, "in_container", return_value=container))
@@ -644,14 +714,29 @@ class MainTest(unittest.TestCase):
         self.assertEqual((rc, self.called(m)), (1, ["ensure_checkout", "ensure_host_home"]))
         self.assertFalse(m["check_environment"].called)
 
+    def test_a_home_found_by_name_sets_up_the_rest(self):
+        rc, m = self.run_main([], container=True, root=True, status={"ensure_host_home": "found"})
+        self.assertEqual((rc, self.called(m)), (0, self.STEPS))
+        self.assertTrue(m["check_environment"].called)
+
     def test_next_steps_without_a_home_on_the_host(self):
-        s = bs.settings({"PWD": "/", "HOME": "/root"})
-        with mock.patch.dict(os.environ, {"PETRA_CONTAINER": "box"}), mock.patch.object(bs, "owner_dirs", return_value=[]):
-            out = bs.next_steps(s, {"checkout": "kept", "host-home": "failed"}, None, path_env="/usr/bin")
-        self.assertIn("docker rm -f box", out)
+        """Ways out that keep the container: it may hold work, in /workspace or in the image's sglang."""
+        failed = {"checkout": "kept", "host-home": "failed"}
+        with tempfile.TemporaryDirectory() as homes, mock.patch.object(bs, "HOMES", homes), \
+                mock.patch.object(bs, "owner_dirs", return_value=[]):
+            s = dict(bs.settings({"PWD": "/", "HOME": "/root"}), container_name="box")
+            out = bs.next_steps(s, failed, None, path_env="/usr/bin")
+            unmounted = bs.next_steps(bs.settings({"PWD": "/", "HOME": "/root", "PETRA_HOST_HOME": "/nowhere"}),
+                                      failed, None, path_env="/usr/bin")
+        self.assertIn("matches this container's name (box)", out)
+        self.assertIn("PETRA_HOST_HOME=%s/<you> python3 -B -m petra.bootstrap" % homes, out)
+        self.assertIn("NAME=<new name> bash <(curl", out)
         self.assertIn("-e PETRA_HOST_HOME=$HOME", out)
+        self.assertNotIn("docker rm", out)
         self.assertNotIn("ANTHROPIC_API_KEY", out)
         self.assertNotIn("petra.js", out)
+        self.assertIn("PETRA_HOST_HOME=/nowhere is not mounted", unmounted)
+        self.assertNotIn("<you> python3", unmounted, "a home you named but did not mount needs a new container")
 
 
 if __name__ == "__main__":

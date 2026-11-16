@@ -11,7 +11,8 @@ state warns and leaves it alone. The one exception is the image's own sglang che
 framework step puts on main once, discarding only the image build's changes to its packaging files.
 
   checkout      clone Petra to $PETRA_HOME, unless run inside a checkout or one is already there
-  host-home     (root in a container) find your home on the host; without it nothing else is set up,
+  host-home     (root in a container) find your home on the host: PETRA_HOST_HOME, else, with a warning,
+                the home of the user the container is named after; without one nothing else is set up,
                 since this container would have neither your Claude Code nor your keys
   claude-in     (container) link your Claude Code on the host onto PATH instead of installing another
   claude        install the Claude Code CLI if it is still missing; update one older than petra.js needs
@@ -35,7 +36,10 @@ framework step puts on main once, discarding only the image build's changes to i
 Environment (a flag wins over its variable):
   PETRA_HOME, PETRA_REPO_URL, PETRA_REF       the checkout (default ./Petra, or the one you are in)
   PETRA_HOST_HOME                             (container) your home on the host: your Claude Code, its
-                                              state and ~/.petra_env (scripts/run_docker.sh passes it)
+                                              state and ~/.petra_env (scripts/run_docker.sh passes it;
+                                              without it, found from the container's name)
+  PETRA_CONTAINER                             (container) the container's name (run_docker.sh passes it;
+                                              without it, asked of Docker when its socket is mounted)
   CLAUDE_VERSION, CLAUDE_BIN_DIR              native-installer target (latest), its bin dir (~/.local/bin)
   CLAUDE_CONFIG_DIR                           when set, used as it is instead of ~/.petra/claude
   PETRA_FRAMEWORK_DIR, PETRA_FRAMEWORK_REPO   --framework-dir (default: the image's checkout), --framework-repo
@@ -66,6 +70,10 @@ ENV_END = "# <<< petra: root in the container <<<"
 STATE_DIR = os.path.join(".petra", "claude")
 STATE_BEGIN = "# >>> petra: Claude Code state on the host >>>"
 STATE_END = "# <<< petra: Claude Code state on the host <<<"
+# scripts/run_docker.sh names a container after your login unless told otherwise (alice, or alice-0116
+# for the next task): without PETRA_HOST_HOME, that user's home is yours.
+HOMES = "/home"
+NAME_SEPARATORS = "-_."
 # Root in the container must not leave root-owned __pycache__ in the host's checkouts, and must not
 # update the host's Claude Code install (the host updates it).
 CONTAINER_ENV = {"PYTHONDONTWRITEBYTECODE": "1", "DISABLE_AUTOUPDATER": "1"}
@@ -108,11 +116,13 @@ def _run(cmd, shell: bool = False):
     return subprocess.run(cmd, shell=shell)
 
 
-def _out(cmd) -> tuple[int, str, str]:
+def _out(cmd, timeout: float | None = None) -> tuple[int, str, str]:
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except OSError as e:
         return 127, "", str(e)
+    except subprocess.TimeoutExpired:
+        return 124, "", "timed out after %ss" % timeout
     return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
 
 
@@ -230,7 +240,13 @@ def host_home_missing(s: dict) -> str:
         return ""
     if s.get("host_home"):
         return "PETRA_HOST_HOME=%s is not mounted in this container" % s["host_home"]
-    return "PETRA_HOST_HOME is not set (scripts/run_docker.sh passes it)"
+    why = "PETRA_HOST_HOME is not set (scripts/run_docker.sh passes it)"
+    if "container_name" not in s:
+        return why
+    if not s["container_name"]:
+        return why + ", and this container's name is unknown (no PETRA_CONTAINER, no Docker socket)"
+    return why + ", and no user in %s with Claude Code or %s matches this container's name (%s)" % (
+        HOMES, KEYS_FILE, s["container_name"])
 
 
 def keys_file(s: dict) -> str:
@@ -287,6 +303,59 @@ def ensure_checkout(s: dict) -> tuple[str, str]:
 
 # --- your home on the host -------------------------------------------------------
 
+def container_name(env=None) -> str:
+    """This container's name: PETRA_CONTAINER (scripts/run_docker.sh passes it), else Docker's answer when
+    the host's socket is mounted; '' when neither tells."""
+    env = os.environ if env is None else env
+    if env.get("PETRA_CONTAINER"):
+        return env["PETRA_CONTAINER"]
+    m = re.search(r"/containers/([0-9a-f]{64})/", _read("/proc/self/mountinfo"))
+    if not (m and _has("docker")):
+        return ""
+    rc, out, _ = _out(["docker", "inspect", "-f", "{{.Name}}", m.group(1)], timeout=20)
+    return out.lstrip("/") if rc == 0 else ""
+
+
+def home_from_container_name(name: str, homes: str | None = None) -> str:
+    """The home of the user a container is named after: <user>, or <user> with a suffix after - _ or .
+    (the longest such user). Only a home with Claude Code or the keys in it counts (README step 1)."""
+    homes = HOMES if homes is None else homes
+    try:
+        users = os.listdir(homes)
+    except OSError:
+        return ""
+    marks = (KEYS_FILE, os.path.join(".local", "bin", "claude"), STATE_DIR)
+    best = ""
+    for u in users:
+        if len(u) <= len(best) or not (name == u or (name.startswith(u) and name[len(u)] in NAME_SEPARATORS)):
+            continue
+        if any(os.path.exists(os.path.join(homes, u, m)) for m in marks):
+            best = u
+    return os.path.join(homes, best) if best else ""
+
+
+def find_host_home(s: dict, env=None) -> str:
+    """Without PETRA_HOST_HOME, the home of the user this container is named after, kept in s["host_home"].
+    '' when PETRA_HOST_HOME is set (mounted or not, it wins), the checkout names a home, or nothing matches."""
+    if s.get("host_home") or owner_dirs(s):
+        return ""
+    s["container_name"] = container_name(env)
+    home = home_from_container_name(s["container_name"]) if s["container_name"] else ""
+    if home:
+        s["host_home"] = home
+    return home
+
+
+def container_env() -> dict:
+    """The environment the container was started with (its first process's)."""
+    try:
+        with open("/proc/1/environ", "rb") as f:
+            raw = f.read().decode("utf-8", "replace")
+    except OSError:
+        return {}
+    return dict(kv.split("=", 1) for kv in raw.split("\0") if "=" in kv)
+
+
 def ensure_host_home(s: dict) -> tuple[str, str]:
     """Without your home on the host, the steps after this one would install a second Claude Code, with
     no keys and no state, which then asks for a login: none of them runs."""
@@ -294,6 +363,12 @@ def ensure_host_home(s: dict) -> tuple[str, str]:
         home = os.path.dirname(keys_file(s))
         log("host-home: kept %s (your Claude Code, its state and %s)" % (home, KEYS_FILE))
         return "kept", home
+    home = find_host_home(s)
+    if home:
+        warn("host-home: PETRA_HOST_HOME is not set, so scripts/run_docker.sh did not start this container; "
+             "using %s, the home of the user it is named after (%s). Not yours? Run this again with "
+             "PETRA_HOST_HOME=%s/<you> in front" % (home, s["container_name"], HOMES))
+        return "found", home
     warn("host-home: %s; nothing else is set up (see the next steps)" % host_home_missing(s))
     return "failed", "no home on the host"
 
@@ -438,14 +513,20 @@ def ensure_shell_env(s: dict) -> tuple[str, str]:
     if ENV_BEGIN in _read(rc):
         log("shell: kept (%s)" % rc)
         return "kept", rc
+    names = list(CONTAINER_ENV)
     lines = ["export %s=%s" % kv for kv in CONTAINER_ENV.items()]
+    # A home found from the container's name, or given to this run only: later shells need it too
+    # (README step 5), and a container started without it never has it.
+    if s.get("host_home") and container_env().get("PETRA_HOST_HOME") != s["host_home"]:
+        names.append("PETRA_HOST_HOME")
+        lines.append('export PETRA_HOST_HOME="%s"' % s["host_home"])
     keys = keys_file(s)
     if keys:
         lines.append('[ -r "%s" ] && . "%s"' % (keys, keys))
     lines.append(GATEWAY_ENV)
     if not _append(rc, "\n%s\n%s\n%s\n" % (ENV_BEGIN, "\n".join(lines), ENV_END)):
         return "failed", rc
-    log("shell: added %s%s to %s" % (", ".join(CONTAINER_ENV), " and %s" % keys if keys else "", rc))
+    log("shell: added %s%s to %s" % (", ".join(names), " and %s" % keys if keys else "", rc))
     return "added", rc
 
 
@@ -657,18 +738,22 @@ def next_steps(s: dict, statuses: dict, found: dict | None = None, path_env: str
     c_on, c_off = _styles(sys.stdout)
     hl = lambda t: "%s%s%s" % (c_on, t, c_off)  # noqa: E731
     if statuses.get("host-home") == "failed":
-        name = os.environ.get("PETRA_CONTAINER") or "<name>"
-        return "\n".join([
+        lines = [
             "Next steps:",
             "1) This container cannot reach your home on the host: %s." % host_home_missing(s),
             "     Your Claude Code, its state and %s are there; without them Claude Code here has no key and" % KEYS_FILE,
-            "     asks you to log in. Leave the container. On the host, remove it (its /workspace goes with it)",
-            "     or pick another NAME, and start a new one with scripts/run_docker.sh, which passes your home",
-            "     (README step 2):",
-            "     " + hl("docker rm -f %s" % name),
-            "     " + hl("bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/Petra/main/scripts/run_docker.sh)"),
+            "     asks you to log in.",
+        ]
+        if not s.get("host_home") and os.path.isdir(HOMES):
+            lines += ["     If your home is mounted here, name it and run this again (later shells keep it):",
+                      "     " + hl("PETRA_HOST_HOME=%s/<you> python3 -B -m petra.bootstrap" % HOMES)]
+        lines += [
+            "     Otherwise leave the container and, on the host, start a new one under a NAME no container has",
+            "     yet: scripts/run_docker.sh mounts and passes your home (README step 2).",
+            "     " + hl("NAME=<new name> bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/Petra/main/scripts/run_docker.sh)"),
             "     A docker run of your own needs " + hl("-e PETRA_HOST_HOME=$HOME") + ", with your home mounted at the same path.",
-        ])
+        ]
+        return "\n".join(lines)
     path_env = os.environ.get("PATH", "") if path_env is None else path_env
     steps = []
     d = s["claude_bin_dir"]
@@ -738,9 +823,10 @@ def main(argv=None) -> int:
         return 0
     s = settings(opts={"framework_dir": a.framework_dir, "framework_repo": a.framework_repo})
     container = in_container()
-    keys = keys_file(s) if container else ""
     if a.check:
-        check_environment(keys_path=keys)
+        if container and is_root():
+            find_host_home(s)
+        check_environment(keys_path=keys_file(s) if container else "")
         return 0
     steps = [] if a.claude_only else [("checkout", ensure_checkout)]
     if container and is_root():
@@ -763,6 +849,7 @@ def main(argv=None) -> int:
     state = {step: detail for step, _, detail in results}.get("claude-state")
     if state and statuses.get("claude-state") in ("added", "created", "kept"):
         os.environ.setdefault("CLAUDE_CONFIG_DIR", state)  # this run's checks see a login kept there
+    keys = keys_file(s) if container else ""
     found = None if a.claude_only or statuses.get("host-home") == "failed" else check_environment(keys_path=keys)
     print("\n[petra-bootstrap] %s\n\n%s" % (summary(results), next_steps(s, statuses, found, claude_only=a.claude_only)),
           flush=True)

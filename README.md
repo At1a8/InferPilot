@@ -198,8 +198,9 @@ auto-approved, and the socket would put every container on the host within their
   container. Give the next task a new container under another name (`NAME=<name>`), from the newest
   image; `docker rm -f <name>` removes one you are done with, and its `/workspace` with it. However many
   containers there are, one Petra task runs on a machine at a time ([Running it](#running-it)). A
-  run_docker.sh of your own works too, as long as it mounts your home at the same path and passes it as
-  `PETRA_HOST_HOME` (`-e PETRA_HOST_HOME=$HOME`).
+  run_docker.sh of your own works too, as long as it mounts your home at the same path. Pass it as
+  `PETRA_HOST_HOME` (`-e PETRA_HOST_HOME=$HOME`); without it, the bootstrap looks for your home by the
+  container's name (step 3).
 
 `claude` is not callable yet: the host's binary is in the container through the `/home` mount, but not
 on root's `PATH` (`claude: command not found`). Step 3 links it; nothing is installed in the container.
@@ -218,7 +219,7 @@ claude --version    # the host's Claude Code
 
 | Step | In a new container |
 |---|---|
-| your home on the host | found through `PETRA_HOST_HOME`, which run_docker.sh passes: your Claude Code, its state and `~/.petra_env` are there. A container started without it gets nothing else set up, since its Claude Code would have no key and ask you to log in; the bootstrap fails and says how to start one that has it |
+| your home on the host | found through `PETRA_HOST_HOME`, which run_docker.sh passes: your Claude Code, its state and `~/.petra_env` are there. Without it, the bootstrap warns and takes the home of the user the container is named after (`<you>`, `<you>-0116`; the name comes from `PETRA_CONTAINER` or, with the Docker socket mounted, from Docker) when that home has Claude Code or `~/.petra_env`, and keeps it in root's `~/.bashrc`. Finding none, it sets up nothing else, since Claude Code would have no key and ask you to log in, and says what to do: `PETRA_HOST_HOME=/home/<you> python3 -B -m petra.bootstrap`, or a new container |
 | `claude` | a link `/usr/local/bin/claude` to your `~/.local/bin/claude` on the host; Claude Code is installed in the container only when the host has none |
 | Claude Code state | kept on the host in your `~/.petra/claude` (`CLAUDE_CONFIG_DIR`, apart from your own `~/.claude`) and shared by your containers: the first-start answers and a `/login` are given once |
 | git | trusts checkouts on host mounts, which belong to you, not root (`safe.directory '*'`) |
@@ -335,7 +336,7 @@ step 3 the GEAK way, cloning Petra to `/workspace/Petra` (pip shows the output o
 | `DOCKER_SOCKET` | `scripts/run_docker.sh` | unset; `1` also mounts the host's Docker socket and `docker` |
 | `PETRA_LOCK_FILE` | `scripts/run_lock.py` | `/dev/shm/petra-run.lock`, the machine's one-task lock |
 | `PETRA_HOME` | bootstrap | `./Petra`, or the checkout you run from |
-| `PETRA_HOST_HOME` | `scripts/run_docker.sh`, bootstrap | your home on the host (`$HOME`), where the container finds your Claude Code, its state and `~/.petra_env` |
+| `PETRA_HOST_HOME` | `scripts/run_docker.sh`, bootstrap | your home on the host (`$HOME`), where the container finds your Claude Code, its state and `~/.petra_env`; without it, the bootstrap finds it by the container's name |
 | `PETRA_REPO_URL`, `PETRA_REF` | bootstrap | `https://github.com/At1a8/Petra.git`, its default branch |
 | `CLAUDE_VERSION`, `CLAUDE_BIN_DIR` | bootstrap | `latest`, `~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | bootstrap, Claude Code | your `~/.petra/claude` on the host, for root in the container; when already set, used as it is |
