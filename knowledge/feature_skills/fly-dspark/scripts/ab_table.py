@@ -78,6 +78,14 @@ def main():
         m = TAG.fullmatch(tag)
         if m:
             runs.append({"tag": tag, "round": int(m[1]), "arm": m[2], "perf": load_bench(tag), "acc": load_acc(tag)})
+    # A run still in progress counts only once every concurrency / dataset the run measures is in.
+    full_conc = max((set(r["perf"]) for r in runs), key=len, default=set())
+    full_sets = max((set(r["acc"]) for r in runs), key=len, default=set())
+    for r in runs:
+        if set(r["perf"]) != full_conc:
+            r["perf"] = {}
+        if set(r["acc"]) != full_sets:
+            r["acc"] = {}
     bases = [r for r in runs if r["arm"] == "baseline"]
     arms = sorted({r["arm"] for r in runs}, key=lambda a: (a != "baseline", [float(x) for x in re.findall(r"[\d.]+", a)]))
     out = [f"# lockstep A/B summary: {OUT.name}", ""]
