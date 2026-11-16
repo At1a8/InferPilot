@@ -21,6 +21,8 @@ framework step puts on main once, discarding only the image build's changes to i
                 onboarding, trust in the Petra checkout, bypass permissions mode, and an Anthropic API
                 key from the keys file
   git           (root in a container) trust checkouts on host mounts, which belong to another user
+  git-identity  (root in a container) commit as you, not root@<this host>: PETRA_GIT_NAME and
+                PETRA_GIT_EMAIL from the keys file or the environment
   shell         (root in a container) no __pycache__ in checkouts on host mounts, no Claude Code
                 self-update, the keys file loaded, and with LLM_GATEWAY_KEY Claude Code on the AMD LLM
                 gateway
@@ -567,6 +569,47 @@ def ensure_git_trust(s: dict) -> tuple[str, str]:
     return "failed", "git config"
 
 
+IDENTITY_VARS = ("PETRA_GIT_NAME", "PETRA_GIT_EMAIL")
+
+
+def _keys_file_value(path: str, name: str) -> str:
+    """One variable's value in the keys file. Read for the git identity only, never for a key."""
+    for line in _read(path).splitlines() if path else ():
+        m = re.match(r"\s*(?:export\s+)?%s=(.*)$" % re.escape(name), line)
+        if m:
+            value = m.group(1).strip().strip("'\"")
+            return "" if value.startswith("<") else value
+    return ""
+
+
+def ensure_git_identity(s: dict) -> tuple[str, str]:
+    """Commits made as root in the container would read root <root@<this host>>: an internal host name
+    in a public history, and no author to sign them. The container carries no home, so no git config
+    of yours: the identity comes from PETRA_GIT_NAME and PETRA_GIT_EMAIL, in the keys file or the
+    environment."""
+    if not _has("git"):
+        return "skipped", "no git"
+    have = tuple(_out(["git", "config", "--global", "--get", k])[1].strip() for k in ("user.name", "user.email"))
+    keys = keys_file(s)
+    want = tuple(os.environ.get(v) or _keys_file_value(keys, v) for v in IDENTITY_VARS)
+    if not all(want):
+        if all(have):
+            log("git-identity: kept (%s <%s>)" % have)
+            return "kept", "%s <%s>" % have
+        warn("git-identity: no git identity for root; its commits would read root@<this host>. Add "
+             "export PETRA_GIT_NAME=\"<your name>\" and export PETRA_GIT_EMAIL=<your email> to %s "
+             "(README step 1) and run this again" % (keys or os.path.join(s["user_home"], KEYS_FILE)))
+        return "skipped", "no PETRA_GIT_NAME / PETRA_GIT_EMAIL"
+    if want == have:
+        log("git-identity: kept (%s <%s>)" % have)
+        return "kept", "%s <%s>" % have
+    if all(_run(["git", "config", "--global", k, v]).returncode == 0 for k, v in zip(("user.name", "user.email"), want)):
+        log("git-identity: commits as %s <%s>" % want)
+        return ("updated" if all(have) else "added"), "%s <%s>" % want
+    warn("git-identity: could not set user.name / user.email")
+    return "failed", "git config"
+
+
 # --- framework checkout ----------------------------------------------------------
 
 def _repo_key(url: str) -> str:
@@ -816,7 +859,7 @@ def main(argv=None) -> int:
         steps.append(("claude-config", ensure_claude_config))
     if not a.claude_only:
         if container and is_root():
-            steps += [("git", ensure_git_trust), ("shell", ensure_shell_env)]
+            steps += [("git", ensure_git_trust), ("git-identity", ensure_git_identity), ("shell", ensure_shell_env)]
         steps.append(("framework", ensure_framework))
     results = [(name,) + step(s) for name, step in steps]
     statuses = {step: status for step, status, _ in results}

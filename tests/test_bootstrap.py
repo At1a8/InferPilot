@@ -533,6 +533,60 @@ class GitTrustTest(unittest.TestCase):
         run.assert_not_called()
 
 
+@unittest.skipUnless(shutil.which("git"), "needs git")
+class GitIdentityTest(unittest.TestCase):
+    """Against real git with a throwaway global config; root's home holds the keys file run_docker.sh mounts."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        patch = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(self.root / ".gitconfig"), "GIT_CONFIG_NOSYSTEM": "1"})
+        patch.start()
+        self.addCleanup(patch.stop)
+        for v in bs.IDENTITY_VARS:
+            os.environ.pop(v, None)  # restored by the patch
+        self.keys = self.root / ".petra_env"
+        self.s = S(self.root)
+
+    def root_identity(self):
+        get = lambda k: subprocess.run(["git", "config", "--global", "--get", k], capture_output=True, text=True).stdout.strip()
+        return get("user.name"), get("user.email")
+
+    def test_root_commits_as_the_keys_file_says(self):
+        self.keys.write_text('export LLM_GATEWAY_KEY=k\nexport PETRA_GIT_NAME="Ada L"\nexport PETRA_GIT_EMAIL=ada@example.com\n')
+        with Quiet():
+            self.assertEqual(bs.ensure_git_identity(self.s), ("added", "Ada L <ada@example.com>"))
+            self.assertEqual(bs.ensure_git_identity(self.s)[0], "kept")
+        self.assertEqual(self.root_identity(), ("Ada L", "ada@example.com"))
+
+    def test_the_environment_counts_and_a_new_identity_replaces_the_old(self):
+        self.keys.write_text("export PETRA_GIT_NAME=Bob\nexport PETRA_GIT_EMAIL=bob@example.com\n")
+        with Quiet():
+            bs.ensure_git_identity(self.s)
+        with mock.patch.dict(os.environ, {"PETRA_GIT_NAME": "Ada", "PETRA_GIT_EMAIL": "ada@example.com"}), Quiet():
+            self.assertEqual(bs.ensure_git_identity(self.s)[0], "updated")
+        self.assertEqual(self.root_identity(), ("Ada", "ada@example.com"))
+
+    def test_an_identity_root_already_has_is_kept(self):
+        subprocess.run(["git", "config", "--global", "user.name", "Bob"], check=True)
+        subprocess.run(["git", "config", "--global", "user.email", "bob@example.com"], check=True)
+        with Quiet():
+            self.assertEqual(bs.ensure_git_identity(self.s)[0], "kept")
+        self.assertEqual(self.root_identity(), ("Bob", "bob@example.com"))
+
+    def test_none_is_said_not_invented(self):
+        for text in ("export LLM_GATEWAY_KEY=k\n",  # no identity at all
+                     "export PETRA_GIT_NAME=<your name>\nexport PETRA_GIT_EMAIL=<your email>\n",  # the README's placeholders
+                     "export PETRA_GIT_NAME=Ada\n"):  # half of one
+            self.keys.write_text(text)
+            err = io.StringIO()
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                self.assertEqual(bs.ensure_git_identity(self.s)[0], "skipped", text)
+            self.assertEqual(self.root_identity(), ("", ""))
+            self.assertIn("PETRA_GIT_EMAIL", err.getvalue())
+
+
 class FrameworkTest(unittest.TestCase):
     def test_skipped_without_a_dir(self):
         with tempfile.TemporaryDirectory() as d:
@@ -665,7 +719,7 @@ class ReportTest(unittest.TestCase):
 
 class MainTest(unittest.TestCase):
     STEPS = ["ensure_checkout", "ensure_keys", "ensure_claude_code", "ensure_path", "ensure_claude_config",
-             "ensure_git_trust", "ensure_shell_env", "ensure_framework"]
+             "ensure_git_trust", "ensure_git_identity", "ensure_shell_env", "ensure_framework"]
 
     def run_main(self, argv, container=False, root=False, failing=None, status=None):
         env = {k: v for k, v in os.environ.items() if not k.startswith("PETRA_")}

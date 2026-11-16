@@ -22,6 +22,15 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
 2. **Commits** tell the story: one per work package, follow-up fixes squashed into the commit they fix.
    Rewriting history must not change the tree: `git diff <reviewed HEAD> <new HEAD>` is empty, else
    `content_unchanged` is false.
+   - **Author:** `git log --format='%an <%ae>' <base>..HEAD` names a person, the identity the bootstrap
+     gives root (`git-identity`), never `root` or an address with a host name in it (`guardrails.md`:
+     nothing public names the machine). Reset such commits to the configured identity
+     (`git rebase --exec 'git commit --amend --no-edit --reset-author' <base>`, which rewrites the
+     committer too); with no identity configured, put the commands that set one and reset the authors
+     ahead of `push_command`.
+   - **Trailers:** a `Co-Authored-By` or "Generated with" line the agent's tool added stays only if the
+     target repository's convention allows it; otherwise drop it here. Either way, disclose AI assistance
+     in the PR body where the repository asks for it (`guardrails.md`).
 3. **Upstream:** trial-merge main in a throwaway worktree and record the conflicts. Do not update the
    branch: a merged tree is not the tree that was verified. `merges_cleanly` false puts the conflicts
    in the PR body for the human, who merges and re-runs the gates (`pr_playbook.md`).
