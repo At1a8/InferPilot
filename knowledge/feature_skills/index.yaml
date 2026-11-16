@@ -21,6 +21,7 @@ skills:
   validation_status: validated
 - id: fly-dspark
   file: fly-dspark/SKILL.md
+  tags: [fly, entropy-gated verification, deferred verification, lossy verification, speculative decoding, speculative sampling, rejection sampling, draft acceptance, accept length, dspark]
   match:
     framework: sglang
     framework_ref: 58241600c5

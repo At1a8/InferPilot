@@ -3,6 +3,7 @@ id: fly-dspark
 title: "FLy on DSPARK speculative decoding for DeepSeek-V4.1 (sglang, ROCm gfx950): accept a rejected draft token when the target is uncertain there and the next W drafts pass"
 kind: feature_skill
 authors: [At1a8]
+tags: [fly, entropy-gated verification, deferred verification, lossy verification, speculative decoding, speculative sampling, rejection sampling, draft acceptance, accept length, dspark]
 match:
   framework: sglang
   framework_ref: 58241600c5          # PR head: the W2/0.5 defaults (4e85e85498) merged with main 55ceff1114 (Nov 2026); sweeps measured on ed3831842a (main 410e64bb84)
