@@ -19,3 +19,13 @@ skills:
     platforms: [rocm-gfx950]
   depends_on: [sgl-project/sglang#32314]
   validation_status: validated
+- id: fly-dspark
+  file: fly-dspark/SKILL.md
+  match:
+    framework: sglang
+    framework_ref: 58241600c5
+    feature: fly_speculative_verification
+    model_arch: [deepseek_v4]      # DeepSeek-V4.1-Flash with its bundled DSPARK block drafter (gamma 5)
+    platforms: [rocm-gfx950]
+  depends_on: [vllm-project/vllm#53987, vllm-project/vllm#66593]
+  validation_status: validated     # gates G0, G1, G2, G5; G3 / G4 not claimed

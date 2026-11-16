@@ -55,6 +55,16 @@ outputs never triggered it.
   demotions, rows swapped in).
 - Check the server log after every run for out-of-memory, retraction and watchdog messages; a run that
   crashed or retracted is not a performance number.
+- Check it for serving-time compilation too (sglang: `... took <n> s to compile after serving
+  started`): a kernel compiled inside a timed run stalls the engine. One such 1.45 s stall in the first
+  baseline of a sweep made every later arm look ~4% faster at that point; discard or repeat the run,
+  and never put all the baselines in the first round (`feature_skills/fly-dspark`).
+- Two arms on one node: run them on disjoint GPU sets at the same time, swap them between the sets every
+  round, and repeat ≥3 rounds. On DeepSeek-V4.1-Flash 8k/1k a single run is noisy (two runs of the same
+  baseline differed by 7.9% at concurrency 32); three runs per arm bring a campaign's mean to about
+  ±0.5%, yet two such campaigns a day apart measured +2.8% and +1.4% for the same setting. A gain of a
+  few percent needs a repeat campaign and is quoted as a range
+  (`feature_skills/fly-dspark/scripts/lockstep_ab.sh`).
 
 ## 4. Admission and capacity checks
 

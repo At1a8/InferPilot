@@ -45,6 +45,15 @@ Accuracy Tests, Speed Tests, known limitations, checklist.
   merge time.
 - Do a trial merge in a throwaway worktree first; list conflicts; compile-check and smoke-test the merged
   tree (start the server from the worktree via `PYTHONPATH`) before touching the branch.
+- sglang appends every new built-in `ServerArgs` field at the end of `POSITIONAL_FIELD_ORDER`
+  (`srt/arg_groups/field_order.py`, checked by `test_builtin_fields_have_explicit_positional_slots`), so
+  each upstream PR that adds a server argument conflicts there with an open PR that adds one. Keep
+  upstream's new lines and re-append yours after them; expect it again at every update.
+- After a merge, run the unit directories of every subsystem the PR touches one file per process (one
+  aborting test must not hide the rest) and compare each failure with the same file on an untouched
+  worktree of main. Tests that build objects by hand (a `SimpleNamespace` of server args, `__new__`
+  plus attribute setup) break when the code reads a new field: add the field to the stub, as upstream
+  does (`feature_skills/fly-dspark`).
 - Resolve a modify/delete conflict by following upstream's intent: if main deleted a file in a cleanup,
   do not resurrect it to keep a test you added there — move or drop the test and say so in the merge
   commit message.
