@@ -1,8 +1,8 @@
-# Task definition — what Petra needs to start a task
+# Task definition — what InferPilot needs to start a task
 
-The fields are `petra.js`'s arguments, so a definition can be passed as it is, produced by the Intake
+The fields are `inferpilot.js`'s arguments, so a definition can be passed as it is, produced by the Intake
 phase from a request in plain words (`roles/intake.md`), or taken from a scan's task queue; every role
-reads the same names. Operator settings (`petra_dir`, `exp_root`, budgets, `review_model`) are not part
+reads the same names. Operator settings (`inferpilot_dir`, `exp_root`, budgets, `review_model`) are not part
 of it.
 
 ## 1. Fields
@@ -23,7 +23,7 @@ of it.
 | `resume_from`, `run_dir` | `implement`: continue after a human approved the design | optional | | | | |
 | `kernel_backend` with `kernel_backend_dir` or `kernel_backend_command` | where kernel hand-offs go | optional | optional | optional | optional | |
 
-`petra.js` checks the required fields (and a back end's own field) for every definition; one that
+`inferpilot.js` checks the required fields (and a back end's own field) for every definition; one that
 lacks something returns `needs_input` and starts nothing. The intake asks for the recommended fields
 when the likely path of the task needs them.
 
@@ -74,7 +74,7 @@ The run starts nothing and returns:
  "questions": [{"field": "workload", "question": "Which fixed workload should every measurement use?",
                 "why": "performance numbers count only on a workload fixed before any profile is read",
                 "options": [], "default": "{\"isl\": 8192, \"osl\": 1024, \"conc\": 64}"}],
- "next": "answer the questions, then run petra.js again with the same arguments plus answers={...}"}
+ "next": "answer the questions, then run inferpilot.js again with the same arguments plus answers={...}"}
 ```
 
 Answer, then run again with the same arguments plus `answers` (`{"workload": {"isl": 8192, ...}}`), or

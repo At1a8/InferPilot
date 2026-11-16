@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Petra's index of the framework's own skills against a framework checkout.
+"""Check InferPilot's index of the framework's own skills against a framework checkout.
 
 The index (knowledge/frameworks/<framework>/skills.md) names skills that live in the framework's
 repository; roles read them from the task worktree. This reports the drift:

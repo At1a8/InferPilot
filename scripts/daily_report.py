@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Check a scan's daily report before a human shares it, and find the last one they shared. Read only:
-Petra posts nothing; the human uploads the report (e.g. as an issue in Petra's repository).
+InferPilot posts nothing; the human uploads the report (e.g. as an issue in InferPilot's repository).
 
     python3 scripts/daily_report.py check RUN_DIR/daily_report.md   # public-safe and short enough?
     python3 scripts/daily_report.py latest                          # the newest shared report: date, URL, age, body
 
 check: exit 3 when a line names a local path, this machine or an internal site (the lines are listed),
-exit 4 when the body is longer than a GitHub issue allows. latest: the newest issue in Petra's repository
+exit 4 when the body is longer than a GitHub issue allows. latest: the newest issue in InferPilot's repository
 (the origin of this checkout) that carries the report's marker, `{}` when there is none; it reads a
 public repository, with GITHUB_TOKEN when set. Standard library only.
 """
@@ -24,7 +24,7 @@ import urllib.error
 import urllib.request
 
 API = "https://api.github.com"
-MARKER = "<!-- petra:daily-report -->"
+MARKER = "<!-- inferpilot:daily-report -->"
 ISSUE_LIMIT = 65536  # characters GitHub accepts in an issue body
 LOCAL = re.compile(r"(?<![\w.-])/(?:data\d*|mnt|home|root|workspace|sgl-workspace|apps|shared|nfs_shared1|kmd2|opt|tmp)/"
                    r"|confluence|jira\.", re.I)
@@ -32,7 +32,7 @@ LOCAL = re.compile(r"(?<![\w.-])/(?:data\d*|mnt|home|root|workspace|sgl-workspac
 
 def title(date: str) -> str:
     """The title a shared report gets, which latest reads its date from."""
-    return "Petra daily report %s" % date
+    return "InferPilot daily report %s" % date
 
 
 def repo_from_url(url: str) -> str:
@@ -71,7 +71,7 @@ def age_hours(stamp: str, now: dt.datetime | None = None) -> float:
 
 def get(path: str):
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
-    req = urllib.request.Request(API + path, headers={"Accept": "application/vnd.github+json", "User-Agent": "petra",
+    req = urllib.request.Request(API + path, headers={"Accept": "application/vnd.github+json", "User-Agent": "inferpilot",
                                                       **({"Authorization": "Bearer " + token} if token else {})})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r)
@@ -95,7 +95,7 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("check", help="is the report public-safe and short enough for an issue?")
     c.add_argument("file")
-    lt = sub.add_parser("latest", help="the newest shared report in Petra's repository")
+    lt = sub.add_parser("latest", help="the newest shared report in InferPilot's repository")
     lt.add_argument("--repo", default="", help="owner/name (default: the origin of this checkout)")
     a = ap.parse_args(argv)
     if a.cmd == "check":

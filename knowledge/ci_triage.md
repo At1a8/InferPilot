@@ -1,7 +1,7 @@
 # CI triage — from a red AMD job to a fix PR or a handover
 
 Read this in `mode=ci`. A broken AMD CI lane blocks every AMD PR, so a code regression is the most
-urgent task Petra gets. Target from the design: a fix PR within 12 hours for a code regression, and a
+urgent task InferPilot gets. Target from the design: a fix PR within 12 hours for a code regression, and a
 fix PR or a handover within a week for anything else.
 
 ## 1. Sources

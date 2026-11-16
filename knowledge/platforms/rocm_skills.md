@@ -74,7 +74,7 @@ first. This file lists what differs on ROCm, skill by skill. Checked against sgl
 - JIT kernels build for HIP too; the skill's HIP notes apply: warp width 64 (`warp::kFullWidth`), PDL is
   a no-op on ROCm, `LoadStoreBytes::MAX_PORTABLE` (16 bytes) is the width safe on both.
 - AOT kernels build for ROCm from `python/sglang/kernels/aot/setup_rocm.py` (`pyproject_rocm.toml`).
-- Petra writes functional kernels and hands their tuning to the kernel back end (`../kernel_backends.md`).
+- InferPilot writes functional kernels and hands their tuning to the kernel back end (`../kernel_backends.md`).
 
 ## sglang-prod-incident-triage
 

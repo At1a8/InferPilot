@@ -1,4 +1,4 @@
-"""Unit tests for petra/bootstrap.py and scripts/restore_owner.sh: nothing is installed, cloned or
+"""Unit tests for inferpilot/bootstrap.py and scripts/restore_owner.sh: nothing is installed, cloned or
 linked outside temporary directories (commands are mocked).
 
     python3 -m unittest discover -s tests
@@ -19,7 +19,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from petra import bootstrap as bs  # noqa: E402
+from inferpilot import bootstrap as bs  # noqa: E402
 
 OK = SimpleNamespace(returncode=0)
 
@@ -31,7 +31,7 @@ def S(pwd, **env):
 def make_checkout(root: Path) -> Path:
     (root / ".git").mkdir(parents=True)
     (root / "roles").mkdir()
-    (root / "petra.js").write_text("// petra")
+    (root / "inferpilot.js").write_text("// inferpilot")
     return root
 
 
@@ -72,18 +72,18 @@ class VersionAndSettingsTest(unittest.TestCase):
 
     def test_settings(self):
         with tempfile.TemporaryDirectory() as d:
-            co = make_checkout(Path(d) / "Petra")
+            co = make_checkout(Path(d) / "inferpilot")
             self.assertEqual(S(co, HOME=d)["home"], str(co))
             work = Path(d) / "work"
             work.mkdir()
-            self.assertEqual(S(work, HOME=d)["home"], str(work / "Petra"))
-            s = bs.settings({"PWD": str(work), "HOME": d, "PETRA_FRAMEWORK_DIR": "~/sglang"}, {"framework_repo": "/r"})
+            self.assertEqual(S(work, HOME=d)["home"], str(work / "inferpilot"))
+            s = bs.settings({"PWD": str(work), "HOME": d, "INFERPILOT_FRAMEWORK_DIR": "~/sglang"}, {"framework_repo": "/r"})
             self.assertEqual((s["framework_dir"], s["framework_repo"]), (os.path.join(d, "sglang"), "/r"))
             self.assertEqual(s["claude_bin_dir"], os.path.join(d, ".local", "bin"))
 
 
 class KeysTest(unittest.TestCase):
-    """The keys file: the one run_docker.sh mounts as root's ~/.petra_env, else, in a container that
+    """The keys file: the one run_docker.sh mounts as root's ~/.inferpilot_env, else, in a container that
     mounts /home, the one in your home there."""
 
     def setUp(self):
@@ -94,42 +94,42 @@ class KeysTest(unittest.TestCase):
         self.root.mkdir()
 
     def test_the_mounted_keys_file_comes_first(self):
-        co = make_checkout(self.tmp / "u" / "Petra")
-        (self.tmp / "u" / ".petra_env").write_text("export LLM_GATEWAY_KEY=k\n")
-        s = S("/", HOME=str(self.root), PETRA_HOME=str(co))
-        self.assertEqual(bs.keys_file(s), str(self.tmp / "u" / ".petra_env"), "the checkout's owner's home")
-        (self.root / ".petra_env").write_text("export LLM_GATEWAY_KEY=k\n")
-        self.assertEqual(bs.keys_file(s), str(self.root / ".petra_env"))
+        co = make_checkout(self.tmp / "u" / "inferpilot")
+        (self.tmp / "u" / ".inferpilot_env").write_text("export LLM_GATEWAY_KEY=k\n")
+        s = S("/", HOME=str(self.root), INFERPILOT_HOME=str(co))
+        self.assertEqual(bs.keys_file(s), str(self.tmp / "u" / ".inferpilot_env"), "the checkout's owner's home")
+        (self.root / ".inferpilot_env").write_text("export LLM_GATEWAY_KEY=k\n")
+        self.assertEqual(bs.keys_file(s), str(self.root / ".inferpilot_env"))
         with Quiet():
-            self.assertEqual(bs.ensure_keys(s), ("kept", str(self.root / ".petra_env")))
-        given = S("/", HOME=str(self.root), PETRA_HOME=str(co), PETRA_KEYS=str(self.tmp / "mine"))
-        self.assertEqual(bs.keys_file(given), "", "a PETRA_KEYS that is not a file wins over the others")
-        self.assertIn("PETRA_KEYS=%s is not a file" % (self.tmp / "mine"), bs.keys_missing(given))
+            self.assertEqual(bs.ensure_keys(s), ("kept", str(self.root / ".inferpilot_env")))
+        given = S("/", HOME=str(self.root), INFERPILOT_HOME=str(co), INFERPILOT_KEYS=str(self.tmp / "mine"))
+        self.assertEqual(bs.keys_file(given), "", "a INFERPILOT_KEYS that is not a file wins over the others")
+        self.assertIn("INFERPILOT_KEYS=%s is not a file" % (self.tmp / "mine"), bs.keys_missing(given))
         (self.tmp / "mine").write_text("")
         self.assertEqual(bs.keys_file(given), str(self.tmp / "mine"))
 
-    def test_petra_host_home_names_your_home(self):
+    def test_inferpilot_host_home_names_your_home(self):
         home = self.tmp / "u"
         home.mkdir()
-        co = make_checkout(self.tmp / "workspace" / "Petra")
-        s = S("/", HOME=str(self.root), PETRA_HOME=str(co), PETRA_HOST_HOME=str(home))
+        co = make_checkout(self.tmp / "workspace" / "inferpilot")
+        s = S("/", HOME=str(self.root), INFERPILOT_HOME=str(co), INFERPILOT_HOST_HOME=str(home))
         self.assertEqual((bs.owner_dirs(s), bs.keys_file(s)), ([str(home)], ""))
         self.assertIn("nor one in %s" % home, bs.keys_missing(s))
-        (home / ".petra_env").write_text("")
-        self.assertEqual(bs.keys_file(s), str(home / ".petra_env"))
-        gone = S("/", HOME=str(self.root), PETRA_HOME=str(co), PETRA_HOST_HOME=str(self.tmp / "elsewhere"))
+        (home / ".inferpilot_env").write_text("")
+        self.assertEqual(bs.keys_file(s), str(home / ".inferpilot_env"))
+        gone = S("/", HOME=str(self.root), INFERPILOT_HOME=str(co), INFERPILOT_HOST_HOME=str(self.tmp / "elsewhere"))
         self.assertEqual((bs.owner_dirs(gone), bs.keys_file(gone)), ([], ""))
         self.assertIn("(not mounted)", bs.keys_missing(gone))
 
     def test_no_keys_file_sets_up_the_rest(self):
-        s = S("/", HOME=str(self.root), PETRA_HOME="/nonexistent/Petra")
+        s = S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/inferpilot")
         with mock.patch.object(bs, "container_name", return_value=""), Quiet() as q:
             self.assertEqual(bs.ensure_keys(s), ("skipped", "no keys file"))
-        self.assertIn("no %s" % (self.root / ".petra_env"), q.err.getvalue())
+        self.assertIn("no %s" % (self.root / ".inferpilot_env"), q.err.getvalue())
 
     def test_a_checkout_of_root_names_no_home(self):
-        """Petra cloned into /workspace belongs to root, which says nothing about your home."""
-        s = S("/", HOME="/root", PETRA_HOME=str(make_checkout(self.tmp / "workspace" / "Petra")))
+        """InferPilot cloned into /workspace belongs to root, which says nothing about your home."""
+        s = S("/", HOME="/root", INFERPILOT_HOME=str(make_checkout(self.tmp / "workspace" / "inferpilot")))
         of_root = os.stat_result((0o40755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
         with mock.patch.object(bs.os, "stat", return_value=of_root):
             self.assertEqual(bs.owner_dirs(s), [])
@@ -138,9 +138,9 @@ class KeysTest(unittest.TestCase):
         """As run_docker.sh names containers: your login, or your login and a suffix."""
         homes = self.tmp / "home"
         (homes / "alice").mkdir(parents=True)
-        (homes / "alice" / ".petra_env").write_text("")
+        (homes / "alice" / ".inferpilot_env").write_text("")
         (homes / "ali").mkdir()
-        (homes / "ali" / ".petra_env").write_text("")
+        (homes / "ali" / ".inferpilot_env").write_text("")
         make_exe(homes / "bare" / ".local" / "bin" / "claude")
         for name in ("alice", "alice-0116", "alice_sgl", "alice.dev"):
             self.assertEqual(bs.home_from_container_name(name, str(homes)), str(homes / "alice"), name)
@@ -150,7 +150,7 @@ class KeysTest(unittest.TestCase):
         self.assertEqual(bs.home_from_container_name("alice", str(homes / "missing")), "")
 
     def test_container_name_from_the_variable_or_docker(self):
-        self.assertEqual(bs.container_name({"PETRA_CONTAINER": "box"}), "box")
+        self.assertEqual(bs.container_name({"INFERPILOT_CONTAINER": "box"}), "box")
         cid = "a" * 64
         info = "1 0 8:1 /var/lib/docker/containers/%s/resolv.conf /etc/resolv.conf rw - ext4 /dev/sda1 rw\n" % cid
         with mock.patch.object(bs, "_read", return_value=info), mock.patch.object(bs, "_has", return_value=True), \
@@ -169,52 +169,52 @@ class KeysTest(unittest.TestCase):
         """A container your own docker run started with /home mounted, named after your login."""
         homes = self.tmp / "home"
         (homes / "alice").mkdir(parents=True)
-        (homes / "alice" / ".petra_env").write_text("")
-        s = S("/", HOME=str(self.root), PETRA_HOME="/nonexistent/Petra")
+        (homes / "alice" / ".inferpilot_env").write_text("")
+        s = S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/inferpilot")
         with mock.patch.object(bs, "HOMES", str(homes)), \
                 mock.patch.object(bs, "container_name", return_value="alice-0116"), Quiet() as q:
-            self.assertEqual(bs.ensure_keys(s), ("found", str(homes / "alice" / ".petra_env")))
+            self.assertEqual(bs.ensure_keys(s), ("found", str(homes / "alice" / ".inferpilot_env")))
         self.assertIn("named after (alice-0116)", q.err.getvalue())
-        self.assertIn("PETRA_KEYS=<your keys file>", q.err.getvalue())
-        self.assertEqual(bs.keys_file(s), str(homes / "alice" / ".petra_env"))
-        s = S("/", HOME=str(self.root), PETRA_HOME="/nonexistent/Petra")
+        self.assertIn("INFERPILOT_KEYS=<your keys file>", q.err.getvalue())
+        self.assertEqual(bs.keys_file(s), str(homes / "alice" / ".inferpilot_env"))
+        s = S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/inferpilot")
         with mock.patch.object(bs, "HOMES", str(homes)), \
                 mock.patch.object(bs, "container_name", return_value="box"), Quiet() as q:
             self.assertEqual(bs.ensure_keys(s)[0], "skipped")
         self.assertIn("matches this container's name (box)", q.err.getvalue())
-        for given in (S("/", HOME=str(self.root), PETRA_HOME="/nonexistent/Petra", PETRA_HOST_HOME=str(self.tmp / "x")),
-                      S("/", HOME=str(self.root), PETRA_HOME="/nonexistent/Petra", PETRA_KEYS=str(self.tmp / "x"))):
+        for given in (S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/inferpilot", INFERPILOT_HOST_HOME=str(self.tmp / "x")),
+                      S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/inferpilot", INFERPILOT_KEYS=str(self.tmp / "x"))):
             with mock.patch.object(bs, "HOMES", str(homes)), \
                     mock.patch.object(bs, "container_name", return_value="alice") as name, Quiet():
-                self.assertEqual(bs.ensure_keys(given)[0], "skipped", "a PETRA_HOST_HOME or PETRA_KEYS you set wins")
+                self.assertEqual(bs.ensure_keys(given)[0], "skipped", "a INFERPILOT_HOST_HOME or INFERPILOT_KEYS you set wins")
             name.assert_not_called()
 
 
 class CheckoutTest(unittest.TestCase):
     def test_existing_checkouts_are_kept(self):
         with tempfile.TemporaryDirectory() as d:
-            co = make_checkout(Path(d) / "Petra")
+            co = make_checkout(Path(d) / "inferpilot")
             with mock.patch.object(bs, "_run") as run, Quiet():
                 self.assertEqual(bs.ensure_checkout(S(co))[0], "kept")
-                self.assertEqual(bs.ensure_checkout(S(d, PETRA_HOME=str(co)))[0], "kept")
+                self.assertEqual(bs.ensure_checkout(S(d, INFERPILOT_HOME=str(co)))[0], "kept")
             run.assert_not_called()
 
     def test_other_content_is_left_alone(self):
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "Petra").mkdir()
-            (Path(d) / "Petra" / "notes.txt").write_text("mine")
+            (Path(d) / "inferpilot").mkdir()
+            (Path(d) / "inferpilot" / "notes.txt").write_text("mine")
             with mock.patch.object(bs, "_run") as run, Quiet():
                 self.assertEqual(bs.ensure_checkout(S(d))[0], "skipped")
             run.assert_not_called()
-            self.assertEqual((Path(d) / "Petra" / "notes.txt").read_text(), "mine")
+            self.assertEqual((Path(d) / "inferpilot" / "notes.txt").read_text(), "mine")
 
     def test_clone_only_when_missing(self):
         with tempfile.TemporaryDirectory() as d:
             with mock.patch.object(bs, "_has", return_value=True), mock.patch.object(bs, "give_back") as back, \
                     mock.patch.object(bs, "_run", return_value=OK) as run, Quiet():
-                self.assertEqual(bs.ensure_checkout(S(d, PETRA_REF="main"))[0], "created")
-            run.assert_called_once_with(["git", "clone", "--branch", "main", bs.DEFAULT_REPO_URL, str(Path(d) / "Petra")])
-            back.assert_called_once_with(str(Path(d) / "Petra"))
+                self.assertEqual(bs.ensure_checkout(S(d, INFERPILOT_REF="main"))[0], "created")
+            run.assert_called_once_with(["git", "clone", "--branch", "main", bs.DEFAULT_REPO_URL, str(Path(d) / "inferpilot")])
+            back.assert_called_once_with(str(Path(d) / "inferpilot"))
             with mock.patch.object(bs, "_has", return_value=False), Quiet():
                 self.assertEqual(bs.ensure_checkout(S(d))[0], "failed")
 
@@ -274,7 +274,7 @@ class RunDockerTest(unittest.TestCase):
     def test_an_existing_container_is_entered_again(self):
         """With your home, also in a container this script did not start."""
         inspect = "inspect -f {{.Config.Image}} tester"
-        enter = [inspect, "start tester", "exec -it -w /workspace -e PETRA_CONTAINER=tester tester bash"]
+        enter = [inspect, "start tester", "exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash"]
         self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old"), (0, enter))
         self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", image="rocm/sgl-dev:old"), (0, enter))
         self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", image="rocm/sgl-dev:new"), (1, [inspect]))
@@ -297,15 +297,15 @@ class RunDockerTest(unittest.TestCase):
         self.assertIn("-w /workspace", run)
         self.assertTrue(run.endswith("--name tester rocm/sgl-dev:new"), run)
         self.assertNotIn("-v /home:/home", run, "your home stays out: it holds credentials the agents do not need")
-        self.assertNotIn("PETRA_HOST_HOME", run)
-        self.assertNotIn(".petra_env", run, "no keys file to mount")
+        self.assertNotIn("INFERPILOT_HOST_HOME", run)
+        self.assertNotIn(".inferpilot_env", run, "no keys file to mount")
 
     def test_the_keys_file_is_mounted_read_only(self):
         home = self.tmp / "home"
         home.mkdir()
-        (home / ".petra_env").write_text("export LLM_GATEWAY_KEY=k\n")
+        (home / ".inferpilot_env").write_text("export LLM_GATEWAY_KEY=k\n")
         rc, calls = self.run_docker(image="rocm/sgl-dev:new")
-        self.assertIn("-v %s:/root/.petra_env:ro" % (home / ".petra_env"), calls[-1])
+        self.assertIn("-v %s:/root/.inferpilot_env:ro" % (home / ".inferpilot_env"), calls[-1])
 
 
 class ClaudeCodeTest(unittest.TestCase):
@@ -407,10 +407,10 @@ class ShellRcTest(unittest.TestCase):
     @unittest.skipUnless(shutil.which("bash"), "needs bash")
     def test_container_env_and_keys_added_once(self):
         host = self.home / "u"
-        co = make_checkout(host / "Petra")
+        co = make_checkout(host / "inferpilot")
         make_exe(host / ".local" / "bin" / "claude")
-        (host / ".petra_env").write_text("export ANTHROPIC_API_KEY=sk-test\n")
-        s = S("/", HOME=str(self.home), SHELL="/bin/bash", PETRA_HOME=str(co))
+        (host / ".inferpilot_env").write_text("export ANTHROPIC_API_KEY=sk-test\n")
+        s = S("/", HOME=str(self.home), SHELL="/bin/bash", INFERPILOT_HOME=str(co))
         with Quiet():
             self.assertEqual(bs.ensure_shell_env(s)[0], "added")
             self.assertEqual(bs.ensure_shell_env(s)[0], "kept")
@@ -422,10 +422,10 @@ class ShellRcTest(unittest.TestCase):
     @unittest.skipUnless(shutil.which("bash"), "needs bash")
     def test_keys_put_in_place_later_load(self):
         """Where run_docker.sh mounts your keys; one written there after the bootstrap loads too."""
-        s = S("/", HOME=str(self.home), SHELL="/bin/bash", PETRA_HOME="/nonexistent/Petra")
+        s = S("/", HOME=str(self.home), SHELL="/bin/bash", INFERPILOT_HOME="/nonexistent/inferpilot")
         with Quiet():
             self.assertEqual(bs.ensure_shell_env(s)[0], "added")
-        (self.home / ".petra_env").write_text("export LLM_GATEWAY_KEY=k9\n")
+        (self.home / ".inferpilot_env").write_text("export LLM_GATEWAY_KEY=k9\n")
         out = subprocess.run(["bash", "-c", 'source "$1"; echo "$LLM_GATEWAY_KEY|$ANTHROPIC_AUTH_TOKEN"', "_", str(self.rc)],
                              env={"PATH": "/usr/bin:/bin"}, capture_output=True, text=True).stdout
         self.assertEqual(out.strip(), "k9|k9")
@@ -433,10 +433,10 @@ class ShellRcTest(unittest.TestCase):
     @unittest.skipUnless(shutil.which("bash"), "needs bash")
     def test_an_amd_gateway_key_points_claude_code_at_the_gateway(self):
         host = self.home / "u"
-        co = make_checkout(host / "Petra")
+        co = make_checkout(host / "inferpilot")
         make_exe(host / ".local" / "bin" / "claude")
-        (host / ".petra_env").write_text("export LLM_GATEWAY_KEY=k123\n")
-        s = S("/", HOME=str(self.home), SHELL="/bin/bash", PETRA_HOME=str(co))
+        (host / ".inferpilot_env").write_text("export LLM_GATEWAY_KEY=k123\n")
+        s = S("/", HOME=str(self.home), SHELL="/bin/bash", INFERPILOT_HOME=str(co))
         with Quiet():
             self.assertEqual(bs.ensure_shell_env(s)[0], "added")
         show = 'source "$1"; echo "$ANTHROPIC_BASE_URL|$ANTHROPIC_CUSTOM_HEADERS|$ANTHROPIC_AUTH_TOKEN"'
@@ -446,7 +446,7 @@ class ShellRcTest(unittest.TestCase):
         out = subprocess.run(["bash", "-c", show, "_", str(self.rc)], capture_output=True, text=True,
                              env={"PATH": "/usr/bin:/bin", "ANTHROPIC_BASE_URL": "https://mine"}).stdout
         self.assertEqual(out.strip(), "https://mine||", "a gateway already chosen is kept")
-        (host / ".petra_env").write_text("export ANTHROPIC_API_KEY=sk-test\n")
+        (host / ".inferpilot_env").write_text("export ANTHROPIC_API_KEY=sk-test\n")
         out = subprocess.run(["bash", "-c", show, "_", str(self.rc)], env={"PATH": "/usr/bin:/bin"},
                              capture_output=True, text=True).stdout
         self.assertEqual(out.strip(), "||", "without the gateway key nothing changes")
@@ -461,7 +461,7 @@ class ClaudeConfigTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root_home = Path(tmp.name) / "root"
         self.root_home.mkdir()
-        self.s = S("/", HOME=str(self.root_home), PETRA_HOME="/workspace/Petra")
+        self.s = S("/", HOME=str(self.root_home), INFERPILOT_HOME="/workspace/inferpilot")
         self.config = self.root_home / ".claude.json"
         self.user_settings = self.root_home / ".claude" / "settings.json"
 
@@ -474,7 +474,7 @@ class ClaudeConfigTest(unittest.TestCase):
             self.assertEqual(bs.ensure_claude_config(self.s, env={})[0], "kept")
         data = self.read()
         self.assertTrue(data["hasCompletedOnboarding"] and data["bypassPermissionsModeAccepted"])
-        self.assertTrue(data["projects"]["/workspace/Petra"]["hasTrustDialogAccepted"])
+        self.assertTrue(data["projects"]["/workspace/inferpilot"]["hasTrustDialogAccepted"])
         self.assertNotIn("customApiKeyResponses", data, "no Anthropic API key, nothing to approve")
         self.assertEqual(stat.S_IMODE(os.stat(self.config).st_mode), 0o600)
         self.assertEqual(json.loads(self.user_settings.read_text()), {"skipDangerousModePermissionPrompt": True},
@@ -491,12 +491,12 @@ class ClaudeConfigTest(unittest.TestCase):
 
     def test_an_api_key_is_approved_by_its_last_20_characters(self):
         key = "sk-ant-api03-" + "0123456789" * 3
-        (self.root_home / ".petra_env").write_text('export ANTHROPIC_API_KEY="%s"\n' % key)
+        (self.root_home / ".inferpilot_env").write_text('export ANTHROPIC_API_KEY="%s"\n' % key)
         with Quiet():
             bs.ensure_claude_config(self.s, env={})
         self.assertEqual(self.read()["customApiKeyResponses"]["approved"], [key[-20:]])
         for line in ("export ANTHROPIC_API_KEY='<your key>'\n", "export ANTHROPIC_API_KEY=$OTHER_KEY\n"):
-            (self.root_home / ".petra_env").write_text(line)
+            (self.root_home / ".inferpilot_env").write_text(line)
             self.assertEqual(bs.anthropic_api_key(self.s, env={}), "", line)
 
     def test_claude_config_dir_and_a_config_that_is_not_json(self):
@@ -546,7 +546,7 @@ class GitIdentityTest(unittest.TestCase):
         self.addCleanup(patch.stop)
         for v in bs.IDENTITY_VARS:
             os.environ.pop(v, None)  # restored by the patch
-        self.keys = self.root / ".petra_env"
+        self.keys = self.root / ".inferpilot_env"
         self.s = S(self.root)
 
     def root_identity(self):
@@ -554,17 +554,17 @@ class GitIdentityTest(unittest.TestCase):
         return get("user.name"), get("user.email")
 
     def test_root_commits_as_the_keys_file_says(self):
-        self.keys.write_text('export LLM_GATEWAY_KEY=k\nexport PETRA_GIT_NAME="Ada L"\nexport PETRA_GIT_EMAIL=ada@example.com\n')
+        self.keys.write_text('export LLM_GATEWAY_KEY=k\nexport INFERPILOT_GIT_NAME="Ada L"\nexport INFERPILOT_GIT_EMAIL=ada@example.com\n')
         with Quiet():
             self.assertEqual(bs.ensure_git_identity(self.s), ("added", "Ada L <ada@example.com>"))
             self.assertEqual(bs.ensure_git_identity(self.s)[0], "kept")
         self.assertEqual(self.root_identity(), ("Ada L", "ada@example.com"))
 
     def test_the_environment_counts_and_a_new_identity_replaces_the_old(self):
-        self.keys.write_text("export PETRA_GIT_NAME=Bob\nexport PETRA_GIT_EMAIL=bob@example.com\n")
+        self.keys.write_text("export INFERPILOT_GIT_NAME=Bob\nexport INFERPILOT_GIT_EMAIL=bob@example.com\n")
         with Quiet():
             bs.ensure_git_identity(self.s)
-        with mock.patch.dict(os.environ, {"PETRA_GIT_NAME": "Ada", "PETRA_GIT_EMAIL": "ada@example.com"}), Quiet():
+        with mock.patch.dict(os.environ, {"INFERPILOT_GIT_NAME": "Ada", "INFERPILOT_GIT_EMAIL": "ada@example.com"}), Quiet():
             self.assertEqual(bs.ensure_git_identity(self.s)[0], "updated")
         self.assertEqual(self.root_identity(), ("Ada", "ada@example.com"))
 
@@ -577,14 +577,14 @@ class GitIdentityTest(unittest.TestCase):
 
     def test_none_is_said_not_invented(self):
         for text in ("export LLM_GATEWAY_KEY=k\n",  # no identity at all
-                     "export PETRA_GIT_NAME=<your name>\nexport PETRA_GIT_EMAIL=<your email>\n",  # the README's placeholders
-                     "export PETRA_GIT_NAME=Ada\n"):  # half of one
+                     "export INFERPILOT_GIT_NAME=<your name>\nexport INFERPILOT_GIT_EMAIL=<your email>\n",  # the README's placeholders
+                     "export INFERPILOT_GIT_NAME=Ada\n"):  # half of one
             self.keys.write_text(text)
             err = io.StringIO()
             with redirect_stderr(err), redirect_stdout(io.StringIO()):
                 self.assertEqual(bs.ensure_git_identity(self.s)[0], "skipped", text)
             self.assertEqual(self.root_identity(), ("", ""))
-            self.assertIn("PETRA_GIT_EMAIL", err.getvalue())
+            self.assertIn("INFERPILOT_GIT_EMAIL", err.getvalue())
 
 
 class FrameworkTest(unittest.TestCase):
@@ -635,7 +635,7 @@ class FrameworkTest(unittest.TestCase):
                        "remote": (0, "git@github.com:sgl-project/sglang.git", "")}
             with mock.patch.object(bs, "_out", side_effect=lambda cmd: answers[cmd[3]]), \
                     mock.patch.object(bs, "_run") as run, Quiet() as q:
-                self.assertEqual(bs.ensure_framework(S(d, PETRA_FRAMEWORK_DIR=str(fw)))[0], "kept")
+                self.assertEqual(bs.ensure_framework(S(d, INFERPILOT_FRAMEWORK_DIR=str(fw)))[0], "kept")
             run.assert_not_called()
             self.assertIn("shallow", q.err.getvalue())
             self.assertNotIn("tracks", q.err.getvalue())
@@ -646,7 +646,7 @@ class FrameworkTest(unittest.TestCase):
             fw.mkdir()
             (fw / "notes.txt").write_text("mine")
             with mock.patch.object(bs, "_run") as run, Quiet():
-                self.assertEqual(bs.ensure_framework(S(d, PETRA_FRAMEWORK_DIR=str(fw)))[0], "skipped")
+                self.assertEqual(bs.ensure_framework(S(d, INFERPILOT_FRAMEWORK_DIR=str(fw)))[0], "skipped")
             run.assert_not_called()
 
     def test_missing_is_cloned_blobless_and_given_back(self):
@@ -654,7 +654,7 @@ class FrameworkTest(unittest.TestCase):
             fw = Path(d) / "src" / "sglang"
             with mock.patch.object(bs, "_has", return_value=True), mock.patch.object(bs, "give_back") as back, \
                     mock.patch.object(bs, "_run", return_value=OK) as run, Quiet():
-                self.assertEqual(bs.ensure_framework(S(d, PETRA_FRAMEWORK_DIR=str(fw)))[0], "created")
+                self.assertEqual(bs.ensure_framework(S(d, INFERPILOT_FRAMEWORK_DIR=str(fw)))[0], "created")
             run.assert_called_once_with(["git", "clone", "--filter=blob:none", bs.DEFAULT_FRAMEWORK_REPO, str(fw)])
             back.assert_called_once_with(str(fw))
 
@@ -674,9 +674,9 @@ class ReportTest(unittest.TestCase):
             (Path(d) / ".claude" / ".credentials.json").write_text("{}")
             self.assertTrue(bs.api_configured({}, d))
 
-    def test_keys_in_petra_env_count_before_the_shell_loads_them(self):
+    def test_keys_in_inferpilot_env_count_before_the_shell_loads_them(self):
         with tempfile.TemporaryDirectory() as d:
-            keys = Path(d) / ".petra_env"
+            keys = Path(d) / ".inferpilot_env"
             keys.write_text("# keys\nexport LLM_GATEWAY_KEY=0123abcd\nexport GITHUB_TOKEN='<your GitHub token>'\n")
             self.assertEqual(bs.keys_defined(str(keys)), {"LLM_GATEWAY_KEY"})
             with mock.patch.object(bs, "_has", return_value=True), mock.patch.object(bs, "in_container", return_value=True), Quiet() as q:
@@ -691,27 +691,27 @@ class ReportTest(unittest.TestCase):
 
     def test_next_steps_in_a_new_container(self):
         with tempfile.TemporaryDirectory() as d:
-            co = make_checkout(Path(d) / "workspace" / "Petra")
-            s = bs.settings({"PWD": "/", "HOME": d, "PETRA_HOME": str(co), "PETRA_FRAMEWORK_DIR": "/x/sglang"})
+            co = make_checkout(Path(d) / "workspace" / "inferpilot")
+            s = bs.settings({"PWD": "/", "HOME": d, "INFERPILOT_HOME": str(co), "INFERPILOT_FRAMEWORK_DIR": "/x/sglang"})
             with mock.patch.object(bs, "in_container", return_value=True):
                 fresh = bs.next_steps(s, {"shell": "added"}, {"api": False}, path_env="/usr/bin")
-                (Path(d) / ".petra_env").write_text("export GITHUB_TOKEN=x\n")
+                (Path(d) / ".inferpilot_env").write_text("export GITHUB_TOKEN=x\n")
                 with_keys = bs.next_steps(s, {"shell": "added"}, {"api": False}, path_env="/usr/bin")
                 ready = bs.next_steps(s, {"shell": "kept", "claude-config": "added"}, {"api": True}, path_env="/usr/bin")
                 unanswered = bs.next_steps(s, {"shell": "kept", "claude-config": "skipped"}, {"api": True}, path_env="/usr/bin")
             self.assertIn("source %s" % os.path.join(d, ".bashrc"), fresh)
-            self.assertIn("in ~/.petra_env on the host (README step 1)", fresh)
-            self.assertIn("for this container only in %s" % os.path.join(d, ".petra_env"), fresh)
+            self.assertIn("in ~/.inferpilot_env on the host (README step 1)", fresh)
+            self.assertIn("for this container only in %s" % os.path.join(d, ".inferpilot_env"), fresh)
             self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", fresh)
             self.assertIn("again in every new container", fresh)
-            self.assertIn("in %s, which new shells load" % os.path.join(d, ".petra_env"), with_keys)
+            self.assertIn("in %s, which new shells load" % os.path.join(d, ".inferpilot_env"), with_keys)
             self.assertIn("cd %s && IS_SANDBOX=1 claude --dangerously-skip-permissions" % co, ready)
             self.assertIn("framework_dir=/x/sglang, gpu_ids=0\n", ready + "\n")
             self.assertNotIn("source", ready)
             self.assertNotIn("trust this folder", ready, "the config answered the first-start questions")
             self.assertIn("Yes, I trust this folder", unanswered)
-            self.assertNotIn("petra.js", bs.next_steps(s, {}, {"api": True}, path_env="/usr/bin", claude_only=True))
-            (Path(d) / ".petra_env").write_text("export LLM_GATEWAY_KEY=k\n")
+            self.assertNotIn("inferpilot.js", bs.next_steps(s, {}, {"api": True}, path_env="/usr/bin", claude_only=True))
+            (Path(d) / ".inferpilot_env").write_text("export LLM_GATEWAY_KEY=k\n")
             with mock.patch.object(bs, "in_container", return_value=True), mock.patch.dict(os.environ, {}, clear=True):
                 unchecked = bs.next_steps(s, {}, None, path_env="/usr/bin", claude_only=True)
             self.assertNotIn("API access", unchecked, "--claude-only runs no checks; the keys file still counts")
@@ -722,7 +722,7 @@ class MainTest(unittest.TestCase):
              "ensure_git_trust", "ensure_git_identity", "ensure_shell_env", "ensure_framework"]
 
     def run_main(self, argv, container=False, root=False, failing=None, status=None):
-        env = {k: v for k, v in os.environ.items() if not k.startswith("PETRA_")}
+        env = {k: v for k, v in os.environ.items() if not k.startswith("INFERPILOT_")}
         status = dict(status or {}, **({failing: "failed"} if failing else {}))
         with ExitStack() as stack:
             stack.enter_context(mock.patch.dict(os.environ, env, clear=True))
@@ -738,7 +738,7 @@ class MainTest(unittest.TestCase):
         return [n for n in self.STEPS if m[n].called]
 
     def test_skip(self):
-        with mock.patch.dict(os.environ, {"PETRA_SKIP_BOOTSTRAP": "1"}), \
+        with mock.patch.dict(os.environ, {"INFERPILOT_SKIP_BOOTSTRAP": "1"}), \
                 mock.patch.object(bs, "ensure_claude_code") as ens, Quiet():
             self.assertEqual(bs.main([]), 0)
         ens.assert_not_called()

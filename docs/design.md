@@ -1,9 +1,9 @@
-# Petra design
+# InferPilot design
 
-Petra is the framework agent for AMD GPUs in open-source LLM inference frameworks, starting with
+InferPilot is the framework agent for AMD GPUs in open-source LLM inference frameworks, starting with
 sglang. This document records why it exists and how its parts map onto the design agreed in the
 internal "Framework Agent on GEAK" page. The operational contract lives in `knowledge/` and
-`petra.js`; this file explains the shape.
+`inferpilot.js`; this file explains the shape.
 
 ## 1. Demand: building the AMD ecosystem in the community
 
@@ -40,9 +40,9 @@ Where that stands, from sglang's history and issues (October 2026):
   raises the throughput of the current workload, so correctness-first features (deterministic
   inference), capacity features (HiCache) and ports that need redesign (HiSparse V2 from DSA to
   DeepSeek-V4.1's compressed KV) stay out of scope. The two complement each other: Hyperloom's
-  candidates are Petra inputs, Petra's features become Hyperloom options.
+  candidates are InferPilot inputs, InferPilot's features become Hyperloom options.
 
-| | GEAK kernel_workflow | GEAK e2e_workflow | Hyperloom framework agent | Petra |
+| | GEAK kernel_workflow | GEAK e2e_workflow | Hyperloom framework agent | InferPilot |
 |---|---|---|---|---|
 | goal | one faster kernel | a faster serving stack | higher throughput for a workload (with a PR to start from) | the AMD ecosystem: periodic scanning, bug fixes, fast full-compatibility feature support, NV-level performance without a PR to start from |
 | input | kernel + reference | model + serving config | model + workload | upstream features, user issues, CI failures, with target model and platform |
@@ -61,11 +61,11 @@ Where that stands, from sglang's history and issues (October 2026):
 
 `mode=scan` collects all of them (`scripts/scan_*.py`, `scripts/audit_*.py`) and ranks the queue.
 
-## 4. Modules → Petra
+## 4. Modules → InferPilot
 
-| Design module | Petra |
+| Design module | InferPilot |
 |---|---|
-| task intake: a request in plain words becomes a task definition every phase can start from; missing information comes back as questions | `intake` (define), `templates/task_definition.md`; `petra.js` checks every definition against what its mode needs |
+| task intake: a request in plain words becomes a task definition every phase can start from; missing information comes back as questions | `intake` (define), `templates/task_definition.md`; `inferpilot.js` checks every definition against what its mode needs |
 | upstream code scan, ecosystem matrix (feature × model × platform: available / unavailable) | `scout` (collect), `scripts/scan_upstream.py`, `knowledge/composability.md` §3 |
 | dispatch: gap type, CUDA dependencies and AMD counterparts, effort, priority by customer workload | `dispatcher`, `knowledge/dispatch.md` |
 | analysis: upstream design, do its assumptions hold on ROCm | `analyst` (recon: code map + assumption table) |
@@ -79,11 +79,11 @@ Where that stands, from sglang's history and issues (October 2026):
 | PR and upstream CI: formatting, minimal diff, HIP-only or switch-gated, data in the description, CI fixes and rebases; owner answers review, maintainers merge | `pr_engineer`, `knowledge/pr_playbook.md`, `guardrails.md` |
 | the framework's own procedures (tests, kernels, profiling, crash debugging) | referenced in place from the task worktree through `knowledge/frameworks/sglang/skills.md`; ROCm differences in `knowledge/platforms/rocm_skills.md`; drift checked by `scripts/check_framework_skills.py` |
 | knowledge: feature skills, known issues, CUDA → AMD table, pitfalls | `curator`, `knowledge/` |
-| safety: measured data wins, budgets, automatic rollback | `petra.js` (budgets, independent gates, rollback), `knowledge/guardrails.md` |
+| safety: measured data wins, budgets, automatic rollback | `inferpilot.js` (budgets, independent gates, rollback), `knowledge/guardrails.md` |
 
 ## 5. Orchestration
 
-`petra.js` follows GEAK's rule: control flow is deterministic code; agents are called only for
+`inferpilot.js` follows GEAK's rule: control flow is deterministic code; agents are called only for
 judgement and for the work, and return structured JSON whose gate fields the script reads.
 
 ```
@@ -96,7 +96,7 @@ perf     Setup → Profile → Plan ──────────────�
 scan     Collect → Dispatch → Report
 ```
 
-The task definition (`templates/task_definition.md`) is `petra.js`'s own arguments, so a definition
+The task definition (`templates/task_definition.md`) is `inferpilot.js`'s own arguments, so a definition
 from the intake, from a scan's queue or written by hand starts the same way. Fields given in the call
 win over the user's answers, answers over what the intake inferred; a deterministic check of what each
 mode needs runs on every definition, so an intake that calls a definition ready cannot start a run
@@ -104,22 +104,22 @@ that lacks its model or its workload.
 
 Kernel back ends (`kernel_backend`): `none` records hand-offs (default), `geak` nests GEAK's single-
 language kernel lane once from the checkout `kernel_backend_dir` (as GEAK's e2e_workflow does),
-`command` runs any other CLI. A gain is integrated by the implementer and judged by Petra's own gates;
+`command` runs any other CLI. A gain is integrated by the implementer and judged by InferPilot's own gates;
 a failing back end never blocks a task. An integrated kernel that fails Verify is reverted to the
 functional kernel and handed back once with the failing case as a test (`kernel_backends.md`). The
 `geak` back end is the only place a run uses GEAK;
-outside Claude Code, GEAK's workflow runtime is what executes `petra.js` (other CLIs, the dry run).
+outside Claude Code, GEAK's workflow runtime is what executes `inferpilot.js` (other CLIs, the dry run).
 
-Petra runs inside the framework's ROCm container as root, as GEAK does, next to the GPUs and the
+InferPilot runs inside the framework's ROCm container as root, as GEAK does, next to the GPUs and the
 framework's Python environment. Each task gets its own container, and what it works on lives in that
-container, apart from every other container's: Petra's checkout and the run directories in `/workspace`,
+container, apart from every other container's: InferPilot's checkout and the run directories in `/workspace`,
 and the image's own sglang checkout. `scripts/run_docker.sh` takes the user back into an existing container and never
 removes one. As in GEAK's CI and Hyperloom, Claude Code is installed in each container, its first-start
 questions answered in its config, and the user's home is not mounted: from it the container gets only
-the keys file, `~/.petra_env`, read-only, since the agents run as root with permissions auto-approved
+the keys file, `~/.inferpilot_env`, read-only, since the agents run as root with permissions auto-approved
 and a home holds credentials they do not need. What a run writes as root into a checkout on a host mount
 goes back to its owner (`scripts/restore_owner.sh`).
-Machines are shared: one Petra task runs per machine at a
+Machines are shared: one InferPilot task runs per machine at a
 time (a lock in `/dev/shm`, `scripts/run_lock.py`; a second run ends as `busy`), a run uses only the
 GPUs Setup pinned (through `HIP_VISIBLE_DEVICES`) and touches only the processes and containers it
 started; the host's Docker socket is not mounted by default. Tasks test the newest sglang: unless the user names an
@@ -130,7 +130,7 @@ checkout, `/sgl-workspace/sglang`, so what runs is what is checked out there: se
 once per container (discarding only the image build's packaging changes), and each task works in it
 on its own branch from the current main, which Setup fetches first; a dirty checkout stops Setup. A
 baseline at the base commit, and a scan of the current main, read worktrees of the same repository
-under the run directory. Run directories live in the container's `<petra_dir>/exp`, with an `index.md`
+under the run directory. Run directories live in the container's `<inferpilot_dir>/exp`, with an `index.md`
 that lists every run; the PR engineer writes the task's commits there as patches, so the change can
 leave the container. A run in another container is never taken over for silence, since its run
 directory is not visible: `run_lock.py release --force` frees a lock whose run is gone.
@@ -160,7 +160,7 @@ directory is not visible: `run_lock.py release --force` frees a lock whose run i
   pushed; issue replies are drafts; a scan's daily report is a file a human shares, checked to name
   nothing about the machine (`scripts/daily_report.py`), and a shared copy is where the next scan, in
   any container, continues from. The one post is the curator's knowledge changes, as a pull request to
-  main of Petra's own repository with a token for it alone (`scripts/propose_knowledge.py`), so
+  main of InferPilot's own repository with a token for it alone (`scripts/propose_knowledge.py`), so
   knowledge a run proved reaches later runs only once a human merged it.
 
 ## 6. Priorities and difficulty
@@ -190,7 +190,7 @@ Kimi-K3.X, MiniMax-M3.X, GPT-OSS). Nightly minimum: DP + EP + MTP.
 
 The agent proposes PRs; the owner answers review; maintainers merge. High-risk changes (community
 merges, customer production services) always get a human review; the agent cannot carry that
-responsibility. PRs are judged by quality, not count. Petra adopts Hyperloom's lessons in its own form:
+responsibility. PRs are judged by quality, not count. InferPilot adopts Hyperloom's lessons in its own form:
 only the implementer edits source, in its own worktree; numbers come only from independent
 measurement; foreign patches pass `git apply --check`; a change without a measured win is rolled back.
 See `knowledge/guardrails.md`.
@@ -205,7 +205,7 @@ See `knowledge/guardrails.md`.
 
 Metric definitions (targets are kept in the internal design page): start delay (NV merge → AMD PR,
 framework-level, median); issue report → fix PR by someone else (median) and the share never answered;
-CI failure → fix PR (code regressions vs the rest); roadmap items with a Petra PR; PR quality (first-run
+CI failure → fix PR (code regressions vs the rest); roadmap items with a InferPilot PR; PR quality (first-run
 CI pass rate, review rounds).
 
 ## 10. Status

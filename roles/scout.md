@@ -13,9 +13,9 @@ Inputs: `sources` (any of `ci`, `issues`, `upstream`, which the daily report cov
 `[{"name": "vllm", "url": "https://github.com/vllm-project/vllm"}]`), `rescan`.
 
 The previous report is the newest scan under `exp_root` (its `daily_report.md`, or `task_queue.md` for
-a scan from before daily reports), else the newest report a human shared in Petra's repository, which
-every container sees: `python3 <petra_dir>/scripts/daily_report.py latest` prints its date, URL,
-`age_hours` and body (`{}` when there is none). Petra posts nothing; it only reads what was shared.
+a scan from before daily reports), else the newest report a human shared in InferPilot's repository, which
+every container sees: `python3 <inferpilot_dir>/scripts/daily_report.py latest` prints its date, URL,
+`age_hours` and body (`{}` when there is none). InferPilot posts nothing; it only reads what was shared.
 
 0. **One report a day.** Unless `rescan` is true: when the newest scan under `exp_root` started less
    than 24 hours ago (its directory name is its UTC start), or the newest shared report is younger
@@ -23,13 +23,13 @@ every container sees: `python3 <petra_dir>/scripts/daily_report.py latest` print
    `candidates_path: ""` and `recent` with its time (UTC), URL and run directory. The run then asks
    the user whether to scan again.
 1. Choose `RUN_DIR=<exp_root>/scan_<time>`, `<time>` from `date -u +%Y%m%d-%H%M%SZ` (UTC), and take the
-   machine first — one Petra task per machine: `python3 <petra_dir>/scripts/run_lock.py acquire
+   machine first — one InferPilot task per machine: `python3 <inferpilot_dir>/scripts/run_lock.py acquire
    --run-dir RUN_DIR --mode scan --task scan --idle-hours <lock_idle_hours>`. Exit 1 means another
    task holds it: create nothing and return `lock: "busy"`, `run_dir: ""`, `candidates_path: ""`, with
    the holder in `notes`. Otherwise create `RUN_DIR`, and copy the previous report into it as
    `RUN_DIR/previous_report.md` when there is one: the dispatcher marks what changed against it. Record
-   the image the scan runs on, which the report names: `printf '%s\n%s\n' "$PETRA_IMAGE" "$(python3
-   <petra_dir>/scripts/latest_image.py --compare "$PETRA_IMAGE")" > RUN_DIR/image.txt`. A scan reads code
+   the image the scan runs on, which the report names: `printf '%s\n%s\n' "$INFERPILOT_IMAGE" "$(python3
+   <inferpilot_dir>/scripts/latest_image.py --compare "$INFERPILOT_IMAGE")" > RUN_DIR/image.txt`. A scan reads code
    and GitHub, so an older image does not stop it.
 2. **Current main.** Read the framework as it is upstream now, not as `framework_dir` happens to be
    checked out: it may be on a task's branch, or still at the image's commit. `git -C <framework_dir>
@@ -39,21 +39,21 @@ every container sees: `python3 <petra_dir>/scripts/daily_report.py latest` print
    `ref` that names a file and line gives its path in the repository and the commit
    (`<path>:<line>@<sha>`).
 3. Per source, run the script and keep its JSON under `RUN_DIR`:
-   - `ci`: `python3 <petra_dir>/scripts/scan_ci.py --out RUN_DIR/ci.json --md RUN_DIR/ci.md` — the AMD CI
+   - `ci`: `python3 <inferpilot_dir>/scripts/scan_ci.py --out RUN_DIR/ci.json --md RUN_DIR/ci.md` — the AMD CI
      on main from its own runs and their logs (each failing job, since when, last passed, failed tests,
      first errors), and the Failure Trackers, which can be days behind main.
-   - `issues`: `python3 <petra_dir>/scripts/scan_issues.py --out RUN_DIR/issues.json`.
-   - `upstream`: `python3 <petra_dir>/scripts/scan_upstream.py --repo-dir <main> --since <since> --out RUN_DIR/upstream.json`
+   - `issues`: `python3 <inferpilot_dir>/scripts/scan_issues.py --out RUN_DIR/issues.json`.
+   - `upstream`: `python3 <inferpilot_dir>/scripts/scan_upstream.py --repo-dir <main> --since <since> --out RUN_DIR/upstream.json`
      — merged PRs, CUDA-first features and new CUDA-only gates. For each of `upstream_repos`, keep a
      blobless clone at `/workspace/upstream/<name>` (`git clone --filter=blob:none <url>` when missing,
      else `git fetch origin`), check out `origin/HEAD` detached, and write `RUN_DIR/upstream_<name>.json`
      the same way.
-   - `hardware`: `python3 <petra_dir>/scripts/audit_platform_gates.py <main>/python --out RUN_DIR/gates.json`
+   - `hardware`: `python3 <inferpilot_dir>/scripts/audit_platform_gates.py <main>/python --out RUN_DIR/gates.json`
      — gates a new architecture (e.g. gfx1250) must be re-checked against.
-   - `perf`: `python3 <petra_dir>/scripts/audit_host_syncs.py <attention backends and model runner under <main>> --out RUN_DIR/syncs.json`
+   - `perf`: `python3 <inferpilot_dir>/scripts/audit_host_syncs.py <attention backends and model runner under <main>> --out RUN_DIR/syncs.json`
      — leads only; a profile must confirm them.
-   - always: `python3 <petra_dir>/scripts/check_framework_skills.py --framework-dir <main> --out RUN_DIR/skills.json`
-     — framework skills that Petra's index names but the framework dropped, and new ones it does not
+   - always: `python3 <inferpilot_dir>/scripts/check_framework_skills.py --framework-dir <main> --out RUN_DIR/skills.json`
+     — framework skills that InferPilot's index names but the framework dropped, and new ones it does not
      name yet; the report lists them for the curator, they are not tasks.
 4. Merge into `RUN_DIR/candidates.json`: one entry per candidate with `source`, `ref` (PR, issue,
    cluster, file:line), `title`, `evidence`. Mark entries already present in the previous queue

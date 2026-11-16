@@ -28,10 +28,10 @@ seeing results. If it must change, stop and say why.
 5. Compute the metrics of `system_perf.md` §1 from the trace: GPU busy ratio, syncs per step,
    compute–communication overlap, CPU time / GPU time per step, padding share, allocator stalls.
 6. Map the gaps to the catalogue (§2). For host syncs, run
-   `python3 <petra_dir>/scripts/audit_host_syncs.py <files on the hot path>` and keep only the
+   `python3 <inferpilot_dir>/scripts/audit_host_syncs.py <files on the hot path>` and keep only the
    candidates the trace confirms.
 7. For each opportunity: where it is (file : function), the evidence, an **upper bound** of the gain
-   from the trace (the time it could remove at most), and the owner: `petra` (framework execution),
+   from the trace (the time it could remove at most), and the owner: `inferpilot` (framework execution),
    `kernel_workflow` (one kernel's speed, handled by the selected kernel back end) or `hyperloom` (flag
    and backend search).
 8. Fill `RUN_DIR/perf_analysis.md` (`templates/perf_analysis.md`).
@@ -43,7 +43,7 @@ Return:
  "path_evidence": "<intended vs effective: backend, graphs, compile, quantization, warnings>",
  "metrics": {"decode_gpu_busy": 0.71, "decode_syncs_per_step": 5},
  "opportunities": [{"id": "O1", "kind": "host_sync", "where": "aiter_backend.py:_resolve_v2_num_draft_tokens",
-   "evidence": "/abs/RUN_DIR/traces/decode.json", "upper_bound_pct": 3.5, "owner": "petra"}]}
+   "evidence": "/abs/RUN_DIR/traces/decode.json", "upper_bound_pct": 3.5, "owner": "inferpilot"}]}
 ```
 
 ## PHASE=perf_eval (G5 in feature and perf; guards in every mode that runs it)

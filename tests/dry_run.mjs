@@ -1,6 +1,6 @@
-// Dry run of petra.js on GEAK's workflow runtime with a scripted fake backend:
+// Dry run of inferpilot.js on GEAK's workflow runtime with a scripted fake backend:
 // no GPU, no network, no model. Each scenario scripts what the roles answer and
-// asserts the phases Petra walks through, the roles it calls and the final status.
+// asserts the phases InferPilot walks through, the roles it calls and the final status.
 //
 //   GEAK_HOME=/path/to/GEAK node tests/dry_run.mjs
 //
@@ -9,27 +9,27 @@ import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
 
-const PETRA = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const GEAK_HOME = process.env.GEAK_HOME || path.resolve(PETRA, '..', 'geak', 'GEAK');
+const INFERPILOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const GEAK_HOME = process.env.GEAK_HOME || path.resolve(INFERPILOT, '..', 'geak', 'GEAK');
 const ENGINE = path.join(GEAK_HOME, 'interface', 'runtime', 'engine', 'run_workflow.mjs');
 if (!existsSync(ENGINE)) {
   console.error(`GEAK runtime not found at ${ENGINE}; set GEAK_HOME`);
   process.exit(2);
 }
 const { createRuntime } = await import(pathToFileURL(ENGINE).href);
-const SCRIPT = path.join(PETRA, 'petra.js');
-const RUN = '/tmp/petra_dry_run';
+const SCRIPT = path.join(INFERPILOT, 'inferpilot.js');
+const RUN = '/tmp/inferpilot_dry_run';
 
-// A stand-in for GEAK's kernel_lane.js: echoes the arguments Petra passed (in `note`, a field Petra
+// A stand-in for GEAK's kernel_lane.js: echoes the arguments InferPilot passed (in `note`, a field InferPilot
 // keeps) and fails when the steer says FAIL.
-const FAKE_GEAK = '/tmp/petra_dry_run_geak';
+const FAKE_GEAK = '/tmp/inferpilot_dry_run_geak';
 mkdirSync(path.join(FAKE_GEAK, 'kernel_workflow'), { recursive: true });
 writeFileSync(path.join(FAKE_GEAK, 'kernel_workflow', 'kernel_lane.js'), `export const meta = { name: 'fake-kernel-lane', description: 'dry-run stub', phases: [] };
 if (String(args.task || '').includes('FAIL')) throw new Error('lane failed');
 return { validation_status: 'pass', final_speedup: 1.37, final_patch: args.exp_root + '/best.diff', eval_dir: args.exp_root + '/eval',
   note: JSON.stringify({ kernel_path: args.kernel_path, workflow_dir: args.workflow_dir, mode: args.mode, budget: args.budget,
     gpu_ids: args.gpu_ids, apply_to_original: args.apply_to_original }),
-  agent_timeline: { events: ['large record Petra must not forward'] } };
+  agent_timeline: { events: ['large record InferPilot must not forward'] } };
 `);
 
 const WP = (id, extra) => ({ id, goal: `goal of ${id}`, kind: 'framework', files: ['x.py'], test: `test ${id}`, depends_on: [], ...(extra || {}) });
@@ -37,7 +37,7 @@ const WP = (id, extra) => ({ id, goal: `goal of ${id}`, kind: 'framework', files
 // Answers every role gives unless a scenario overrides them.
 const DEFAULTS = {
   'intake:define': (ins) => ({ status: 'ready', task_def: ins.given || {}, provenance: {}, assumptions: [], questions: [], summary: 'as given' }),
-  'director:setup': () => ({ lock: 'acquired', run_dir: RUN, baseline_status: 'pass', baseline: '3/3 runs within spread', branch: 'petra/task', worktree: `${RUN}/wt`, gpu_ids: '0,1' }),
+  'director:setup': () => ({ lock: 'acquired', run_dir: RUN, baseline_status: 'pass', baseline: '3/3 runs within spread', branch: 'inferpilot/task', worktree: `${RUN}/wt`, gpu_ids: '0,1' }),
   'director:spec': () => ({ spec_path: `${RUN}/feature_spec.md`, gates_measurable: true, perf_claim: '+20% output tok/s at equal HBM' }),
   'director:report': () => ({ report_path: `${RUN}/run_report.md`, summary: 'done' }),
   'analyst:recon': () => ({ design_path: `${RUN}/design.md`, subsystems: [{ name: 'scheduler', files: ['a.py'], hook: 'h' }], unmapped: [], gap_type: 'framework-only', level: 'L1' }),
@@ -51,10 +51,10 @@ const DEFAULTS = {
   'investigator:diagnose': () => ({ verdict: 'fix_needed', root_cause: 'stale import', work_packages: [WP('WP1')] }),
   'perf_engineer:perf_eval': () => ({ claim_reproduced: true, held_out_ok: true, guards_ok: true, workload_unchanged: true, path_ok: true, results: [], summary: '+22%' }),
   'perf_engineer:profile': () => ({ analysis_path: `${RUN}/perf_analysis.md`, path_ok: true, path_evidence: 'aiter attention, graphs on', metrics: { gpu_busy: 0.71 }, opportunities: [
-    { id: 'O1', kind: 'host_sync', where: 'aiter_backend.py', evidence: 'trace', upper_bound_pct: 4, owner: 'petra' },
+    { id: 'O1', kind: 'host_sync', where: 'aiter_backend.py', evidence: 'trace', upper_bound_pct: 4, owner: 'inferpilot' },
     { id: 'O2', kind: 'kernel', where: 'moe', evidence: 'trace', upper_bound_pct: 9, owner: 'kernel_workflow' }] }),
   'reviewer:review': () => ({ verdict: 'approve', findings: [{ severity: 'minor', where: 'x.py:1', issue: 'a name' }], review_path: `${RUN}/review.md`, summary: 'one minor' }),
-  'pr_engineer:pr': () => ({ branch: 'petra/task', title: '[Fix] [AMD] scope: thing', commits: ['c_WP1'], lint_pass: true, feature_off_final: true, content_unchanged: true, merges_cleanly: true, pr_body_path: `${RUN}/pr_body.md`, push_command: 'git push origin petra/task' }),
+  'pr_engineer:pr': () => ({ branch: 'inferpilot/task', title: '[Fix] [AMD] scope: thing', commits: ['c_WP1'], lint_pass: true, feature_off_final: true, content_unchanged: true, merges_cleanly: true, pr_body_path: `${RUN}/pr_body.md`, push_command: 'git push origin inferpilot/task' }),
   'curator:learn': () => ({ updates: [{ file: 'knowledge/known_issues.md', change: 'none' }], skill_status: 'draft' }),
   'issue_triager:triage': () => ({ priority: 'P0', category: 'crash', action: 'reproduce', reason: 'default config crash', existing_prs: [], triage_path: `${RUN}/issue_triage.md`, reply_draft_path: `${RUN}/reply.md` }),
   'issue_triager:reproduce': () => ({ reproduced: true, repro_cmd: 'bash repro.sh', evidence: 'segfault 3/3' }),
@@ -126,7 +126,7 @@ async function run(args, overrides) {
     feature: { model_path: '/models/m' },
     perf: { model_path: '/models/m', workload: '{"isl":8192,"osl":1024,"conc":64}' },
   }[args.mode] || {};
-  const result = await rt.runScript(SCRIPT, { petra_dir: PETRA, framework_dir: '/tmp/sglang', agent_retries: 1, ...modeDefaults, ...args }, 0);
+  const result = await rt.runScript(SCRIPT, { inferpilot_dir: INFERPILOT, framework_dir: '/tmp/sglang', agent_retries: 1, ...modeDefaults, ...args }, 0);
   return { result, phases, calls, keys: calls.map((c) => c.key) };
 }
 
@@ -147,7 +147,7 @@ const scenarios = [
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
     check(eqList(r.phases, ['Setup', 'Spec', 'Recon', 'Design', 'Implement', 'Verify', 'Performance', 'Review', 'PR', 'Report']), `phases ${r.phases}`);
     check(r.result.done.map((d) => d.wp).join() === 'WP1,WP2', `done ${JSON.stringify(r.result.done)}`);
-    check(r.result.pr && r.result.pr.push_command === 'git push origin petra/task', 'push command surfaced, not executed');
+    check(r.result.pr && r.result.pr.push_command === 'git push origin inferpilot/task', 'push command surfaced, not executed');
     check(r.keys.filter((k) => k === 'curator:learn').length === 1, 'curator runs once');
   }],
   ['feature: unit gate fails once, feedback reaches the second round', async () => {
@@ -290,7 +290,7 @@ const scenarios = [
     const older = (ins) => (ins.image_ok ? undefined : {
       lock: 'skipped', run_dir: '', baseline_status: 'skip', gpu_ids: '',
       image: { current: 'rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261105', wanted: 'rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261109', verdict: 'older' } });
-    const ok = { lock: 'acquired', run_dir: RUN, baseline_status: 'pass', baseline: '3/3 runs within spread', branch: 'petra/task',
+    const ok = { lock: 'acquired', run_dir: RUN, baseline_status: 'pass', baseline: '3/3 runs within spread', branch: 'inferpilot/task',
       worktree: '/sgl-workspace/sglang', gpu_ids: '0,1' };
     for (const mode of ['feature', 'issue', 'ci', 'perf']) {
       const asked = await run({ mode, task: 't' }, { 'director:setup': older });
@@ -310,16 +310,16 @@ const scenarios = [
   ['pr: what the PR engineer finds missing goes back through implement, verify and review', async () => {
     const r = await run({ mode: 'ci', task: 'c' }, {
       'pr_engineer:pr': (ins, n) => (n === 1
-        ? { branch: 'petra/task', lint_pass: false, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md`,
+        ? { branch: 'inferpilot/task', lint_pass: false, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md`,
           work_packages: [WP('H1', { goal: 'register the new test in test/registered' })] }
-        : { branch: 'petra/task', lint_pass: true, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md` }),
+        : { branch: 'inferpilot/task', lint_pass: true, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md` }),
     });
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
     const afterPr = r.phases.slice(r.phases.indexOf('PR'));
     check(eqList(afterPr, ['PR', 'Implement', 'Verify', 'Review', 'PR', 'Report']), `phases after the first PR: ${afterPr}`);
     check(r.result.done.some((d) => d.wp === 'H1'), 'the hygiene package was verified');
     const changed = await run({ mode: 'ci', task: 'c' }, {
-      'pr_engineer:pr': () => ({ branch: 'petra/task', lint_pass: true, feature_off_final: true, content_unchanged: false,
+      'pr_engineer:pr': () => ({ branch: 'inferpilot/task', lint_pass: true, feature_off_final: true, content_unchanged: false,
         pr_body_path: `${RUN}/pr_body.md`, work_packages: [WP('H2')] }),
     });
     check(changed.result.status === 'blocked' && changed.result.stopped_at === 'PR', `a branch that changed after review: ${changed.result.status}`);
@@ -526,7 +526,7 @@ const scenarios = [
     const recent = (ins) => (ins.rescan
       ? { lock: 'acquired', run_dir: RUN, candidates_path: `${RUN}/candidates.json`, counts: { ci: 5, issues: 30, upstream: 40 } }
       : { lock: 'skipped', run_dir: '', candidates_path: '',
-        recent: { at: '2026-11-09T01:12:00Z', url: 'https://github.com/At1a8/Petra/issues/3', run_dir: '' } });
+        recent: { at: '2026-11-09T01:12:00Z', url: 'https://github.com/At1a8/inferpilot/issues/3', run_dir: '' } });
     const asked = await run({ mode: 'scan' }, { 'scout:collect': recent });
     check(asked.result.status === 'needs_input' && asked.result.stopped_at === 'Collect' && eqList(asked.keys, ['scout:collect']),
       `asks before scanning again: ${asked.result.status}, calls ${asked.keys}`);
@@ -700,12 +700,12 @@ const scenarios = [
     check(r.result.status === 'blocked' && r.result.stopped_at === 'Performance', `status ${r.result.status}`);
     check(!r.keys.includes('implementer:rollback'), 'an untrusted measurement rolls nothing back');
   }],
-  ['roles: every role and PHASE petra.js calls is documented', async () => {
+  ['roles: every role and PHASE inferpilot.js calls is documented', async () => {
     const src = readFileSync(SCRIPT, 'utf8');
     const sites = [...src.matchAll(/call\('([a-z_]+)', '([a-z_]+)'/g)].map((m) => [m[1], m[2]]);
     check(sites.length >= 20, `found ${sites.length} call sites`);
     for (const [role, ph] of sites) {
-      const f = path.join(PETRA, 'roles', `${role}.md`);
+      const f = path.join(INFERPILOT, 'roles', `${role}.md`);
       const doc = existsSync(f) ? readFileSync(f, 'utf8') : '';
       check(doc.includes(`## PHASE=${ph}`), `roles/${role}.md documents PHASE=${ph}`);
       check(DEFAULTS[`${role}:${ph}`] !== undefined, `dry run scripts an answer for ${role}:${ph}`);
@@ -713,19 +713,19 @@ const scenarios = [
   }],
   ['roles: every knowledge file, template and script a role names exists', async () => {
     const refs = new Set();
-    for (const f of readdirSync(path.join(PETRA, 'roles'))) {
-      const text = readFileSync(path.join(PETRA, 'roles', f), 'utf8');
+    for (const f of readdirSync(path.join(INFERPILOT, 'roles'))) {
+      const text = readFileSync(path.join(INFERPILOT, 'roles', f), 'utf8');
       for (const m of text.matchAll(/`((?:knowledge|templates|scripts)\/[A-Za-z0-9_./-]+\.(?:md|py|sh))`/g)) refs.add(m[1]);
     }
     check(refs.size >= 20, `found ${refs.size} references`);
-    for (const ref of refs) check(existsSync(path.join(PETRA, ref)), `${ref} exists`);
+    for (const ref of refs) check(existsSync(path.join(INFERPILOT, ref)), `${ref} exists`);
   }],
   ['skills: every role in the framework-skills index reads it', async () => {
-    const index = readFileSync(path.join(PETRA, 'knowledge', 'frameworks', 'sglang', 'skills.md'), 'utf8');
+    const index = readFileSync(path.join(INFERPILOT, 'knowledge', 'frameworks', 'sglang', 'skills.md'), 'utf8');
     const roles = [...new Set([...index.matchAll(/^\| ([a-z_]+) \| [a-z_, ]+ \|/gm)].map((m) => m[1]))].filter((r) => r !== 'role');
     check(roles.length >= 10, `index rows for ${roles.length} roles`);
     for (const role of roles) {
-      const f = path.join(PETRA, 'roles', `${role}.md`);
+      const f = path.join(INFERPILOT, 'roles', `${role}.md`);
       check(existsSync(f) && readFileSync(f, 'utf8').includes('frameworks/<framework>/skills.md'), `roles/${role}.md points to the index`);
     }
   }],
@@ -744,8 +744,8 @@ const scenarios = [
     check(setupIns.framework_dir === '/sgl-workspace/sglang', `sglang defaults to the image's checkout: ${setupIns.framework_dir}`);
     check(asks(await run({ mode: 'issue', task: 't', resume_from: 'implement', run_dir: RUN }), 'resume_from'), 'resume outside feature asked');
     let msg = '';
-    try { await run({ mode: 'issue', task: 't', petra_dir: '' }); } catch (e) { msg = e.message; }
-    check(msg.includes('args.petra_dir is required'), `no Petra checkout is still an error: ${msg}`);
+    try { await run({ mode: 'issue', task: 't', inferpilot_dir: '' }); } catch (e) { msg = e.message; }
+    check(msg.includes('args.inferpilot_dir is required'), `no InferPilot checkout is still an error: ${msg}`);
   }],
   ['intake: a complete definition starts without it', async () => {
     const r = await run({ mode: 'issue', task: 'i' });
@@ -795,9 +795,9 @@ const scenarios = [
     });
     check(r.result.mode === 'issue' && r.result.task_def.task.endsWith('/38849'), `mode ${r.result.mode}, task ${r.result.task_def.task}`);
   }],
-  ['intake: a request outside Petra is rejected with what to do instead', async () => {
+  ['intake: a request outside InferPilot is rejected with what to do instead', async () => {
     const r = await run({ request: 'push my branch and comment on the PR' }, {
-      'intake:define': () => ({ status: 'rejected', task_def: {}, questions: [], reason: 'Petra never pushes or posts; run the push yourself' }),
+      'intake:define': () => ({ status: 'rejected', task_def: {}, questions: [], reason: 'InferPilot never pushes or posts; run the push yourself' }),
     });
     check(r.result.status === 'rejected' && r.result.reason.includes('never pushes'), `status ${r.result.status}`);
     check(!r.keys.includes('director:setup'), 'nothing started');

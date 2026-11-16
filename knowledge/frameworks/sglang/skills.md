@@ -3,19 +3,19 @@
 sglang keeps executable development procedures in its repository: `.agents/skills/<name>/SKILL.md`
 (`.claude/skills` links there), diffusion ones under `python/sglang/multimodal_gen/.agents/skills/`, and
 code-style rules under `.claude/rules/`. They are the framework's own conventions — how a test is
-registered, where a kernel goes, how a trace is triaged — and they change with the code. Petra
+registered, where a kernel goes, how a trace is triaged — and they change with the code. InferPilot
 therefore **references them in place and never copies them**: a role reads the file in the task
 worktree (`<worktree>/.agents/skills/<name>/SKILL.md`), which matches the code it is changing.
 Index checked against sglang main `e2982985` (2026-11-01): 29 skills, 5 diffusion skills, 11 rules.
 
-Claude Code runs from the Petra checkout, so it does not load these skills by itself; read the files
+Claude Code runs from the InferPilot checkout, so it does not load these skills by itself; read the files
 this index names.
 
 ## Precedence
 
-1. `../../guardrails.md` and Petra's gates come first. Skills that act on GitHub —
+1. `../../guardrails.md` and InferPilot's gates come first. Skills that act on GitHub —
    `babysit-pr-to-pass-ci`, `rerun-test`, `sglang-cherrypick`, the review steps of `cookbook-review-pr` —
-   are read for what they say about CI and checks; Petra never runs their steps that push, comment,
+   are read for what they say about CI and checks; InferPilot never runs their steps that push, comment,
    label or trigger workflows.
 2. Within those limits, the framework's skill decides how a thing is done in the framework (test
    registration, kernel layout, environment variables, code style); follow the version in the worktree.
@@ -45,5 +45,5 @@ this index names.
 
 Diffusion skills (`sglang-diffusion-add-model`, `sglang-diffusion-benchmark-profile`,
 `sglang-diffusion-performance`, `sglang-diffusion-cache-dit`, `sglang-diffusion-modelopt-quant`) apply
-to diffusion tasks, which no Petra mode targets yet. Not used by Petra: `cookbook-migrate-model`
+to diffusion tasks, which no InferPilot mode targets yet. Not used by InferPilot: `cookbook-migrate-model`
 (rewriting legacy cookbook pages).

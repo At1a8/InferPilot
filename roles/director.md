@@ -12,10 +12,10 @@ Inputs: `require_baseline` (true for `feature` and `perf`: the task cannot conti
 that passes), `resume_run_dir`, `lock_idle_hours`, `image` (the image the task asks for, or empty),
 `image_ok` (true once the user chose to run on the image this container has).
 
-**Before step 0, the image**, while nothing exists yet. The container's image is `$PETRA_IMAGE` (set by
+**Before step 0, the image**, while nothing exists yet. The container's image is `$INFERPILOT_IMAGE` (set by
 `scripts/run_docker.sh`; else `docker inspect` from the host, or unknown). With `image` given, it must be
 that image. Without, it must be the newest daily image of its ROCm and GPU: `python3
-<petra_dir>/scripts/latest_image.py --compare <image>` prints `current`, `older <newest>`, `unknown` or
+<inferpilot_dir>/scripts/latest_image.py --compare <image>` prints `current`, `older <newest>`, `unknown` or
 `not-daily`. A resumed run must have the image its `run.json` recorded, since its baseline was measured
 there. When it has not, and `image_ok` is not true, create nothing and return `lock: "skipped"`,
 `run_dir: ""`, `baseline_status: "skip"`, `gpu_ids: ""` and `image` with `current`, `wanted` (the image
@@ -24,8 +24,8 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
 
 0. **One task per machine.** Before anything else, choose `RUN_DIR` (step 1: `resume_run_dir`, the
    directory an earlier attempt created, or a new path) and take the machine:
-   `python3 <petra_dir>/scripts/run_lock.py acquire --run-dir RUN_DIR --mode <mode> --task "<task>"
-   --idle-hours <lock_idle_hours>`. Exit 1 means another Petra task holds this machine: create nothing
+   `python3 <inferpilot_dir>/scripts/run_lock.py acquire --run-dir RUN_DIR --mode <mode> --task "<task>"
+   --idle-hours <lock_idle_hours>`. Exit 1 means another InferPilot task holds this machine: create nothing
    and return `lock: "busy"`, `run_dir: ""`, `baseline_status: "skip"`, `gpu_ids: ""`, with the holder
    (its run directory, task, container and start) and the release command in `notes`. Otherwise
    `lock: "acquired"`; a lock taken over from a run that finished or went silent is noted.
@@ -36,7 +36,7 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
    task, its issue, PR or CI job number and two or three words (`41299-glm-dcp`) or the feature
    (`hisparse-v2`); `<time>` from `date -u +%Y%m%d-%H%M%SZ`, UTC whatever the container's clock says.
    Write the inputs — the task definition (`templates/task_definition.md`), the intake's
-   `assumptions` and the container (`$PETRA_CONTAINER`), which holds the task's branch — to
+   `assumptions` and the container (`$INFERPILOT_CONTAINER`), which holds the task's branch — to
    `RUN_DIR/run.json`. Logs go to `RUN_DIR/logs/`. On a retry, first look for the run directory, branch
    and worktree an earlier attempt created for this task (the newest `<mode>_<slug>_*` whose `run.json`
    holds this definition) and reuse them.
@@ -47,7 +47,7 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
      Changes there (a task that died, someone's edits) stop the run: return `baseline_status: "fail"`
      with the files in `baseline`, and never stash, reset or discard them. Still detached at the image's commit with only `pyproject*.toml`
      changed means README step 3 has not run in this container: say so.
-   - `git -C <framework_dir> fetch origin`, then `git -C <framework_dir> checkout -b petra/<slug> <base>`
+   - `git -C <framework_dir> fetch origin`, then `git -C <framework_dir> checkout -b inferpilot/<slug> <base>`
      (the base commit the task names, default `origin/main`); on a retry or a resume, check out the
      branch that is already there.
    - `feature` and `perf` also get the base commit as a worktree of the same repository, for the
@@ -58,8 +58,8 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
 3. **Environment.** Pin the framework commit, container image, ROCm and PyTorch versions and the GPU set,
    and return it as `gpu_ids`: the given one, or, when none was given, GPUs that `rocm-smi` shows with no
    process and no memory in use, as many as the task needs (`env_hygiene.md`). Every later role uses
-   exactly these, through `HIP_VISIBLE_DEVICES`. Servers, tests and benchmarks run where Petra runs,
-   normally inside the container. When `container` is set (Petra on the host), run them with
+   exactly these, through `HIP_VISIBLE_DEVICES`. Servers, tests and benchmarks run where InferPilot runs,
+   normally inside the container. When `container` is set (InferPilot on the host), run them with
    `docker exec <container> ...` and check the worktree is visible there at the same path. Write one
    launch script with a mode switch (baseline / feature) and a tag; one log per launch,
    `RUN_DIR/logs/<tag>_<time>.log` with the same UTC time; poll the health endpoint; read the effective
@@ -91,7 +91,7 @@ Return:
 ```json
 {"lock": "acquired | busy", "run_dir": "/abs/RUN_DIR", "baseline_status": "pass | fail | skip",
  "baseline": "<suites, runs, spread; or why it failed or was skipped>",
- "branch": "petra/<slug>", "worktree": "/sgl-workspace/sglang", "gpu_ids": "0,1,2,3",
+ "branch": "inferpilot/<slug>", "worktree": "/sgl-workspace/sglang", "gpu_ids": "0,1,2,3",
  "notes": "<pinned commit, image, versions>"}
 ```
 
@@ -99,7 +99,7 @@ Return:
 
 1. Identify the source of truth (upstream PR, design or paper) and its commit; list unmerged
    dependencies and the commits to cherry-pick.
-2. Select feature skills: `python3 <petra_dir>/scripts/find_skill.py "<task title, request, goal>"`
+2. Select feature skills: `python3 <inferpilot_dir>/scripts/find_skill.py "<task title, request, goal>"`
    lists the candidates by tag; keep those whose `match` fits (`feature_skills/README.md`) and read a
    matching skill in full. A near match is the start of a port, not a plan to reuse blindly.
 3. Fill `RUN_DIR/feature_spec.md` (`templates/feature_spec.md`); `goal`, when set, is the user's own
@@ -129,11 +129,11 @@ produced so far.
   When it is not empty, open the report with it: what is left, where, and the command that cleans it.
 - `scan`: when `RUN_DIR/skills.json` lists framework skills that are missing or not indexed, add them
   to the report as index maintenance for the curator.
-- `scan` that reached Dispatch: the daily report is for a human to share; Petra posts it nowhere.
-  Check it once more (`python3 <petra_dir>/scripts/daily_report.py check RUN_DIR/daily_report.md`; exit
+- `scan` that reached Dispatch: the daily report is for a human to share; InferPilot posts it nowhere.
+  Check it once more (`python3 <inferpilot_dir>/scripts/daily_report.py check RUN_DIR/daily_report.md`; exit
   3 or 4: fix what it lists, then check again), and open the report with where it is and how to share
-  it: as an issue titled `Petra daily report <the scan's UTC date>` on the new-issue page of Petra's
-  repository (the origin of the Petra checkout), its whole file as the body.
+  it: as an issue titled `InferPilot daily report <the scan's UTC date>` on the new-issue page of InferPilot's
+  repository (the origin of the InferPilot checkout), its whole file as the body.
 - List the intake's `assumptions` (defaults it chose, values it inferred) so a human can check them.
 
 - `ready_for_review`: write `RUN_DIR/validation_report.md` (`templates/validation_report.md`); every
@@ -154,7 +154,7 @@ produced so far.
   directory's name and the task in a few words.
 - Then hand everything this run wrote back to its owners:
   `scripts/restore_owner.sh <exp_root>` (`env_hygiene.md`).
-- Last, free the machine for the next task: `python3 <petra_dir>/scripts/run_lock.py release --run-dir
+- Last, free the machine for the next task: `python3 <inferpilot_dir>/scripts/run_lock.py release --run-dir
   RUN_DIR`. Stop the servers and processes this run started first; a run that ends leaves nothing
   running.
 

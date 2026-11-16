@@ -1,8 +1,8 @@
 # Kernel back ends — handing kernel-level work to a kernel workflow
 
-Petra does not tune kernels. Two kinds of kernel-level work leave a framework run:
+InferPilot does not tune kernels. Two kinds of kernel-level work leave a framework run:
 
-1. a kernel Petra wrote for a feature (functional and unit-tested, e.g. HiSparse V2's swap-in kernel)
+1. a kernel InferPilot wrote for a feature (functional and unit-tested, e.g. HiSparse V2's swap-in kernel)
    whose speed matters — the implementer returns a `kernel_handoff`;
 2. a kernel-level performance opportunity found by a profile — the architect's performance plan
    returns a hand-off with `owner: "kernel_workflow"`.
@@ -17,7 +17,7 @@ Verify:
 | `command` | any other CLI: the kernel liaison runs `kernel_backend_command` with `{task_dir}`, `{out_dir}` and `{gpu_ids}` substituted and reads the JSON result it writes | `kernel_backend_command` |
 
 Adding a back end: a CLI needs no code (`command`); a native one is one branch in `kernelStage()` of
-`petra.js` plus a row here.
+`inferpilot.js` plus a row here.
 
 ## 1. The hand-off package
 
@@ -40,7 +40,7 @@ The kernel liaison turns it into the back end's task format. For GEAK
   regime}` and `target_language` (triton | flydsl | hip | ck). GEAK's
   `e2e_workflow/roles/kernel_extractor.md` shows how an op is extracted from a serving stack into this
   layout;
-- Petra always passes `apply_to_original: "false"`: the back end never writes into the framework; its
+- InferPilot always passes `apply_to_original: "false"`: the back end never writes into the framework; its
   result comes back as a patch.
 
 ## 2. Results
@@ -54,7 +54,7 @@ The kernel liaison turns it into the back end's task format. For GEAK
 After integration a hand-off ends `integrated`, or `integration_failed` (rolled back). With
 `kernel_backend=none` every hand-off ends `recorded`, and the report says how to run it later.
 
-A back end's own numbers are never Petra's evidence: an integrated kernel passes Petra's gates like
+A back end's own numbers are never InferPilot's evidence: an integrated kernel passes InferPilot's gates like
 any other change (`guardrails.md`: measured data wins). A failing or slow back end never blocks the
 task.
 

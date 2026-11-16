@@ -1,8 +1,8 @@
-<!-- petra:daily-report -->
-# Petra daily report <YYYY-MM-DD> — <framework> main `<sha>`
+<!-- inferpilot:daily-report -->
+# InferPilot daily report <YYYY-MM-DD> — <framework> main `<sha>`
 
-<!-- mode=scan artifact, for a human to share, e.g. as an issue titled "Petra daily report <YYYY-MM-DD>"
-     in Petra's repository; the first line lets later scans find a shared copy there. Public: nothing
+<!-- mode=scan artifact, for a human to share, e.g. as an issue titled "InferPilot daily report <YYYY-MM-DD>"
+     in InferPilot's repository; the first line lets later scans find a shared copy there. Public: nothing
      about the machine, its paths or internal sources. `scripts/daily_report.py check` verifies that and
      the length: an issue holds 65,536 characters, so aim for about 40,000. Every row links to its
      evidence; *new* marks what the previous report did not have. Times are UTC. -->
@@ -79,7 +79,7 @@ Closed since the previous report: <issues, or none>.
 |---|---|---|---|---|---|---|
 | 1 | | | | L1 / L2 / L3 | | agent h / GPU h |
 
-<details><summary>Task definitions: pass one to petra.js as it is</summary>
+<details><summary>Task definitions: pass one to inferpilot.js as it is</summary>
 
 ```json
 {"mode": "issue", "task": "https://github.com/sgl-project/sglang/issues/<n>", "stop_after": "Reproduce"}

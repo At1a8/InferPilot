@@ -37,7 +37,7 @@ class CheckFrameworkSkillsTest(unittest.TestCase):
         | implementer | implement | `write-sglang-test`, `gone-skill` | a `not-a-skill` flag in this column is ignored |
         | investigator | investigate | `debug-cuda-crash` | crashes |
 
-        Not used by Petra: `cookbook-migrate-model`.
+        Not used by InferPilot: `cookbook-migrate-model`.
         """)
 
     def test_drift(self):
@@ -187,12 +187,12 @@ class DailyReportTest(unittest.TestCase):
 
     def issue(self, number, date, created="T01:00:00Z", marker=True):
         return {"number": number, "title": daily_report.title(date), "state": "open", "created_at": date + created,
-                "html_url": "https://github.com/At1a8/Petra/issues/%d" % number,
+                "html_url": "https://github.com/At1a8/inferpilot/issues/%d" % number,
                 "body": ("q\n" + daily_report.MARKER) if marker else "unrelated"}
 
     def test_repo_from_url(self):
-        for url in ("https://github.com/At1a8/Petra.git", "git@github.com:At1a8/Petra.git", "https://github.com/At1a8/Petra"):
-            self.assertEqual(daily_report.repo_from_url(url), "At1a8/Petra")
+        for url in ("https://github.com/At1a8/inferpilot.git", "git@github.com:At1a8/inferpilot.git", "https://github.com/At1a8/inferpilot"):
+            self.assertEqual(daily_report.repo_from_url(url), "At1a8/inferpilot")
         self.assertEqual(daily_report.repo_from_url("https://gitlab.com/a/b.git"), "")
 
     def test_a_private_detail_stops_the_report(self):
@@ -216,13 +216,13 @@ class DailyReportTest(unittest.TestCase):
         items = [self.issue(9, "2026-11-07", marker=False), {"number": 4, "title": "a PR", "pull_request": {}, "body": daily_report.MARKER},
                  self.issue(8, "2026-11-06"), self.issue(6, "2026-11-05")]
         with mock.patch.object(daily_report, "get", return_value=items):
-            got = daily_report.latest("At1a8/Petra")
+            got = daily_report.latest("At1a8/inferpilot")
         self.assertEqual((got["date"], got["number"], got["created_at"]), ("2026-11-06", 8, "2026-11-06T01:00:00Z"))
         self.assertIsInstance(got["age_hours"], float)
         now = daily_report.dt.datetime(2026, 11, 7, 0, 30, tzinfo=daily_report.dt.timezone.utc)
         self.assertEqual(daily_report.age_hours("2026-11-06T01:00:00Z", now), 23.5)
         with mock.patch.object(daily_report, "get", return_value=[]):
-            self.assertEqual(daily_report.latest("At1a8/Petra"), {})
+            self.assertEqual(daily_report.latest("At1a8/inferpilot"), {})
 
     def test_it_never_writes(self):
         src = (Path(__file__).resolve().parent.parent / "scripts" / "daily_report.py").read_text()
@@ -243,16 +243,16 @@ class ProposeKnowledgeTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
-        self.origin, seed, self.petra = root / "origin.git", root / "seed", root / "Petra"
+        self.origin, seed, self.inferpilot = root / "origin.git", root / "seed", root / "inferpilot"
         git("init", "-q", "--bare", str(self.origin))
         git("clone", "-q", str(self.origin), str(seed))
         (seed / "knowledge").mkdir()
         (seed / "knowledge" / "known_issues.md").write_text("# Known issues\n")
-        (seed / "petra.js").write_text("// petra\n")
+        (seed / "inferpilot.js").write_text("// inferpilot\n")
         git("add", "-A", cwd=seed)
         git("commit", "-q", "-m", "seed", cwd=seed)
         git("push", "-q", "origin", "HEAD:refs/heads/main", cwd=seed)
-        git("clone", "-q", "-b", "main", str(self.origin), str(self.petra))
+        git("clone", "-q", "-b", "main", str(self.origin), str(self.inferpilot))
         self.run = root / "exp" / "issue_41299-glm-dcp_20261106-071502Z"
         self.run.mkdir(parents=True)
         self.body = self.run / "knowledge_pr.md"
@@ -261,47 +261,47 @@ class ProposeKnowledgeTest(unittest.TestCase):
                                                capture_output=True, text=True).stdout
 
     def propose(self, token="t", api=None):
-        env = {k: v for k, v in os.environ.items() if k != "PETRA_REPO_TOKEN"}
+        env = {k: v for k, v in os.environ.items() if k != "INFERPILOT_REPO_TOKEN"}
         if token:
-            env["PETRA_REPO_TOKEN"] = token
+            env["INFERPILOT_REPO_TOKEN"] = token
         with mock.patch.dict(os.environ, env, clear=True), redirect_stdout(io.StringIO()) as out, \
                 redirect_stderr(io.StringIO()) as err, mock.patch.object(propose_knowledge, "api", side_effect=api):
-            rc = propose_knowledge.main(["--run-dir", str(self.run), "--body", str(self.body), "--repo", "At1a8/Petra",
-                                         "--petra-dir", str(self.petra), "--push-url", str(self.origin)])
+            rc = propose_knowledge.main(["--run-dir", str(self.run), "--body", str(self.body), "--repo", "At1a8/inferpilot",
+                                         "--inferpilot-dir", str(self.inferpilot), "--push-url", str(self.origin)])
         return rc, out.getvalue(), err.getvalue()
 
     def test_only_knowledge_goes_to_its_branch_and_the_checkout_reads_main_again(self):
-        (self.petra / "knowledge" / "known_issues.md").write_text("# Known issues\nKI-001 GLM-5.3 dcp 8\n")
-        (self.petra / "knowledge" / "feature_skills" / "dcp").mkdir(parents=True)
-        (self.petra / "knowledge" / "feature_skills" / "dcp" / "SKILL.md").write_text("draft\n")
-        (self.petra / "petra.js").write_text("// a local change that is not knowledge\n")
+        (self.inferpilot / "knowledge" / "known_issues.md").write_text("# Known issues\nKI-001 GLM-5.3 dcp 8\n")
+        (self.inferpilot / "knowledge" / "feature_skills" / "dcp").mkdir(parents=True)
+        (self.inferpilot / "knowledge" / "feature_skills" / "dcp" / "SKILL.md").write_text("draft\n")
+        (self.inferpilot / "inferpilot.js").write_text("// a local change that is not knowledge\n")
         calls = []
 
         def fake(method, path, token="", data=None):
             calls.append((method, path, data))
-            return [] if method == "GET" else {"number": 12, "html_url": "https://github.com/At1a8/Petra/pull/12"}
+            return [] if method == "GET" else {"number": 12, "html_url": "https://github.com/At1a8/inferpilot/pull/12"}
 
         rc, out, err = self.propose(api=fake)
         self.assertEqual(rc, 0, err)
-        self.assertEqual(json.loads(out)["url"], "https://github.com/At1a8/Petra/pull/12")
-        branch = "petra/knowledge/" + self.run.name
+        self.assertEqual(json.loads(out)["url"], "https://github.com/At1a8/inferpilot/pull/12")
+        branch = "inferpilot/knowledge/" + self.run.name
         self.assertIn("KI-001", self.show(branch + ":knowledge/known_issues.md"))
         self.assertEqual(self.show(branch + ":knowledge/feature_skills/dcp/SKILL.md"), "draft\n")
-        self.assertEqual(self.show(branch + ":petra.js"), "// petra\n")
+        self.assertEqual(self.show(branch + ":inferpilot.js"), "// inferpilot\n")
         self.assertEqual(self.show("main:knowledge/known_issues.md"), "# Known issues\n", "main is never pushed")
         self.assertEqual((calls[1][0], calls[1][2]["head"], calls[1][2]["base"]), ("POST", branch, "main"))
-        self.assertEqual((self.petra / "knowledge" / "known_issues.md").read_text(), "# Known issues\n")
-        self.assertFalse((self.petra / "knowledge" / "feature_skills").exists())
-        self.assertIn("a local change", (self.petra / "petra.js").read_text())
+        self.assertEqual((self.inferpilot / "knowledge" / "known_issues.md").read_text(), "# Known issues\n")
+        self.assertFalse((self.inferpilot / "knowledge" / "feature_skills").exists())
+        self.assertIn("a local change", (self.inferpilot / "inferpilot.js").read_text())
 
     def test_nothing_leaves_without_a_token_with_a_leak_or_without_changes(self):
         self.assertEqual(self.propose()[0:2], (0, '{"action": "none", "reason": "no changes under knowledge/"}\n'))
-        (self.petra / "knowledge" / "known_issues.md").write_text("# Known issues\nKI-001 GLM-5.3 dcp 8\n")
+        (self.inferpilot / "knowledge" / "known_issues.md").write_text("# Known issues\nKI-001 GLM-5.3 dcp 8\n")
         self.assertEqual(self.propose(token="")[0], 2)
-        (self.petra / "knowledge" / "known_issues.md").write_text("# Known issues\nweights in /data/models/x\n")
+        (self.inferpilot / "knowledge" / "known_issues.md").write_text("# Known issues\nweights in /data/models/x\n")
         self.assertEqual(self.propose()[0], 3)
-        self.assertIn("/data/models/x", (self.petra / "knowledge" / "known_issues.md").read_text(), "left as it was")
-        self.assertEqual(self.show("petra/knowledge/" + self.run.name), "", "no branch was pushed")
+        self.assertIn("/data/models/x", (self.inferpilot / "knowledge" / "known_issues.md").read_text(), "left as it was")
+        self.assertEqual(self.show("inferpilot/knowledge/" + self.run.name), "", "no branch was pushed")
 
 
 class RunLockTest(unittest.TestCase):
@@ -309,7 +309,7 @@ class RunLockTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
-        self.lock = str(self.root / "petra-run.lock")
+        self.lock = str(self.root / "inferpilot-run.lock")
         self.a, self.b = str(self.root / "run_a"), str(self.root / "run_b")
         Path(self.a).mkdir()
 

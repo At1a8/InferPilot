@@ -1,28 +1,28 @@
-"""Petra bootstrap: set up Petra where it runs; safe to run again at any time.
+"""InferPilot bootstrap: set up InferPilot where it runs; safe to run again at any time.
 
-Petra runs inside a ROCm container as root, the way GEAK does: Petra, its runs and the code they
+InferPilot runs inside a ROCm container as root, the way GEAK does: InferPilot, its runs and the code they
 change live in the container's /workspace, one copy per container. As in GEAK's CI and Hyperloom,
 Claude Code is installed in the container and its first-start questions are answered in its config,
-and your keys come in as one file: scripts/run_docker.sh mounts your ~/.petra_env read-only as root's
-~/.petra_env, and not your home. Run this once in every new container (README step 3).
+and your keys come in as one file: scripts/run_docker.sh mounts your ~/.inferpilot_env read-only as root's
+~/.inferpilot_env, and not your home. Run this once in every new container (README step 3).
 
 Every step checks first, keeps what is already there and installs or creates only what is missing.
 Nothing is deleted, overwritten or re-cloned: a step that could only proceed by changing existing
 state warns and leaves it alone. The one exception is the image's own sglang checkout, which the
 framework step puts on main once, discarding only the image build's changes to its packaging files.
 
-  checkout      clone Petra to $PETRA_HOME, unless run inside a checkout or one is already there
-  keys          (root in a container) find your keys file: PETRA_KEYS, else ~/.petra_env, where
+  checkout      clone InferPilot to $INFERPILOT_HOME, unless run inside a checkout or one is already there
+  keys          (root in a container) find your keys file: INFERPILOT_KEYS, else ~/.inferpilot_env, where
                 run_docker.sh mounts yours; in a container that mounts /home, the one in your home there
-                (PETRA_HOST_HOME, else, with a warning, the home of the user the container is named after)
-  claude        install the Claude Code CLI if it is still missing; update one older than petra.js needs
+                (INFERPILOT_HOST_HOME, else, with a warning, the home of the user the container is named after)
+  claude        install the Claude Code CLI if it is still missing; update one older than inferpilot.js needs
   path          put the CLI's directory on PATH for new shells (one marked block in ~/.bashrc)
   claude-config (root in a container) answer Claude Code's first-start questions in its config: the
-                onboarding, trust in the Petra checkout, bypass permissions mode, and an Anthropic API
+                onboarding, trust in the InferPilot checkout, bypass permissions mode, and an Anthropic API
                 key from the keys file
   git           (root in a container) trust checkouts on host mounts, which belong to another user
-  git-identity  (root in a container) commit as you, not root@<this host>: PETRA_GIT_NAME and
-                PETRA_GIT_EMAIL from the keys file or the environment
+  git-identity  (root in a container) commit as you, not root@<this host>: INFERPILOT_GIT_NAME and
+                INFERPILOT_GIT_EMAIL from the keys file or the environment
   shell         (root in a container) no __pycache__ in checkouts on host mounts, no Claude Code
                 self-update, the keys file loaded, and with LLM_GATEWAY_KEY Claude Code on the AMD LLM
                 gateway
@@ -32,21 +32,24 @@ framework step puts on main once, discarding only the image build's changes to i
                 instead, cloned with its whole history if missing
   checks        git, docker (host only), ROCm, sglang, Node.js, API access, GitHub token (detect only)
 
-  python3 -B -m petra.bootstrap [--framework-dir DIR]
-  python3 -B -m petra.bootstrap --claude-only   # the keys, claude, path and claude-config steps
-  python3 -B -m petra.bootstrap --check         # the checks
+  python3 -B -m inferpilot.bootstrap [--framework-dir DIR]
+  python3 -B -m inferpilot.bootstrap --claude-only   # the keys, claude, path and claude-config steps
+  python3 -B -m inferpilot.bootstrap --check         # the checks
 
 Environment (a flag wins over its variable):
-  PETRA_HOME, PETRA_REPO_URL, PETRA_REF       the checkout (default ./Petra, or the one you are in)
-  PETRA_KEYS                                  (container) your keys file, when it is not ~/.petra_env
-  PETRA_HOST_HOME                             (container that mounts /home) your home there
-  PETRA_CONTAINER                             (container) its name (run_docker.sh passes it; without it,
-                                              asked of Docker when its socket is mounted)
-  CLAUDE_VERSION, CLAUDE_BIN_DIR              native-installer target (latest), its bin dir (~/.local/bin)
-  CLAUDE_CONFIG_DIR                           Claude Code's own: where its config lives (default ~)
-  PETRA_FRAMEWORK_DIR, PETRA_FRAMEWORK_REPO   --framework-dir (default: the image's checkout), --framework-repo
-                                              (default: sglang)
-  PETRA_SKIP_BOOTSTRAP                        set to skip everything (CI, image builds)
+  INFERPILOT_HOME, INFERPILOT_REPO_URL, INFERPILOT_REF
+                                the checkout (default ./inferpilot, or the one you are in)
+  INFERPILOT_KEYS               (container) your keys file, when it is not ~/.inferpilot_env
+  INFERPILOT_HOST_HOME          (container that mounts /home) your home there
+  INFERPILOT_CONTAINER          (container) its name (run_docker.sh passes it; without it, asked of
+                                Docker when its socket is mounted)
+  CLAUDE_VERSION, CLAUDE_BIN_DIR
+                                native-installer target (latest), its bin dir (~/.local/bin)
+  CLAUDE_CONFIG_DIR             Claude Code's own: where its config lives (default ~)
+  INFERPILOT_FRAMEWORK_DIR, INFERPILOT_FRAMEWORK_REPO
+                                --framework-dir (default: the image's checkout), --framework-repo
+                                (default: sglang)
+  INFERPILOT_SKIP_BOOTSTRAP     set to skip everything (CI, image builds)
 
 `pip install` runs it while building the wheel. Standard library only.
 """
@@ -60,17 +63,17 @@ import shutil
 import subprocess
 import sys
 
-CLAUDE_MIN_VERSION = "2.1.177"  # first Claude Code with the dynamic Workflow tool petra.js runs in
-DEFAULT_REPO_URL = "https://github.com/At1a8/Petra.git"
+CLAUDE_MIN_VERSION = "2.1.177"  # first Claude Code with the dynamic Workflow tool inferpilot.js runs in
+DEFAULT_REPO_URL = "https://github.com/At1a8/inferpilot.git"
 DEFAULT_FRAMEWORK_REPO = "https://github.com/sgl-project/sglang.git"
 INSTALL_DOCS = "https://code.claude.com/docs/en/setup"
-KEYS_FILE = ".petra_env"
-RC_BEGIN = "# >>> petra: Claude Code CLI on PATH >>>"
-RC_END = "# <<< petra: Claude Code CLI on PATH <<<"
-ENV_BEGIN = "# >>> petra: root in the container >>>"
-ENV_END = "# <<< petra: root in the container <<<"
+KEYS_FILE = ".inferpilot_env"
+RC_BEGIN = "# >>> inferpilot: Claude Code CLI on PATH >>>"
+RC_END = "# <<< inferpilot: Claude Code CLI on PATH <<<"
+ENV_BEGIN = "# >>> inferpilot: root in the container >>>"
+ENV_END = "# <<< inferpilot: root in the container <<<"
 # scripts/run_docker.sh names a container after your login unless told otherwise (alice, or alice-0116
-# for the next task): in a container that mounts /home without PETRA_HOST_HOME, that user's home is yours.
+# for the next task): in a container that mounts /home without INFERPILOT_HOST_HOME, that user's home is yours.
 HOMES = "/home"
 NAME_SEPARATORS = "-_."
 # Root in the container must not leave root-owned __pycache__ in checkouts on host mounts; Claude Code
@@ -101,11 +104,11 @@ def _styles(stream) -> tuple[str, str]:
 
 
 def log(msg: str) -> None:
-    print("[petra-bootstrap] %s" % msg, flush=True)
+    print("[inferpilot-bootstrap] %s" % msg, flush=True)
 
 
 def warn(msg: str) -> None:
-    print("[petra-bootstrap WARN] %s" % msg, file=sys.stderr, flush=True)
+    print("[inferpilot-bootstrap WARN] %s" % msg, file=sys.stderr, flush=True)
 
 
 def _has(cmd: str) -> bool:
@@ -177,9 +180,9 @@ def _invocation_dir(env) -> str:
     return os.getcwd()
 
 
-def is_petra_checkout(path: str) -> bool:
+def is_inferpilot_checkout(path: str) -> bool:
     return (os.path.isdir(os.path.join(path, ".git"))
-            and os.path.isfile(os.path.join(path, "petra.js"))
+            and os.path.isfile(os.path.join(path, "inferpilot.js"))
             and os.path.isdir(os.path.join(path, "roles")))
 
 
@@ -187,27 +190,27 @@ def settings(env=None, opts=None) -> dict:
     env = os.environ if env is None else env
     opts = opts or {}
     inv = _invocation_dir(env)
-    home = env.get("PETRA_HOME") or (inv if is_petra_checkout(inv) else os.path.join(inv, "Petra"))
-    framework_dir = opts.get("framework_dir") or env.get("PETRA_FRAMEWORK_DIR") or ""
+    home = env.get("INFERPILOT_HOME") or (inv if is_inferpilot_checkout(inv) else os.path.join(inv, "inferpilot"))
+    framework_dir = opts.get("framework_dir") or env.get("INFERPILOT_FRAMEWORK_DIR") or ""
     return {
         "invocation_dir": inv,
         "home": _expand(home, env),
-        "repo_url": env.get("PETRA_REPO_URL") or DEFAULT_REPO_URL,
-        "ref": env.get("PETRA_REF") or "",
+        "repo_url": env.get("INFERPILOT_REPO_URL") or DEFAULT_REPO_URL,
+        "ref": env.get("INFERPILOT_REF") or "",
         "claude_version": env.get("CLAUDE_VERSION") or "latest",
         "claude_bin_dir": _expand(env.get("CLAUDE_BIN_DIR") or "~/.local/bin", env),
         "user_home": _expand("~", env),
-        "keys": _expand(env["PETRA_KEYS"], env) if env.get("PETRA_KEYS") else "",
-        "host_home": _expand(env["PETRA_HOST_HOME"], env) if env.get("PETRA_HOST_HOME") else "",
+        "keys": _expand(env["INFERPILOT_KEYS"], env) if env.get("INFERPILOT_KEYS") else "",
+        "host_home": _expand(env["INFERPILOT_HOST_HOME"], env) if env.get("INFERPILOT_HOST_HOME") else "",
         "shell": env.get("SHELL") or "",
         "framework_dir": _expand(framework_dir, env) if framework_dir else "",
-        "framework_repo": opts.get("framework_repo") or env.get("PETRA_FRAMEWORK_REPO") or DEFAULT_FRAMEWORK_REPO,
+        "framework_repo": opts.get("framework_repo") or env.get("INFERPILOT_FRAMEWORK_REPO") or DEFAULT_FRAMEWORK_REPO,
     }
 
 
 def owner_dirs(s: dict) -> list:
     """In a container that mounts /home, where your keys may be, closest first: your home there
-    (PETRA_HOST_HOME); without it, the ancestors of the Petra checkout owned by the checkout's owner,
+    (INFERPILOT_HOST_HOME); without it, the ancestors of the InferPilot checkout owned by the checkout's owner,
     unless that is root, as for a checkout in /workspace."""
     if s.get("host_home"):
         return [s["host_home"]] if os.path.isdir(s["host_home"]) else []
@@ -229,8 +232,8 @@ def owner_dirs(s: dict) -> list:
 
 
 def keys_file(s: dict) -> str:
-    """Your keys file, '' when there is none: PETRA_KEYS; else ~/.petra_env, where scripts/run_docker.sh
-    mounts yours from the host; else, in a container that mounts /home, ~/.petra_env in your home there."""
+    """Your keys file, '' when there is none: INFERPILOT_KEYS; else ~/.inferpilot_env, where scripts/run_docker.sh
+    mounts yours from the host; else, in a container that mounts /home, ~/.inferpilot_env in your home there."""
     if s.get("keys"):
         return s["keys"] if os.path.isfile(s["keys"]) else ""
     for d in [s["user_home"]] + owner_dirs(s):
@@ -243,10 +246,10 @@ def keys_file(s: dict) -> str:
 def keys_missing(s: dict) -> str:
     """Why keys_file found nothing, for the warnings."""
     if s.get("keys"):
-        return "PETRA_KEYS=%s is not a file" % s["keys"]
+        return "INFERPILOT_KEYS=%s is not a file" % s["keys"]
     why = "no %s" % os.path.join(s["user_home"], KEYS_FILE)
     if s.get("host_home"):
-        where = s["host_home"] if os.path.isdir(s["host_home"]) else "PETRA_HOST_HOME=%s (not mounted)" % s["host_home"]
+        where = s["host_home"] if os.path.isdir(s["host_home"]) else "INFERPILOT_HOST_HOME=%s (not mounted)" % s["host_home"]
         return "%s, nor one in %s" % (why, where)
     if s.get("container_name"):
         return "%s, and no user in %s with one matches this container's name (%s)" % (why, HOMES, s["container_name"])
@@ -269,14 +272,14 @@ def ver_ge(a: str, b: str) -> bool:
 
 def ensure_checkout(s: dict) -> tuple[str, str]:
     home = s["home"]
-    if is_petra_checkout(home):
+    if is_inferpilot_checkout(home):
         log("checkout: kept %s" % home)
         return "kept", home
     if os.path.isdir(home) and os.listdir(home):
-        warn("checkout: %s exists and is not a Petra checkout; left untouched (set PETRA_HOME)" % home)
+        warn("checkout: %s exists and is not a InferPilot checkout; left untouched (set INFERPILOT_HOME)" % home)
         return "skipped", "%s is not empty" % home
     if not _has("git"):
-        warn("checkout: git not found; cannot clone Petra to %s" % home)
+        warn("checkout: git not found; cannot clone InferPilot to %s" % home)
         return "failed", "no git"
     os.makedirs(os.path.dirname(home) or ".", exist_ok=True)
     cmd = ["git", "clone"] + (["--branch", s["ref"]] if s["ref"] else []) + [s["repo_url"], home]
@@ -291,11 +294,11 @@ def ensure_checkout(s: dict) -> tuple[str, str]:
 # --- your keys -------------------------------------------------------------------
 
 def container_name(env=None) -> str:
-    """This container's name: PETRA_CONTAINER (scripts/run_docker.sh passes it), else Docker's answer when
+    """This container's name: INFERPILOT_CONTAINER (scripts/run_docker.sh passes it), else Docker's answer when
     the host's socket is mounted; '' when neither tells."""
     env = os.environ if env is None else env
-    if env.get("PETRA_CONTAINER"):
-        return env["PETRA_CONTAINER"]
+    if env.get("INFERPILOT_CONTAINER"):
+        return env["INFERPILOT_CONTAINER"]
     m = re.search(r"/containers/([0-9a-f]{64})/", _read("/proc/self/mountinfo"))
     if not (m and _has("docker")):
         return ""
@@ -321,8 +324,8 @@ def home_from_container_name(name: str, homes: str | None = None) -> str:
 
 
 def find_host_home(s: dict, env=None) -> str:
-    """In a container that mounts /home without PETRA_HOST_HOME, the home of the user it is named after,
-    kept in s["host_home"]. '' when PETRA_KEYS or PETRA_HOST_HOME is set (they win), the checkout names
+    """In a container that mounts /home without INFERPILOT_HOST_HOME, the home of the user it is named after,
+    kept in s["host_home"]. '' when INFERPILOT_KEYS or INFERPILOT_HOST_HOME is set (they win), the checkout names
     a home, or nothing matches."""
     if s.get("keys") or s.get("host_home") or owner_dirs(s):
         return ""
@@ -343,7 +346,7 @@ def ensure_keys(s: dict) -> tuple[str, str]:
     if find_host_home(s):
         keys = keys_file(s)
         warn("keys: no %s; using %s, in the home of the user this container is named after (%s). Not yours? "
-             "Run this again with PETRA_KEYS=<your keys file> in front"
+             "Run this again with INFERPILOT_KEYS=<your keys file> in front"
              % (os.path.join(s["user_home"], KEYS_FILE), keys, s["container_name"]))
         return "found", keys
     warn("keys: %s; Claude Code here has no API access until there is one (see the next steps)" % keys_missing(s))
@@ -569,7 +572,7 @@ def ensure_git_trust(s: dict) -> tuple[str, str]:
     return "failed", "git config"
 
 
-IDENTITY_VARS = ("PETRA_GIT_NAME", "PETRA_GIT_EMAIL")
+IDENTITY_VARS = ("INFERPILOT_GIT_NAME", "INFERPILOT_GIT_EMAIL")
 
 
 def _keys_file_value(path: str, name: str) -> str:
@@ -585,7 +588,7 @@ def _keys_file_value(path: str, name: str) -> str:
 def ensure_git_identity(s: dict) -> tuple[str, str]:
     """Commits made as root in the container would read root <root@<this host>>: an internal host name
     in a public history, and no author to sign them. The container carries no home, so no git config
-    of yours: the identity comes from PETRA_GIT_NAME and PETRA_GIT_EMAIL, in the keys file or the
+    of yours: the identity comes from INFERPILOT_GIT_NAME and INFERPILOT_GIT_EMAIL, in the keys file or the
     environment."""
     if not _has("git"):
         return "skipped", "no git"
@@ -597,9 +600,9 @@ def ensure_git_identity(s: dict) -> tuple[str, str]:
             log("git-identity: kept (%s <%s>)" % have)
             return "kept", "%s <%s>" % have
         warn("git-identity: no git identity for root; its commits would read root@<this host>. Add "
-             "export PETRA_GIT_NAME=\"<your name>\" and export PETRA_GIT_EMAIL=<your email> to %s "
+             "export INFERPILOT_GIT_NAME=\"<your name>\" and export INFERPILOT_GIT_EMAIL=<your email> to %s "
              "(README step 1) and run this again" % (keys or os.path.join(s["user_home"], KEYS_FILE)))
-        return "skipped", "no PETRA_GIT_NAME / PETRA_GIT_EMAIL"
+        return "skipped", "no INFERPILOT_GIT_NAME / INFERPILOT_GIT_EMAIL"
     if want == have:
         log("git-identity: kept (%s <%s>)" % have)
         return "kept", "%s <%s>" % have
@@ -619,7 +622,7 @@ def _repo_key(url: str) -> str:
 
 
 def image_checkout() -> str:
-    """The sglang image's own checkout, Petra's default framework source, when this is such an image."""
+    """The sglang image's own checkout, InferPilot's default framework source, when this is such an image."""
     return IMAGE_SGLANG if os.path.isdir(os.path.join(IMAGE_SGLANG, ".git")) else ""
 
 
@@ -732,24 +735,24 @@ def keys_defined(path: str) -> set:
 
 
 def check_environment(env=None, keys_path: str = "") -> dict:
-    """keys_path: ~/.petra_env, which new shells load; what it sets counts before this shell has it."""
+    """keys_path: ~/.inferpilot_env, which new shells load; what it sets counts before this shell has it."""
     env = dict(os.environ if env is None else env)
     for name in keys_defined(keys_path):
         env.setdefault(name, "set in %s" % keys_path)
-    checks = [("git", _has("git"), "git is required: Petra works in a worktree of the framework checkout")]
+    checks = [("git", _has("git"), "git is required: InferPilot works in a worktree of the framework checkout")]
     if not in_container():
-        checks.append(("docker", _has("docker"), "docker not found: scripts/run_docker.sh starts Petra's container"))
+        checks.append(("docker", _has("docker"), "docker not found: scripts/run_docker.sh starts InferPilot's container"))
     checks += [
         ("rocm", _has("rocminfo") or _has("rocm-smi"), "ROCm not detected (rocminfo / rocm-smi): GPU work needs AMD Instinct GPUs with ROCm"),
-        ("sglang", _importable("sglang"), "sglang is not importable here: run Petra where the framework is installed (the container)"),
-        ("node", _has("node"), "Node.js not found: needed only for tests/dry_run.mjs and for running petra.js outside Claude Code"),
+        ("sglang", _importable("sglang"), "sglang is not importable here: run InferPilot where the framework is installed (the container)"),
+        ("node", _has("node"), "Node.js not found: needed only for tests/dry_run.mjs and for running inferpilot.js outside Claude Code"),
         ("api", api_configured(env, _expand("~", env)), "no Claude Code API access in this shell (see the next steps)"),
         ("github_token", bool(env.get("GITHUB_TOKEN") or env.get("GH_TOKEN")),
          "no GITHUB_TOKEN: GitHub then allows 60 requests an hour and 10 searches a minute per IP, so scans "
-         "crawl and can stop partway; add a read-only token to ~/.petra_env (README step 1)"),
-        ("repo_token", bool(env.get("PETRA_REPO_TOKEN")),
-         "no PETRA_REPO_TOKEN (optional): the curator's knowledge changes stay in this checkout instead of a "
-         "pull request to Petra's repository (README step 1)"),
+         "crawl and can stop partway; add a read-only token to ~/.inferpilot_env (README step 1)"),
+        ("repo_token", bool(env.get("INFERPILOT_REPO_TOKEN")),
+         "no INFERPILOT_REPO_TOKEN (optional): the curator's knowledge changes stay in this checkout instead of a "
+         "pull request to InferPilot's repository (README step 1)"),
     ]
     found = {}
     log("checks (detect only):")
@@ -820,8 +823,8 @@ def next_steps(s: dict, statuses: dict, found: dict | None = None, path_env: str
         steps.append(start)
         elsewhere = "" if container else ", container=<container>"
         steps.append(["Give it a task, e.g. collect and rank tasks, or take one issue:",
-                      "use %s/petra.js with mode=scan, petra_dir=%s%s" % (s["home"], s["home"], fw),
-                      "use %s/petra.js with mode=issue, task=<issue URL>, petra_dir=%s%s, gpu_ids=0%s"
+                      "use %s/inferpilot.js with mode=scan, inferpilot_dir=%s%s" % (s["home"], s["home"], fw),
+                      "use %s/inferpilot.js with mode=issue, task=<issue URL>, inferpilot_dir=%s%s, gpu_ids=0%s"
                       % (s["home"], s["home"], fw, elsewhere)])
     lines = ["Next steps:"]
     for i, (head, *body) in enumerate(steps, 1):
@@ -831,18 +834,18 @@ def next_steps(s: dict, statuses: dict, found: dict | None = None, path_env: str
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="python3 -B -m petra.bootstrap",
-                                 description="Set up Petra where it runs (README step 3). "
+    ap = argparse.ArgumentParser(prog="python3 -B -m inferpilot.bootstrap",
+                                 description="Set up InferPilot where it runs (README step 3). "
                                              "Safe to re-run: what is already there is kept.")
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--claude-only", action="store_true", help="only the keys, Claude Code, PATH and config steps")
     g.add_argument("--check", action="store_true", help="only the environment checks")
-    ap.add_argument("--framework-dir", help="framework checkout for tasks; cloned only if missing (PETRA_FRAMEWORK_DIR)")
-    ap.add_argument("--framework-repo", help="repository to clone it from (default: sglang; PETRA_FRAMEWORK_REPO)")
+    ap.add_argument("--framework-dir", help="framework checkout for tasks; cloned only if missing (INFERPILOT_FRAMEWORK_DIR)")
+    ap.add_argument("--framework-repo", help="repository to clone it from (default: sglang; INFERPILOT_FRAMEWORK_REPO)")
     a = ap.parse_args([] if argv is None else argv)
 
-    if os.environ.get("PETRA_SKIP_BOOTSTRAP"):
-        log("PETRA_SKIP_BOOTSTRAP set; skipping")
+    if os.environ.get("INFERPILOT_SKIP_BOOTSTRAP"):
+        log("INFERPILOT_SKIP_BOOTSTRAP set; skipping")
         return 0
     s = settings(opts={"framework_dir": a.framework_dir, "framework_repo": a.framework_repo})
     container = in_container()
@@ -865,7 +868,7 @@ def main(argv=None) -> int:
     statuses = {step: status for step, status, _ in results}
     keys = keys_file(s) if container else ""
     found = None if a.claude_only else check_environment(keys_path=keys)
-    print("\n[petra-bootstrap] %s\n\n%s" % (summary(results), next_steps(s, statuses, found, claude_only=a.claude_only)),
+    print("\n[inferpilot-bootstrap] %s\n\n%s" % (summary(results), next_steps(s, statuses, found, claude_only=a.claude_only)),
           flush=True)
     return 1 if "failed" in statuses.values() else 0
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Give what root wrote back to the owner of the checkout it lives in.
 #
-# Petra runs as root inside the container; the checkouts it mounts belong to a host user, whose git
+# InferPilot runs as root inside the container; the checkouts it mounts belong to a host user, whose git
 # fails on root-owned files in .git (knowledge/env_hygiene.md). Run it after every git write and before
 # handing over a push command:
 #

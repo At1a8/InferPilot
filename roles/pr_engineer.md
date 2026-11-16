@@ -44,7 +44,7 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
    verification comment for that PR instead, at the same path.
 6. **Push command:** the exact `git push` the human should run from the worktree, in the container. Do
    not run it. Also write the branch's commits to `RUN_DIR/patches` (`git -C <worktree> format-patch
-   <base>..petra/<slug> -o RUN_DIR/patches`), so the change leaves the container with the run directory:
+   <base>..inferpilot/<slug> -o RUN_DIR/patches`), so the change leaves the container with the run directory:
    on the host, `git am` puts them on the same base in the human's own checkout, to push from there
    (README step 5). A worktree on a host mount: first give it back to its owner
    (`scripts/restore_owner.sh <worktree>`) and check that nothing in `.git` is still root's
@@ -53,8 +53,8 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
 Return:
 
 ```json
-{"branch": "petra/<slug>", "title": "[Fix] [AMD] scope: Description", "commits": ["<sha> <subject>"],
+{"branch": "inferpilot/<slug>", "title": "[Fix] [AMD] scope: Description", "commits": ["<sha> <subject>"],
  "lint_pass": true, "feature_off_final": true, "content_unchanged": true, "merges_cleanly": true,
  "work_packages": [],
- "pr_body_path": "/abs/RUN_DIR/pr_body.md", "push_command": "git -C /sgl-workspace/sglang push <remote> petra/<slug>"}
+ "pr_body_path": "/abs/RUN_DIR/pr_body.md", "push_command": "git -C /sgl-workspace/sglang push <remote> inferpilot/<slug>"}
 ```

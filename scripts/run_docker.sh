@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start a ROCm container for Petra, or get back into it, and open a root shell in its /workspace
+# Start a ROCm container for InferPilot, or get back into it, and open a root shell in its /workspace
 # (README step 2).
 #
 #   scripts/run_docker.sh                                # the newest daily sglang image, ROCm 10, MI35x
@@ -7,9 +7,9 @@
 #   IMAGE=rocm/sgl-dev:<tag> NAME=<name> scripts/run_docker.sh
 #   EXTRA_MOUNTS="/home/<you>/models" scripts/run_docker.sh   # more host directories, at the same paths
 #   DOCKER_SOCKET=1 scripts/run_docker.sh                # also mount the host's Docker socket
-#   bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/Petra/main/scripts/run_docker.sh)   # no checkout
+#   bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts/run_docker.sh)   # no checkout
 #
-# Each container keeps its own /workspace, where Petra and its runs live, and its own copy of the image's
+# Each container keeps its own /workspace, where InferPilot and its runs live, and its own copy of the image's
 # /sgl-workspace/sglang, the code tasks change: apart from every other container's, for as long as the
 # container exists. A new container starts from the newest daily image, pulled at its first use. A
 # container named NAME is never removed: run again, this starts it if it was stopped and opens a shell in
@@ -19,16 +19,16 @@
 # container: it installs Claude Code there.
 #
 # The data directories that exist (/data, /mnt, ...) are mounted at the same paths; your home is not.
-# Petra's agents run as root with permissions auto-approved, and a home holds credentials (git, ssh)
-# they do not need. Your keys come in as one file: ~/.petra_env, mounted read-only as root's
-# ~/.petra_env. The host's Docker socket is not mounted by default either: it would let the agents stop
-# or start any container on the host, and Petra inside the container does not need it.
+# InferPilot's agents run as root with permissions auto-approved, and a home holds credentials (git, ssh)
+# they do not need. Your keys come in as one file: ~/.inferpilot_env, mounted read-only as root's
+# ~/.inferpilot_env. The host's Docker socket is not mounted by default either: it would let the agents stop
+# or start any container on the host, and InferPilot inside the container does not need it.
 VARIANT=${IMAGE_VARIANT:-rocm10-mi35x}
 NAME=${NAME:-${SUDO_USER:-$USER}}
 HOST_HOME=$HOME
 [ -n "$SUDO_USER" ] && HOST_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 SUDO=$([ -w /var/run/docker.sock ] || echo sudo)
-RAW=https://raw.githubusercontent.com/At1a8/Petra/main/scripts
+RAW=https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts
 
 latest_image() {  # scripts/latest_image.py next to this script, else the one on GitHub
   if [ -f "$(dirname "$0")/latest_image.py" ]; then
@@ -53,7 +53,7 @@ if OLD=$($SUDO docker inspect -f '{{.Config.Image}}' "$NAME" 2>/dev/null); then
                 "which deletes its /workspace)" >&2 ;;
   esac
   $SUDO docker start "$NAME" >/dev/null || exit 1
-  exec $SUDO docker exec -it -w /workspace -e PETRA_CONTAINER="$NAME" "$NAME" bash
+  exec $SUDO docker exec -it -w /workspace -e INFERPILOT_CONTAINER="$NAME" "$NAME" bash
 fi
 
 if [ -z "$IMAGE" ]; then
@@ -72,11 +72,11 @@ for d in /data /data2 /apps /mnt /shared /nfs_shared1 /kmd2 $EXTRA_MOUNTS; do
   [ -d "$d" ] && MOUNTS+=(-v "$d:$d")
 done
 # Only a file that exists: docker would create a directory in place of a missing one.
-if [ -f "$HOST_HOME/.petra_env" ]; then
-  MOUNTS+=(-v "$HOST_HOME/.petra_env:/root/.petra_env:ro")
+if [ -f "$HOST_HOME/.inferpilot_env" ]; then
+  MOUNTS+=(-v "$HOST_HOME/.inferpilot_env:/root/.inferpilot_env:ro")
 else
-  echo "run_docker.sh: no $HOST_HOME/.petra_env, so Claude Code in this container has no key (README step 1)." \
-    "Create it, then start a new container; or write /root/.petra_env in this one" >&2
+  echo "run_docker.sh: no $HOST_HOME/.inferpilot_env, so Claude Code in this container has no key (README step 1)." \
+    "Create it, then start a new container; or write /root/.inferpilot_env in this one" >&2
 fi
 [ "$DOCKER_SOCKET" = 1 ] && MOUNTS+=(-v /var/run/docker.sock:/var/run/docker.sock -v /usr/bin/docker:/usr/bin/docker:ro)
 
@@ -84,6 +84,6 @@ exec $SUDO docker run -it \
   --privileged --ipc=host --network=host --device=/dev/kfd --device=/dev/dri --group-add video \
   --cap-add=SYS_PTRACE --security-opt seccomp=unconfined -w /workspace \
   "${MOUNTS[@]}" \
-  -e PYTHONDONTWRITEBYTECODE=1 -e DISABLE_AUTOUPDATER=1 -e PETRA_IMAGE="$IMAGE" -e PETRA_CONTAINER="$NAME" \
+  -e PYTHONDONTWRITEBYTECODE=1 -e DISABLE_AUTOUPDATER=1 -e INFERPILOT_IMAGE="$IMAGE" -e INFERPILOT_CONTAINER="$NAME" \
   --shm-size=512G --ulimit memlock=-1 --ulimit stack=67108864 \
   --entrypoint /bin/bash --name "$NAME" "$IMAGE"

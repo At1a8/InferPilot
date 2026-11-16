@@ -12,7 +12,7 @@
 |---|---|---|
 | GEAK `perf_knowledge/expert_skills/` | an optimization recipe for `operator × scenario` | isolated / e2e speed A/B |
 | GEAK `*/knowledge/learned/` cards | one distilled principle | the A/B that produced it |
-| **`feature_skills/` (here)** | a development plan for a feature on a stack | Petra's gates (G0–G5) |
+| **`feature_skills/` (here)** | a development plan for a feature on a stack | InferPilot's gates (G0–G5) |
 
 ## Layout
 
