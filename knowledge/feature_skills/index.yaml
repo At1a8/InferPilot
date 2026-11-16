@@ -1,12 +1,16 @@
 # feature_skills selector registry. One entry per skill; keep in sync with each SKILL.md frontmatter.
-# Not a ranking: filter by match (framework, feature, model_arch, platforms) and status, then read the
-# skill. validated skills are high-prior plans; stale ones are references to re-verify step by step.
+# Find candidates by tag (scripts/find_skill.py "<request>"), then filter them by match (framework,
+# feature, model_arch, platforms) and status, then read the skill. validated skills are high-prior
+# plans; stale ones are references to re-verify step by step.
+# tags: English words a task about the feature may use — its name and aliases, the algorithm or
+# subsystem it belongs to, the techniques it is built on; not the model or platform (match holds those).
 
-schema: {id, file, match, depends_on, validation_status}
+schema: {id, file, tags, match, depends_on, validation_status}
 
 skills:
 - id: hisparse-v2
   file: hisparse-v2/SKILL.md
+  tags: [hisparse, sparse attention, hierarchical cache, hicache, kv cache offload, host memory tier, kv swap-in, long context]
   match:
     framework: sglang
     framework_ref: b057d5b3f1

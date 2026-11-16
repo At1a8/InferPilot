@@ -5,6 +5,7 @@
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import textwrap
@@ -21,6 +22,7 @@ import audit_platform_gates  # noqa: E402
 import check_framework_skills  # noqa: E402
 import latest_image  # noqa: E402
 import daily_report  # noqa: E402
+import find_skill  # noqa: E402
 import propose_knowledge  # noqa: E402
 import run_lock  # noqa: E402
 import scan_ci  # noqa: E402
@@ -52,6 +54,94 @@ class CheckFrameworkSkillsTest(unittest.TestCase):
             self.assertEqual(r["missing"], ["gone-skill"])
             self.assertEqual(r["unindexed"], ["new-skill", "sglang-diffusion-add-model"])
             self.assertEqual(r["present"], 5)
+
+
+class FindSkillTest(unittest.TestCase):
+    INDEX = textwrap.dedent("""\
+        # comment
+        schema: {id, file, tags, match, depends_on, validation_status}
+
+        skills:
+        - id: fly-dspark
+          file: fly-dspark/SKILL.md
+          tags: [fly, speculative decoding, dspark]
+          match:
+            framework: sglang
+            feature: fly_speculative_verification
+            model_arch: [deepseek_v4]      # DeepSeek-V4.1
+            platforms: [rocm-gfx950]
+          depends_on: [vllm-project/vllm#53987]
+          validation_status: draft
+        - id: hisparse-v2
+          file: hisparse-v2/SKILL.md
+          tags: [hisparse, sparse attention, speculative decoding]
+          match:
+            feature: hisparse_v2
+            model_arch: [deepseek_v4]
+          validation_status: validated
+        """)
+
+    def find(self, query):
+        with tempfile.TemporaryDirectory() as d:
+            index = Path(d, "index.yaml")
+            index.write_text(self.INDEX)
+            Path(d, "fly-dspark").mkdir()
+            Path(d, "fly-dspark", "SKILL.md").write_text('---\nid: fly-dspark\ntitle: "FLy on DSPARK"\n---\n')
+            return find_skill.find(query, index)
+
+    def test_parse(self):
+        with tempfile.TemporaryDirectory() as d:
+            index = Path(d, "index.yaml")
+            index.write_text(self.INDEX)
+            fly = find_skill.load_index(index)[0]
+        self.assertEqual(fly["tags"], ["fly", "speculative decoding", "dspark"])
+        self.assertEqual(fly["feature"], "fly_speculative_verification")
+        self.assertEqual(fly["model_arch"], ["deepseek_v4"])
+        self.assertEqual(fly["depends_on"], ["vllm-project/vllm#53987"])
+
+    def test_tags_id_and_feature_find_a_skill(self):
+        for query in ("FLy", "DSPARK verify", "bring fly_speculative_verification to AMD", "Fly-DSpark"):
+            with self.subTest(query=query):
+                found = self.find(query)
+                self.assertEqual([s["id"] for s in found], ["fly-dspark"])
+                self.assertEqual(found[0]["title"], "FLy on DSPARK")
+        self.assertEqual([s["id"] for s in self.find("HiSparse_V2 port")], ["hisparse-v2"])
+
+    def test_whole_words_and_no_match_on_model_alone(self):
+        self.assertEqual(self.find("a flywheel for sparse attentions"), [])
+        self.assertEqual(self.find("DeepSeek-V4.1 decode is slow on rocm-gfx950"), [])
+
+    def test_order(self):
+        # Both have one feature hit; the model breaks no tie here, the status does.
+        self.assertEqual([s["id"] for s in self.find("speculative decoding")], ["hisparse-v2", "fly-dspark"])
+        found = self.find("speculative decoding with FLy for DeepSeek-V4")
+        self.assertEqual([s["id"] for s in found], ["fly-dspark", "hisparse-v2"])
+        self.assertEqual(found[0]["matched"], ["fly", "speculative decoding", "deepseek_v4"])
+
+    def test_command_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            index = Path(d, "index.yaml")
+            index.write_text(self.INDEX)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(find_skill.main(["--index", str(index), "--json", "DSPARK"]), 0)
+            self.assertEqual([s["id"] for s in json.loads(out.getvalue())], ["fly-dspark"])
+            out = io.StringIO()
+            with redirect_stdout(out):
+                find_skill.main(["--index", str(index), "nothing", "here"])
+            self.assertIn("no feature skill matches", out.getvalue())
+
+    def test_the_real_index(self):
+        skills = find_skill.load_index(find_skill.INDEX)
+        self.assertTrue(skills)
+        for entry in skills:
+            with self.subTest(skill=entry["id"]):
+                self.assertTrue(entry.get("tags"), "every skill needs tags")
+                front = (find_skill.INDEX.parent / entry["file"]).read_text(encoding="utf-8").split("\n---", 1)[0]
+                tags = re.search(r"^tags: \[(.*)\]", front, re.M)
+                self.assertIsNotNone(tags, "the SKILL.md frontmatter needs the same tags")
+                self.assertEqual([t.strip() for t in tags[1].split(",")], entry["tags"])
+        self.assertIn("hisparse-v2", [s["id"] for s in find_skill.find("sparse attention")])
 
 
 class LatestImageTest(unittest.TestCase):

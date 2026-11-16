@@ -27,6 +27,9 @@ they win over anything you infer), `answers` (the user's replies to earlier ques
    - an issue or PR: fetch its title and state (`scripts/scan_issues.py --issue <n>` for issues).
    - `workload` and any target number: only what the request states or the user answers; never invent
      numbers.
+   - feature skills (feature mode): `python3 <petra_dir>/scripts/find_skill.py "<request, task title>"`;
+     list each candidate in `assumptions` as `feature skill candidate: <id> (<status>)`. The director
+     makes the choice at Spec.
 3. **Defaults** — record each in `provenance` as `default` and list it in `assumptions`:
    `framework=sglang`, `kernel_backend=none`, empty `gpu_ids` (Setup picks free GPUs), empty `container`
    when Petra runs inside the container, the scout's default `sources` and `since` for a scan.

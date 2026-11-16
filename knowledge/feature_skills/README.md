@@ -29,7 +29,11 @@ feature_skills/
 
 ## Selection
 
-A run reads `index.yaml` and keeps the entries whose `match` fits the task:
+First the candidates: `python3 scripts/find_skill.py "<task title, request, goal>"` lists the skills
+one of whose `tags`, id or feature name occurs in the text (case-insensitive, whole words, `-` and `_`
+read as spaces), best match first. Tags only widen the net — a task that says "sparse attention" or
+"KV cache offload" reaches the skill whose feature name is `hisparse_v2`. Then a run keeps the
+candidates whose `match` fits the task:
 
 ```
 match.framework == task.framework
@@ -60,7 +64,10 @@ Porting checklist · Scripts · Sources.
 
 1. Copy `_template/SKILL_TEMPLATE.md` to `<id>/SKILL.md` and fill every section; put the scripts the
    validation recipe runs under `<id>/scripts/`.
-2. Add an entry to `index.yaml` with `validation_status: draft`.
+2. Add an entry to `index.yaml` with `validation_status: draft` and the same `tags` as the skill's
+   frontmatter: English words a task about the feature may use (its name and aliases, the algorithm
+   or subsystem it belongs to, the techniques it is built on), not the model or platform. Check that
+   `scripts/find_skill.py` finds it from a few phrasings of such a task.
 3. Run the gates; record the measured numbers, the framework commit, model and GPU in the frontmatter's
    `validation` block, with pointers to the artifacts (PR, branch, result files).
 4. Set `validated` only when every gate the skill claims has a recorded result.

@@ -99,7 +99,8 @@ Return:
 
 1. Identify the source of truth (upstream PR, design or paper) and its commit; list unmerged
    dependencies and the commits to cherry-pick.
-2. Select feature skills from `knowledge/feature_skills/index.yaml` (`feature_skills/README.md`); read a
+2. Select feature skills: `python3 <petra_dir>/scripts/find_skill.py "<task title, request, goal>"`
+   lists the candidates by tag; keep those whose `match` fits (`feature_skills/README.md`) and read a
    matching skill in full. A near match is the start of a port, not a plan to reuse blindly.
 3. Fill `RUN_DIR/feature_spec.md` (`templates/feature_spec.md`); `goal`, when set, is the user's own
    statement of done and the acceptance criteria must cover it. Sections: target, user-visible switch, goal,

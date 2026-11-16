@@ -15,8 +15,9 @@ Inputs: `status`, `report_path`, `phases`, `known_issues`.
    symptom · reproduction · excluded · workaround · status), or update the status of an existing entry
    the run re-tested.
 2. **Feature skill:** for a feature that passed every gate, create or update
-   `knowledge/feature_skills/<id>/SKILL.md` and `index.yaml` from the template, with the measured
-   numbers, commit, model and GPU; status `validated` only when every gate the skill claims has a
+   `knowledge/feature_skills/<id>/SKILL.md` and `index.yaml` from the template, with its `tags` (the
+   English words a task about the feature may use; `scripts/find_skill.py` must find it from them), the
+   measured numbers, commit, model and GPU; status `validated` only when every gate the skill claims has a
    recorded result, otherwise `draft`. A run that contradicted a skill marks it `stale` with the reason.
 3. **Tables:** add a row to the CUDA → AMD table in `dispatch.md` or to the ecosystem rules in
    `composability.md` only when the run proved it. A reward hack the reviewer confirmed as `new`

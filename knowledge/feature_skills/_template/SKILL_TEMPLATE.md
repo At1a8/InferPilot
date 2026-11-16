@@ -4,6 +4,9 @@ title: "REPLACE — one line: feature + target model family + platform"
 kind: feature_skill
 authors: [REPLACE]
 # ---- selector: matched against the task ----
+tags: [REPLACE]                     # English words a task may use: the feature's name and aliases, the
+                                    # algorithm or subsystem, the techniques it is built on; not the
+                                    # model or platform (match holds those). Same list as in index.yaml
 match:
   framework: sglang                 # sglang | vllm | atom
   framework_ref: REPLACE            # commit the skill was validated on
