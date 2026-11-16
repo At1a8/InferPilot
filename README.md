@@ -176,12 +176,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/script
 
 This fetches [`scripts/run_docker.sh`](scripts/run_docker.sh) and runs it, so the host needs no copy of
 InferPilot; in a checkout, `scripts/run_docker.sh` does the same. It is the usual ROCm `run_docker.sh`: a
-privileged container with the GPUs and the data directories that exist (`/data`, `/mnt`, ...) mounted at
-the same paths (`EXTRA_MOUNTS` adds more), and a root shell in its `/workspace`. Unlike many such
-scripts it mounts neither your home nor the host's Docker socket (`DOCKER_SOCKET=1` mounts the socket):
-InferPilot's agents run as root with permissions auto-approved, a home holds credentials (git, ssh) they do
-not need, and the socket would put every container on the host within their reach. From your home it
-takes `~/.inferpilot_env` alone, mounted read-only as root's `~/.inferpilot_env`.
+privileged container with the GPUs, `/home` and the data directories that exist (`/data`, `/mnt`, ...)
+mounted at the same paths (`EXTRA_MOUNTS` adds more), and a root shell in its `/workspace`. InferPilot's
+agents run as root with permissions auto-approved, so they can read every home on the machine, credentials
+(git, ssh) included: `MOUNT_HOME=0` leaves `/home` out, for a task that must not see what is there (a
+clean-room re-implementation). Your keys also come in as root's `~/.inferpilot_env`, mounted read-only.
+Unlike many such scripts it does not mount the host's Docker socket (`DOCKER_SOCKET=1` does): it would put
+every container on the host within the agents' reach.
 
 - **Image.** Tasks test the newest sglang, so it starts from the newest daily `rocm/sgl-dev` build for
   ROCm 10 and MI35x ([`scripts/latest_image.py`](scripts/latest_image.py), e.g.
@@ -340,12 +341,12 @@ step 3 the GEAK way, cloning InferPilot to `/workspace/inferpilot` (pip shows th
 | Variable | Used by | Default |
 |---|---|---|
 | `IMAGE` | `scripts/run_docker.sh` | the newest daily `rocm/sgl-dev` image of `IMAGE_VARIANT` (the newest local one when Docker Hub cannot be reached) |
-| `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS` | `scripts/run_docker.sh` | `rocm10-mi35x`; your user name; more directories to mount, space-separated |
+| `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS`, `MOUNT_HOME` | `scripts/run_docker.sh` | `rocm10-mi35x`; your user name; more directories to mount, space-separated; `0` leaves `/home` out |
 | `DOCKER_SOCKET` | `scripts/run_docker.sh` | unset; `1` also mounts the host's Docker socket and `docker` |
 | `INFERPILOT_LOCK_FILE` | `scripts/run_lock.py` | `/dev/shm/inferpilot-run.lock`, the machine's one-task lock |
 | `INFERPILOT_HOME` | bootstrap | `./inferpilot`, or the checkout you run from |
 | `INFERPILOT_KEYS` | bootstrap | root's `~/.inferpilot_env`, where run_docker.sh mounts yours: the keys file the container's shells load |
-| `INFERPILOT_HOST_HOME` | bootstrap | unset; in a container that mounts `/home`, your home there, where the bootstrap looks for the keys file (without it, the home of the user the container is named after) |
+| `INFERPILOT_HOST_HOME` | `scripts/run_docker.sh` (with `/home` mounted), bootstrap | in a container that mounts `/home`, your home there, where the bootstrap looks for the keys file (without it, the home of the user the container is named after) |
 | `INFERPILOT_REPO_URL`, `INFERPILOT_REF` | bootstrap | `https://github.com/At1a8/inferpilot.git`, its default branch |
 | `CLAUDE_VERSION`, `CLAUDE_BIN_DIR` | bootstrap | `latest`, `~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code, bootstrap | unset (`~`): Claude Code's own, where its config lives; the bootstrap writes the first-start answers there |
