@@ -23,7 +23,8 @@
 #   TOP_P, TOP_K      sampling overrides (default: the server's own)
 #   DATASET_HUB       modelscope (default) or huggingface; HF_TOKEN for gated sets
 #   CACHE_DIR, RERUN_REVIEW=1   resume an earlier work dir; re-run only the judging
-#   EVALSCOPE         the evalscope executable (default: evalscope on PATH; pip install evalscope)
+#   EVALSCOPE         the evalscope executable (default: evalscope on PATH, which the bootstrap installs
+#                     in a venv of its own)
 #   Judge-graded sets: JUDGE_KEY (default LLM_GATEWAY_KEY), JUDGE_URL (default the AMD LLM gateway),
 #   JUDGE_MODEL (default Claude-Opus-5; never the model under test), JUDGE_NTID (the gateway's user
 #   header, which its SDK route requires)

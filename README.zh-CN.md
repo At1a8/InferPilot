@@ -126,7 +126,8 @@ claude --version    # 装在这个容器里的 Claude Code
 | git 身份 | root 以 key 文件（或环境变量）里的 `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` 提交，所以不会出现作者为 `root@<本机主机名>` 的提交；两者都没有时，它会提示，不会自己编一个 |
 | shell | 在 root 的 `~/.bashrc` 里设置 `PYTHONDONTWRITEBYTECODE=1`（宿主机挂载目录里的 checkout 不会出现 root 所有的 `__pycache__`）和 `DISABLE_AUTOUPDATER=1`，并加载 key 文件，之后才放进去的也会加载；设置了 `LLM_GATEWAY_KEY` 且没有 `ANTHROPIC_BASE_URL` 时，让 Claude Code 走 AMD LLM 网关 |
 | 框架 | 镜像里的 `/sgl-workspace/sglang` 如果还是镜像留下的样子（detached 在构建时的 commit 上，打包文件被改成了 ROCm 版），就把它切到 main：丢弃这些打包改动，然后 `git checkout main`、`git pull`。之后不要在这里 `pip install -e`：这时它的 `pyproject.toml` 是上游默认的版本，会装进 CUDA 的包。已经在某个分支上、或者有其他改动的 checkout 原样保留；用 `--framework-dir` 可以改用宿主机上的 checkout（已有的原样使用，缺失时带完整历史克隆） |
-| 检查 | GPU、sglang、API 访问、`GITHUB_TOKEN`，key 文件里设置的也算（只检测） |
+| evalscope | 供 `scripts/eval_accuracy.sh` 使用：装在单独的 venv `/opt/evalscope` 里（约一分钟、1.2 GB），并链接为 `/usr/local/bin/evalscope`。不装进镜像的 Python，否则会把 `datasets` 和 `fsspec` 降到比 sglang 自带的更低的版本；`PATH` 上已经有 `evalscope` 时保留原样 |
+| 检查 | GPU、sglang、evalscope、API 访问、`GITHUB_TOKEN`，key 文件里设置的也算（只检测） |
 
 只有 `/workspace/inferpilot` 还不存在时才会克隆；bootstrap 从不写入 key。
 
@@ -194,7 +195,7 @@ docker cp <name>:/workspace/inferpilot/exp/<run> ~/
 
 ### 重复执行与选项
 
-`inferpilot.bootstrap` 的每一步都会报告 `kept`、`installed`、`updated`、`added`、`created`、`skipped` 或 `failed`；最后有一份汇总，"下一步"只列出仍然缺少的内容，任何一步失败时退出码为 1。在新容器里，它会安装 Claude Code（需要一两分钟），并写好它的配置以及 git 和 shell 的设置。`--claude-only` 只运行 key 和 Claude Code 相关的步骤，`--check` 只运行检查。在容器里，`cd /workspace && pip install -v git+https://github.com/At1a8/inferpilot` 会按 GEAK 的方式执行第 3 步，把 InferPilot 克隆到 `/workspace/inferpilot`（加 `-v` 时 pip 才显示输出；用了缓存的 wheel 时会跳过）。
+`inferpilot.bootstrap` 的每一步都会报告 `kept`、`installed`、`updated`、`added`、`created`、`skipped` 或 `failed`；最后有一份汇总，"下一步"只列出仍然缺少的内容，任何一步失败时退出码为 1。在新容器里，它会安装 Claude Code 和 evalscope（各需要一两分钟），并写好 Claude Code 的配置以及 git 和 shell 的设置。`--claude-only` 只运行 key 和 Claude Code 相关的步骤，`--check` 只运行检查。在容器里，`cd /workspace && pip install -v git+https://github.com/At1a8/inferpilot` 会按 GEAK 的方式执行第 3 步，把 InferPilot 克隆到 `/workspace/inferpilot`（加 `-v` 时 pip 才显示输出；用了缓存的 wheel 时会跳过）。
 
 | 变量 | 使用者 | 默认值 |
 |---|---|---|
@@ -208,6 +209,7 @@ docker cp <name>:/workspace/inferpilot/exp/<run> ~/
 | `INFERPILOT_REPO_URL`、`INFERPILOT_REF` | bootstrap | `https://github.com/At1a8/inferpilot.git`，它的默认分支 |
 | `CLAUDE_VERSION`、`CLAUDE_BIN_DIR` | bootstrap | `latest`，`~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code、bootstrap | 不设置（`~`）：Claude Code 自己的变量，指它的配置所在的目录；bootstrap 把首次启动的回答写在那里 |
+| `EVALSCOPE_VERSION`、`EVALSCOPE_VENV` | bootstrap | `latest`，`/opt/evalscope` |
 | `INFERPILOT_GIT_NAME`、`INFERPILOT_GIT_EMAIL` | `~/.inferpilot_env`、bootstrap | 不设置；容器里 root 提交时用的身份 |
 | `INFERPILOT_REPO_TOKEN` | `~/.inferpilot_env`、`scripts/propose_knowledge.py` | 不设置；只对 InferPilot 自己仓库有 Contents、Pull requests 读写权限的 fine-grained token，curator 用它提 PR |
 | `LLM_GATEWAY_KEY` | `~/.inferpilot_env`、容器的 shell 配置 | 不设置；设置后 Claude Code 走 AMD LLM 网关，除非 `ANTHROPIC_BASE_URL` 指定了别的地址 |
@@ -274,7 +276,7 @@ python3 scripts/run_lock.py release --force   # 那个运行已经中断时，�
 |---|---|
 | `scripts/scan_issues.py` | 开放的 AMD issue，附关联 PR、回复情况和预计的 60 天自动关闭日期 |
 | `scripts/scan_ci.py` | 从 main 上 AMD CI 自己的运行和日志读出现状（每个失败 job：从何时开始失败、上次通过的时间、失败的测试、第一条错误），以及 Failure Tracker 的失败簇 |
-| `scripts/eval_accuracy.sh` | 用 evalscope 测一个正在运行的 server 的精度：默认 GSM8K 全部 1319 题跑一遍，其他测试集按名字指定；key 只从环境变量读取 |
+| `scripts/eval_accuracy.sh` | 用 evalscope（bootstrap 会安装）测一个正在运行的 server 的精度：默认 GSM8K 全部 1319 题跑一遍，其他测试集按名字指定；key 只从环境变量读取 |
 | `scripts/scan_upstream.py` | 已合入的上游提交：新增的 CUDA 门控、CUDA 优先的特性、新模型 |
 | `scripts/audit_platform_gates.py` | 换到新架构时需要重新检查的平台门控（在 gfx1250 上为真的能力判断、wave32 假设） |
 | `scripts/audit_host_syncs.py` | 热路径上的 host-device 同步和拷贝候选点（供 profile 参考的线索） |
