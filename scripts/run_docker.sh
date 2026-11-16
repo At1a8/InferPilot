@@ -5,6 +5,7 @@
 #   scripts/run_docker.sh                                # the newest daily sglang image, ROCm 10, MI35x
 #   IMAGE_VARIANT=rocm10-mi30x scripts/run_docker.sh     # the newest one for another GPU or ROCm
 #   IMAGE=rocm/sgl-dev:<tag> NAME=<name> scripts/run_docker.sh
+#   EXTRA_MOUNTS="/home/<you>/models" scripts/run_docker.sh   # more host directories, at the same paths
 #   DOCKER_SOCKET=1 scripts/run_docker.sh                # also mount the host's Docker socket
 #   bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/Petra/main/scripts/run_docker.sh)   # no checkout
 #
@@ -14,14 +15,14 @@
 # container named NAME is never removed: run again, this starts it if it was stopped and opens a shell in
 # it, /workspace as it was left, and says so when its image is no longer the newest daily one (tasks there
 # stop at Setup to ask). A new task gets a new container under another NAME; `docker rm -f <name>`
-# removes one you are done with, and its /workspace with it. Your Claude Code, its state and your keys
-# stay in your home on the host, mounted at the same path and named in PETRA_HOST_HOME, which the shell
-# it opens in an existing container gets too, also in one this script did not start. Run README step
-# 3 once in every new container.
+# removes one you are done with, and its /workspace with it. Run README step 3 once in every new
+# container: it installs Claude Code there.
 #
-# The host's Docker socket is not mounted by default: Petra's agents run as root with permissions
-# auto-approved, and the socket would let them stop or start any container on the host. Petra inside the
-# container does not need it.
+# The data directories that exist (/data, /mnt, ...) are mounted at the same paths; your home is not.
+# Petra's agents run as root with permissions auto-approved, and a home holds credentials (git, ssh)
+# they do not need. Your keys come in as one file: ~/.petra_env, mounted read-only as root's
+# ~/.petra_env. The host's Docker socket is not mounted by default either: it would let the agents stop
+# or start any container on the host, and Petra inside the container does not need it.
 VARIANT=${IMAGE_VARIANT:-rocm10-mi35x}
 NAME=${NAME:-${SUDO_USER:-$USER}}
 HOST_HOME=$HOME
@@ -52,7 +53,7 @@ if OLD=$($SUDO docker inspect -f '{{.Config.Image}}' "$NAME" 2>/dev/null); then
                 "which deletes its /workspace)" >&2 ;;
   esac
   $SUDO docker start "$NAME" >/dev/null || exit 1
-  exec $SUDO docker exec -it -w /workspace -e PETRA_HOST_HOME="$HOST_HOME" -e PETRA_CONTAINER="$NAME" "$NAME" bash
+  exec $SUDO docker exec -it -w /workspace -e PETRA_CONTAINER="$NAME" "$NAME" bash
 fi
 
 if [ -z "$IMAGE" ]; then
@@ -67,9 +68,16 @@ fi
 echo "run_docker.sh: new container $NAME from $IMAGE" >&2
 
 MOUNTS=()
-for d in /home /data /data2 /apps /mnt /shared /nfs_shared1 /kmd2 $EXTRA_MOUNTS; do
+for d in /data /data2 /apps /mnt /shared /nfs_shared1 /kmd2 $EXTRA_MOUNTS; do
   [ -d "$d" ] && MOUNTS+=(-v "$d:$d")
 done
+# Only a file that exists: docker would create a directory in place of a missing one.
+if [ -f "$HOST_HOME/.petra_env" ]; then
+  MOUNTS+=(-v "$HOST_HOME/.petra_env:/root/.petra_env:ro")
+else
+  echo "run_docker.sh: no $HOST_HOME/.petra_env, so Claude Code in this container has no key (README step 1)." \
+    "Create it, then start a new container; or write /root/.petra_env in this one" >&2
+fi
 [ "$DOCKER_SOCKET" = 1 ] && MOUNTS+=(-v /var/run/docker.sock:/var/run/docker.sock -v /usr/bin/docker:/usr/bin/docker:ro)
 
 exec $SUDO docker run -it \
@@ -77,6 +85,5 @@ exec $SUDO docker run -it \
   --cap-add=SYS_PTRACE --security-opt seccomp=unconfined -w /workspace \
   "${MOUNTS[@]}" \
   -e PYTHONDONTWRITEBYTECODE=1 -e DISABLE_AUTOUPDATER=1 -e PETRA_IMAGE="$IMAGE" -e PETRA_CONTAINER="$NAME" \
-  -e PETRA_HOST_HOME="$HOST_HOME" \
   --shm-size=512G --ulimit memlock=-1 --ulimit stack=67108864 \
   --entrypoint /bin/bash --name "$NAME" "$IMAGE"

@@ -329,7 +329,7 @@ Framework code runs from the tree under test, the task worktree (or RUN_DIR/base
 base commit): put it first on PYTHONPATH (sglang: <tree>/python) for every server, test and benchmark.
 Use only the GPUs in gpu_ids: export HIP_VISIBLE_DEVICES=<gpu_ids> for every server, test and
 benchmark. Touch only the processes, servers and containers this run started (knowledge/guardrails.md).
-As root in the container, give back what you write under /home: after every git write and before you
+As root in the container, give back what you write on host mounts: after every git write and before you
 return, run ${PETRA}/scripts/restore_owner.sh on RUN_DIR and on the worktree's .git
 (knowledge/env_hygiene.md).`;
   const retry = attempt > 1 ? `
