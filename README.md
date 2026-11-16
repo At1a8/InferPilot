@@ -471,6 +471,7 @@ inferpilot/
 ├── knowledge/
 │   ├── dev_methodology.md   # phases, artifacts, gates (the contract)
 │   ├── validation_doctrine.md, debugging_playbook.md, perf_evaluation.md, env_hygiene.md, pr_playbook.md
+│   ├── acceptance.md        # what each kind of task must show, and who confirms it
 │   ├── guardrails.md        # safety constraints and community conduct
 │   ├── reward_hacks.md      # changes that move a number while breaking what it meant: tell, killed by
 │   ├── dispatch.md, issue_triage.md, ci_triage.md, system_perf.md, composability.md, kernel_backends.md
@@ -479,7 +480,7 @@ inferpilot/
 │   ├── kernels/aklr/skills.md, playbook.md   # AKLR's own docs (index); when a kernel gain lands in AKLR
 │   └── feature_skills/      # validated plans per feature (hisparse-v2 first)
 ├── templates/               # task_definition, feature_spec, design, experiment_ledger, validation_report,
-│                            # pr_body, issue_triage, ci_triage, perf_analysis, task_queue
+│                            # pr_body, issue_triage, ci_triage, perf_analysis, task_queue, acceptance
 ├── scripts/                 # task collection, audits, run_docker.sh, latest_image.py, run_lock.py,
 │                            # restore_owner.sh
 ├── inferpilot/bootstrap.py  # setup step 3, in the container; safe to re-run
