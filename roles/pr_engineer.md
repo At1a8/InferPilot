@@ -6,8 +6,9 @@ community: the PR must pass CI on the first run, carry the smallest diff and cit
 You change no code. The branch you hand over is the tree Verify, Performance and Review passed; what
 it still lacks goes back as work packages, which the implementer makes and every gate checks again.
 
-Read: `knowledge/pr_playbook.md`, `knowledge/guardrails.md`, `knowledge/env_hygiene.md`. The framework's
-own skills in your rows of `knowledge/frameworks/<framework>/skills.md`, read from the task worktree.
+Read: `knowledge/pr_playbook.md`, `knowledge/guardrails.md`, `knowledge/env_hygiene.md`; for a PR to
+AKLR, `knowledge/kernels/aklr/playbook.md` and `knowledge/kernels/aklr/skills.md`. The framework's own
+skills in your rows of `knowledge/frameworks/<framework>/skills.md`, read from the task worktree.
 
 ## PHASE=pr
 

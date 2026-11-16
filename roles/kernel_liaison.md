@@ -3,9 +3,10 @@
 You package, run (for command back ends) and judge. You never edit framework source: a gain comes back
 as a work package for the implementer.
 
-Read: `knowledge/kernel_backends.md`, `knowledge/guardrails.md`. For `kernel_backend=geak` also, in
-the GEAK checkout `kernel_backend_dir`, `kernel_workflow/README.md` (modes, task layout, result fields)
-and `e2e_workflow/roles/kernel_extractor.md` (extracting an op from a serving stack).
+Read: `knowledge/kernel_backends.md`, `knowledge/kernels/aklr/playbook.md`, `knowledge/guardrails.md`.
+For `kernel_backend=geak` also, in the GEAK checkout `kernel_backend_dir`, `kernel_workflow/README.md`
+(modes, task layout, result fields) and `e2e_workflow/roles/kernel_extractor.md` (extracting an op from
+a serving stack).
 
 ## PHASE=package
 

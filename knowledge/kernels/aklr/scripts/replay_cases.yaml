@@ -1,0 +1,122 @@
+# Replay cases for ../playbook.md: GEAK fusions for DeepSeek-V4.1-Flash on SGLang 0.5.23 (MI355X),
+# with the destination AKLR's maintainers decided in AKLR #86, #87 and #88, or the measurement that
+# decided it. To check an edit of the playbook: give an agent only this directory (without the
+# `expected` fields) and a checkout of AKLR's main, ask it to triage each case's `description`, and
+# compare its destination and rule with `expected`. Every case should match before the playbook's
+# status moves past draft.
+#
+# destination: aklr | aklr_after_change | aklr_layer_op | framework | drop
+# rule: the playbook section that decides it (Triage n, Invariants n, Validation recipe n)
+
+cases:
+- id: router_shared_expert
+  description: >
+    Fuses AITER's topk_gating (sqrtsoftplus scoring, bias, top-k, renormalize, routed scaling) with
+    SGLang's fused_append_shared_experts (appending the shared-expert column, zeroing DP pad rows) into
+    one Triton kernel, bit-identical. Replaces sglang.srt.layers.moe.topk.select_experts. Kernel
+    1.34-2.83x. Overlay-apportioned e2e +1.04% (c64); measured alone with only this route on: c32 P90
+    +1.80%, c64 +1.55%, one pair each.
+  expected:
+    destination: aklr
+    rule: [Triage 2, Triage 5, Layout 1]
+    notes: package in aklr/plugins/sglang/layers/moe_topk; measured end to end below a 2% bar, so it is at
+      risk on Triage 6 and is a candidate to combine into a MoE-layer op
+
+- id: sparse_mla_inv_rope
+  description: >
+    Moves SGLang's per-row inverse RoPE into the epilogue of AITER's sparse MLA decode kernel (one split),
+    one launch instead of two, bit-identical. Replaces
+    sglang.srt.layers.attention.hip_flash_mla.aiter_sparse_decode_fwd. Kernel 1.02-1.41x. Overlay-
+    apportioned e2e +0.75% (c64). Measured alone: c64 P90 75.70 / 75.65 off vs 74.32 on.
+  expected:
+    destination: drop
+    rule: [Triage 6, Validation recipe 3]
+    notes: an existing op (flash_mla_with_kvcache) would take it as an option, but alone it shows no
+      end-to-end gain; withdrawn
+
+- id: mhc_boundary_norm
+  description: >
+    Fuses SGLang's hc_boundary_fused_deferred (hc_post, combine, mix statistics) with
+    rmsnorm_with_sinkhorn (statistics reduce, sinkhorn, RMSNorm, bf16/MXFP8 output) into one kernel
+    that waits for whole rows with a grid barrier; the barrier counters are cached per shape and reset
+    by the previous call. Replaces deepseek_v4_platform_stage.forward_hc_pre_from_prev_fused_boundary.
+    Overlay-apportioned e2e +1.31% (c32). Zeroing the counters on every call costs one more launch and
+    leaves 34 of 115 shapes above the bar.
+  expected:
+    destination: aklr_after_change
+    rule: [Invariants 1]
+    notes: stateless rewrite first (per-CTA row statistics, or one CTA per row), then measure alone
+
+- id: draft_mhc_boundary
+  description: >
+    The DSpark draft layer's mHC boundary (five generic kernels: mhc_combine, AITER RMSNorm,
+    hc_mix_stats_sinkhorn, ...) reuses the fused boundary kernel above, with the same cached barrier
+    counters. Replaces NonCudaDSparkMixin._forward_hc_pre_from_prev. Overlay-apportioned e2e +0.61%
+    (c32); with per-call zeroing still 1.44-1.84x.
+  expected:
+    destination: aklr_after_change
+    rule: [Invariants 1, Triage 7]
+    notes: a second call site of the main mHC op's kernel; stateless first, then its own end-to-end result
+
+- id: dp_moe_gather
+  description: >
+    Under DP attention, fuses SGLang's _mask_dp_pad_rows (arange, compare, masked_fill_) with AITER's
+    copy of local rows into the all-gather input buffer: one masked copy kernel that writes directly
+    into AITER's registered IPC input pool. Replaces moe_transport.MoeRowTransport.__init__.
+    Overlay-apportioned e2e +2.20% (c64).
+  expected:
+    destination: framework
+    rule: [Triage 2, Triage 3, Triage 5]
+    notes: communication glue; rewrites an SGLang constructor and writes an AITER-internal buffer
+
+- id: moe_sort_mxfp8_quant
+  description: >
+    Fuses the MoE sorting (P0_v2 + P23) and the stage-1 fused_dynamic_mxfp8_quant_moe_sort inside
+    aiter.fused_moe into one launch. SGLang calls only aiter.fused_moe as a whole. Overlay-apportioned
+    e2e +1.61% (c32) / +1.60% (c64).
+  expected:
+    destination: aklr_layer_op
+    rule: [Triage 4]
+    notes: no caller in the framework; part of an AKLR op at fused_moe-call or MoE-layer level (as deepseek_v2); not a PR to AITER
+
+- id: attention_q_prep
+  description: >
+    q norm + quant, wq_b GEMM, q RoPE, KV norm/RoPE and KV-cache write: three launches into two. The
+    route replaces the whole deepseek_v4.MQALayer._forward_prepare and re-implements the tail of the
+    compressor/indexer, using many SGLang private symbols. Overlay-apportioned e2e +0.76% (c32).
+  expected:
+    destination: framework
+    rule: [Triage 3, Triage 5]
+
+- id: wo_a_split_k
+  description: >
+    wo_a split-K GEMM: partial sums and a fixed-order reduction (with fp8-grid rounding) in one launch
+    instead of two, slices synchronized with semaphores cached across calls. Replaces
+    gfx95_batched_gemm_bf16_fp8_grid._batched_gemm_split_k. Overlay-apportioned e2e +1.43% (c32); with
+    per-call zeroing small shapes drop to 1.03-1.06x.
+  expected:
+    destination: drop
+    rule: [Invariants 1, Triage 6]
+    notes: stateful; stateless it barely clears the kernel bar
+
+- id: markov_sampling
+  description: >
+    DSpark draft sampling: instead of all-gathering [rows, 129280] logits across GPUs, each GPU samples
+    on its vocabulary shard and only [rows, 128] (value, index) pairs are exchanged. No new kernel:
+    SGLang's own kernels in another order. Replaces dspark_draft._draft_step and
+    dspark_verify.accept_draft_tokens. Overlay-apportioned e2e +1.33% (c32); 75-90% of the gain is the
+    smaller communication; as a single-GPU op the kernel is ~1.00x.
+  expected:
+    destination: framework
+    rule: [Triage 2, Triage 3]
+
+- id: verify_argmax_vocab_parallel
+  description: >
+    VERIFY argmax: each GPU takes the argmax on its vocabulary shard and only (max, index) are
+    exchanged, instead of all-gathering the full logits. The writer and the reader of the logits meet
+    only inside a CUDA-graph-captured closure; it needs routes on LogitsProcessor._get_logits,
+    dspark_accept._row_argmax and TargetVerifyExecutor._forward_prepared_verify with shared state.
+    Overlay-apportioned e2e +0.70% (c32).
+  expected:
+    destination: framework
+    rule: [Triage 2, Triage 3, Invariants 3]

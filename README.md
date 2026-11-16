@@ -476,6 +476,7 @@ Petra/
 │   ├── dispatch.md, issue_triage.md, ci_triage.md, system_perf.md, composability.md, kernel_backends.md
 │   ├── frameworks/sglang/feature_dev_map.md, platforms/rocm.md, known_issues.md
 │   ├── frameworks/sglang/skills.md, platforms/rocm_skills.md   # sglang's own skills: index + ROCm notes
+│   ├── kernels/aklr/skills.md, playbook.md   # AKLR's own docs (index); when a kernel gain lands in AKLR
 │   └── feature_skills/      # validated plans per feature (hisparse-v2 first)
 ├── templates/               # task_definition, feature_spec, design, experiment_ledger, validation_report,
 │                            # pr_body, issue_triage, ci_triage, perf_analysis, task_queue
