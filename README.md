@@ -431,7 +431,8 @@ GitHub allows 60 requests an hour and 10 searches a minute per IP address).
 its owner (in `/workspace` there is nothing to give back); every agent runs it after a git write ([`knowledge/env_hygiene.md`](knowledge/env_hygiene.md)).
 `scripts/check_framework_skills.py --framework-dir <dir>` checks the skills index against a framework
 checkout: skills it names that are gone, and new ones it does not name yet (the scout runs it on every
-scan). `scripts/latest_image.py [--variant rocm10-mi30x]` prints the newest daily sglang image
+scan). `scripts/find_skill.py "<query>"` lists the feature skills whose tags, id or feature name occur
+in a request or task title, best match first (the intake and the director run it). `scripts/latest_image.py [--variant rocm10-mi30x]` prints the newest daily sglang image
 (`run_docker.sh` starts from it; the director compares a run's image with it). `scripts/run_lock.py`
 keeps one Petra task per machine (`acquire`, `release`, `status`). `scripts/daily_report.py check`
 tells whether a daily report can be made public (no local path, hostname or internal site) and fits in

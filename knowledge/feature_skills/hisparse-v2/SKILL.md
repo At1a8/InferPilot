@@ -3,6 +3,7 @@ id: hisparse-v2
 title: "HiSparse V2 on DeepSeek-V4.1 compressed KV (sglang, ROCm gfx950): demote admitted prefixes to the HiCache host tier, keep indexer keys on GPU, swap selected rows in each decode step"
 kind: feature_skill
 authors: [geak]
+tags: [hisparse, sparse attention, hierarchical cache, hicache, kv cache offload, host memory tier, kv swap-in, long context]
 match:
   framework: sglang
   framework_ref: b057d5b3f1          # sglang main the branch was merged with (Oct 2026)
