@@ -2,7 +2,7 @@
 
 Read this in `mode=issue` and whenever a user report is the task source. The goal is that every AMD
 user report gets an answer: a reproduction conclusion, a fix PR, or a clear reason why it is not
-Petra's to fix. On sglang in late October 2026, 20 of the 21 open P0/P1 AMD issues had no reply from
+InferPilot's to fix. On sglang in late October 2026, 20 of the 21 open P0/P1 AMD issues had no reply from
 anyone but the reporter, and issues untouched for 60 days are closed automatically (see *Auto-close*).
 
 ## 1. Intake

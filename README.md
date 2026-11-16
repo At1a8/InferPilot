@@ -1,13 +1,13 @@
-# Petra
+# InferPilot
 
 **English** | [简体中文](README.zh-CN.md)
 
-Petra is the framework agent for AMD GPUs in open-source LLM inference frameworks, starting with
+InferPilot is the framework agent for AMD GPUs in open-source LLM inference frameworks, starting with
 sglang. It turns one task — an upstream feature to bring to AMD, an AMD user's issue, a red AMD CI
 job, a system-level performance gap — into a pull request a maintainer can review: **correct first**
 (independent unit gates, accuracy / long-context / stress gates against a same-pattern baseline, a
 controlled investigation loop), **then fast** (equal-budget A/B), within the community rules in
-[`knowledge/guardrails.md`](knowledge/guardrails.md). Petra proposes; people review, push and merge.
+[`knowledge/guardrails.md`](knowledge/guardrails.md). InferPilot proposes; people review, push and merge.
 
 Why it exists and how it maps onto the agreed design: [`docs/design.md`](docs/design.md).
 
@@ -25,7 +25,7 @@ Phases in parentheses run only when they apply: Kernel when there is a kernel ha
 `kernel_backend` is not `none`; Performance in issue mode for issues triaged as `performance`.
 
 A task starts from a **task definition** ([`templates/task_definition.md`](templates/task_definition.md)):
-the fields `petra.js` takes, the same names every role reads. It can be given as fields, or as a
+the fields `inferpilot.js` takes, the same names every role reads. It can be given as fields, or as a
 request in plain words: then an Intake phase runs first and turns the request into a definition,
 checking what it can without changing anything (the checkout, the model on this machine, the GPUs,
 the issue). A definition that still lacks something its mode needs — the issue, the checkout, the
@@ -44,7 +44,7 @@ Implement and Verify again. Performance numbers count only on the workload fixed
 serving path the task targets, and a gain only if it also holds at a held-out operating point fixed
 with the workload ([`knowledge/perf_evaluation.md`](knowledge/perf_evaluation.md) §3).
 
-Kernel-level work — tuning a kernel Petra wrote for a feature, or a kernel-level performance
+Kernel-level work — tuning a kernel InferPilot wrote for a feature, or a kernel-level performance
 opportunity — is handed to a **kernel workflow back end** in the Kernel phase between Implement and
 Verify ([`knowledge/kernel_backends.md`](knowledge/kernel_backends.md)):
 
@@ -54,7 +54,7 @@ Verify ([`knowledge/kernel_backends.md`](knowledge/kernel_backends.md)):
 | `geak` | GEAK's `kernel_workflow/kernel_lane.js` runs it from the GEAK checkout given as `kernel_backend_dir` (nested once, as GEAK's e2e_workflow does) |
 | `command` | any other CLI given as `kernel_backend_command` |
 
-A gain comes back as a work package: the implementer integrates it and Petra's own gates judge it. A
+A gain comes back as a work package: the implementer integrates it and InferPilot's own gates judge it. A
 back end that fails or finds nothing never blocks the task. An integrated kernel that then fails
 Verify goes back to the functional kernel and is handed to the back end once more, with the failing
 case added to its tests; it is integrated again only if it passes.
@@ -62,29 +62,29 @@ case added to its tests; it is integrated again only if it passes.
 ## Roles
 
 Each phase calls a role: an agent that reads `roles/<role>.md`, does its part and returns structured
-JSON; `petra.js` holds the schemas and branches only on their required fields. Four rules hold across
+JSON; `inferpilot.js` holds the schemas and branches only on their required fields. Four rules hold across
 the roles:
 
 - only the **implementer** edits framework source, and only on the task's branch;
 - the roles that measure (test engineer, verify engineer, performance engineer), the intake and the
   reviewer never edit framework source; the measuring ones never reuse anyone else's numbers but run
   everything again;
-- the **curator** edits only Petra's own `knowledge/`, and proposes the edits as a pull request to Petra's
-  repository for you to review and merge (with `PETRA_REPO_TOKEN`; without it they stay uncommitted in
+- the **curator** edits only InferPilot's own `knowledge/`, and proposes the edits as a pull request to InferPilot's
+  repository for you to review and merge (with `INFERPILOT_REPO_TOKEN`; without it they stay uncommitted in
   the checkout);
 - no role pushes or posts upstream: the PR engineer returns the exact `git push`, issue replies are
   drafts, a scan's daily report is a file for you to share; the one post is the curator's knowledge
-  changes, as a pull request to Petra's own repository that you merge, and only with a token you set
+  changes, as a pull request to InferPilot's own repository that you merge, and only with a token you set
   for that.
 
 | Role | Phases | What it does |
 |---|---|---|
-| `intake` | Intake | turns a request in plain words, or a definition with gaps, into the task definition: decides the mode, fills fields with read-only checks, records defaults as assumptions, asks instead of guessing (a missing source of truth, model or workload, anything that would cost something to obtain), rejects what Petra does not do |
+| `intake` | Intake | turns a request in plain words, or a definition with gaps, into the task definition: decides the mode, fills fields with read-only checks, records defaults as assumptions, asks instead of guessing (a missing source of truth, model or workload, anything that would cost something to obtain), rejects what InferPilot does not do |
 | `director` | Setup, Spec, Report | creates the run directory and the task's branch, pins commit, image and GPUs and runs the baseline; writes the feature spec with measurable acceptance criteria; writes the final report for every outcome, with the next step for a human |
 | `scout` | Collect | gathers candidate tasks with the scripts below |
 | `dispatcher` | Dispatch | sets each candidate's gap type, level, CUDA dependencies with their AMD starting points, effort and priority, and ranks them into a queue |
 | `analyst` | Recon | maps every subsystem a feature needs to a file, function and hook in the target framework, and tables which assumptions of the source design hold on AMD; reads only |
-| `architect` | Design, Plan | turns the recon or the profile into work packages that can each be tested alone, with invariants, memory budget, synchronization, startup rejections and a test plan; flags designs a human must review; assigns each performance opportunity to Petra, the kernel back end or Hyperloom |
+| `architect` | Design, Plan | turns the recon or the profile into work packages that can each be tested alone, with invariants, memory budget, synchronization, startup rejections and a test plan; flags designs a human must review; assigns each performance opportunity to InferPilot, the kernel back end or Hyperloom |
 | `issue_triager` | Triage, Reproduce | sets the priority and the action from the issue, its comments and linked PRs; drafts the reply; writes the reproduction that becomes the issue's gate |
 | `ci_guardian` | Classify, Bisect | classifies a red job (code regression, dependency bump, test bug, flaky, infrastructure) and hands the last two over; finds and confirms the culprit commit and plans the fix |
 | `implementer` | Implement | one work package at a time, smallest diff, neutral with the feature off, HIP-only or behind a switch, committed lint-clean with its tests registered; functional kernels with unit tests (tuning is a hand-off); applies existing PRs and verified kernel gains; rolls back a failed package |
@@ -95,18 +95,18 @@ the roles:
 | `reviewer` | Review | reads the diff and its evidence as a maintainer would, starting from the catalog of known reward hacks: shapes, dtypes, parallel layouts, graphs, fallbacks, do-no-harm, the framework's conventions, a fair benchmark; requested changes, and a test for every confirmed hack, come back as work packages; can run on another model (`review_model`) |
 | `kernel_liaison` | Kernel | turns a kernel hand-off into the back end's task, runs `command` back ends, judges the result on the back end's own verification and returns a gain as a work package |
 | `pr_engineer` | PR | changes no code: checks hygiene, lint and CI registration (gaps go back as work packages), arranges one commit per work package without changing the tree, trial-merges main to report conflicts, checks feature off on the final commit, writes the PR body and the push command |
-| `curator` | Report | writes what the run proved into `knowledge/` (known issues, feature skills, CUDA → AMD rows, new reward hacks, method lessons), every number traceable to the run, and proposes it as a pull request to Petra's repository |
+| `curator` | Report | writes what the run proved into `knowledge/` (known issues, feature skills, CUDA → AMD rows, new reward hacks, method lessons), every number traceable to the run, and proposes it as a pull request to InferPilot's repository |
 
 ## Setup
 
-Petra runs inside a ROCm container, as root, the way GEAK does: Claude Code, Petra, git and the
+InferPilot runs inside a ROCm container, as root, the way GEAK does: Claude Code, InferPilot, git and the
 framework's servers and tests all run there, next to the GPUs and the framework's Python environment.
-Each task gets its own container, and everything it works on lives in that container: Petra's
+Each task gets its own container, and everything it works on lives in that container: InferPilot's
 checkout and its run directories in `/workspace`, and the image's own sglang in `/sgl-workspace/sglang`,
 which the task changes on its own branch. Containers do not share them, so they stay out of each
 other's way, and they last as long as their container. Claude Code is installed in each container too,
 its first-start questions answered ahead, as GEAK's CI and Hyperloom do. From your home on the host a
-container takes one file, your keys in `~/.petra_env`, mounted read-only; the rest of your home stays
+container takes one file, your keys in `~/.inferpilot_env`, mounted read-only; the rest of your home stays
 out, since the agents run as root with permissions auto-approved and a home holds credentials they do
 not need.
 
@@ -126,21 +126,21 @@ packaging changes in `/sgl-workspace/sglang` (step 3).
 - A read-only GitHub token (`GITHUB_TOKEN`), strongly recommended: scans and issue runs read GitHub's
   API.
 - Model weights in a directory the container mounts (`/data`, `/mnt`, `/kmd2`, ...; any other through
-  `EXTRA_MOUNTS`): Petra never downloads weights.
+  `EXTRA_MOUNTS`): InferPilot never downloads weights.
 
 ### 1. Keep your keys (host)
 
 ```bash
-[ -e ~/.petra_env ] || (umask 077 && echo 'export LLM_GATEWAY_KEY=<your AMD LLM gateway key>' > ~/.petra_env)
-(umask 077 && grep -qs GITHUB_TOKEN ~/.petra_env || echo 'export GITHUB_TOKEN=<your GitHub token>' >> ~/.petra_env)
+[ -e ~/.inferpilot_env ] || (umask 077 && echo 'export LLM_GATEWAY_KEY=<your AMD LLM gateway key>' > ~/.inferpilot_env)
+(umask 077 && grep -qs GITHUB_TOKEN ~/.inferpilot_env || echo 'export GITHUB_TOKEN=<your GitHub token>' >> ~/.inferpilot_env)
 ```
 
 The host needs no Claude Code: step 3 installs it in the container. Put your own values in place of
 `<your AMD LLM gateway key>` and `<your GitHub token>` before you run these lines: each writes its key
-only when `~/.petra_env` does not have it yet, so a key is changed later by editing the file.
-`~/.petra_env` keeps the keys on the host, readable only by you; run_docker.sh mounts it read-only into
+only when `~/.inferpilot_env` does not have it yet, so a key is changed later by editing the file.
+`~/.inferpilot_env` keeps the keys on the host, readable only by you; run_docker.sh mounts it read-only into
 every container it starts, so create it before the container (one started without it can get a copy in
-its own `/root/.petra_env`).
+its own `/root/.inferpilot_env`).
 
 - **LLM key (required).** With the AMD LLM gateway key, step 3 points Claude Code at the gateway
   (`https://llm-api.amd.com/Unified`, the key in its `Ocp-Apim-Subscription-Key` header), which serves
@@ -155,33 +155,33 @@ its own `/root/.petra_env`).
   partway; with one, 5000 requests an hour. Read-only is enough: on github.com, Settings → Developer
   settings → Personal access tokens → Fine-grained tokens, with *Public repositories (read-only)*
   access (a classic token with no scopes also works). Every agent in the container can read what
-  `~/.petra_env` holds, so keep your everyday token, the one you push with, out of it.
-- **Petra repository token (optional).** Only for the curator's knowledge changes: as a pull request
-  from a `petra/knowledge/<run>` branch to main, which you review and merge. That takes a token for
+  `~/.inferpilot_env` holds, so keep your everyday token, the one you push with, out of it.
+- **InferPilot repository token (optional).** Only for the curator's knowledge changes: as a pull request
+  from a `inferpilot/knowledge/<run>` branch to main, which you review and merge. That takes a token for
   this repository alone, so it can write nowhere else: a fine-grained token with *Only select
-  repositories* → `At1a8/Petra` and *Repository permissions* → *Contents* and *Pull requests*: *Read
-  and write*, added to `~/.petra_env` as `export PETRA_REPO_TOKEN=<token>`. Petra pushes only
-  `petra/` branches; protect main on GitHub (require a pull request) so the token cannot change it
+  repositories* → `At1a8/InferPilot` and *Repository permissions* → *Contents* and *Pull requests*: *Read
+  and write*, added to `~/.inferpilot_env` as `export INFERPILOT_REPO_TOKEN=<token>`. InferPilot pushes only
+  `inferpilot/` branches; protect main on GitHub (require a pull request) so the token cannot change it
   either. Without it the knowledge changes stay in the container's checkout, and the report gives the
   command that proposes them.
 - **Git identity (recommended).** The container carries no home, so no git config of yours: commits
-  Petra makes there would read `root@<this host>`. Add `export PETRA_GIT_NAME="<your name>"` and
-  `export PETRA_GIT_EMAIL=<your email>`; step 3 gives them to root.
+  InferPilot makes there would read `root@<this host>`. Add `export INFERPILOT_GIT_NAME="<your name>"` and
+  `export INFERPILOT_GIT_EMAIL=<your email>`; step 3 gives them to root.
 
 ### 2. Start a container (host)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/Petra/main/scripts/run_docker.sh)    # NAME defaults to your user name
+bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/InferPilot/main/scripts/run_docker.sh)    # NAME defaults to your user name
 ```
 
 This fetches [`scripts/run_docker.sh`](scripts/run_docker.sh) and runs it, so the host needs no copy of
-Petra; in a checkout, `scripts/run_docker.sh` does the same. It is the usual ROCm `run_docker.sh`: a
+InferPilot; in a checkout, `scripts/run_docker.sh` does the same. It is the usual ROCm `run_docker.sh`: a
 privileged container with the GPUs and the data directories that exist (`/data`, `/mnt`, ...) mounted at
 the same paths (`EXTRA_MOUNTS` adds more), and a root shell in its `/workspace`. Unlike many such
 scripts it mounts neither your home nor the host's Docker socket (`DOCKER_SOCKET=1` mounts the socket):
-Petra's agents run as root with permissions auto-approved, a home holds credentials (git, ssh) they do
+InferPilot's agents run as root with permissions auto-approved, a home holds credentials (git, ssh) they do
 not need, and the socket would put every container on the host within their reach. From your home it
-takes `~/.petra_env` alone, mounted read-only as root's `~/.petra_env`.
+takes `~/.inferpilot_env` alone, mounted read-only as root's `~/.inferpilot_env`.
 
 - **Image.** Tasks test the newest sglang, so it starts from the newest daily `rocm/sgl-dev` build for
   ROCm 10 and MI35x ([`scripts/latest_image.py`](scripts/latest_image.py), e.g.
@@ -203,45 +203,45 @@ takes `~/.petra_env` alone, mounted read-only as root's `~/.petra_env`.
   container, started again if it was stopped, with `/workspace` as you left it: it never removes a
   container. Give the next task a new container under another name (`NAME=<name>`), from the newest
   image; `docker rm -f <name>` removes one you are done with, and its `/workspace` with it. However many
-  containers there are, one Petra task runs on a machine at a time ([Running it](#running-it)). A
-  run_docker.sh of your own works too: mount your keys as root's `~/.petra_env`
-  (`-v $HOME/.petra_env:/root/.petra_env:ro`), or name the file with `PETRA_KEYS`; in a container that
+  containers there are, one InferPilot task runs on a machine at a time ([Running it](#running-it)). A
+  run_docker.sh of your own works too: mount your keys as root's `~/.inferpilot_env`
+  (`-v $HOME/.inferpilot_env:/root/.inferpilot_env:ro`), or name the file with `INFERPILOT_KEYS`; in a container that
   mounts `/home`, the bootstrap also finds it in your home there (step 3).
 
 `claude` is not there yet (`claude: command not found`): step 3 installs it.
 
-### 3. Set up Petra in the container (once per container)
+### 3. Set up InferPilot in the container (once per container)
 
-This puts Petra in the container's `/workspace` and makes the container ready to run it, as the table
+This puts InferPilot in the container's `/workspace` and makes the container ready to run it, as the table
 below lists:
 
 ```bash
-[ -d /workspace/Petra/.git ] || git clone https://github.com/At1a8/Petra /workspace/Petra
-cd /workspace/Petra && python3 -B -m petra.bootstrap
+[ -d /workspace/InferPilot/.git ] || git clone https://github.com/At1a8/InferPilot /workspace/InferPilot
+cd /workspace/InferPilot && python3 -B -m inferpilot.bootstrap
 source ~/.bashrc
 claude --version    # installed in this container
 ```
 
 | Step | In a new container |
 |---|---|
-| keys | root's `~/.petra_env`, which run_docker.sh mounts from your home, or the file `PETRA_KEYS` names. In a container that mounts `/home`, the one in your home there: `PETRA_HOST_HOME`, else, with a warning, the home of the user the container is named after (`<you>`, `<you>-0116`). Without a keys file the rest is still set up, and the next steps say where a key goes |
+| keys | root's `~/.inferpilot_env`, which run_docker.sh mounts from your home, or the file `INFERPILOT_KEYS` names. In a container that mounts `/home`, the one in your home there: `INFERPILOT_HOST_HOME`, else, with a warning, the home of the user the container is named after (`<you>`, `<you>-0116`). Without a keys file the rest is still set up, and the next steps say where a key goes |
 | `claude` | installed in the container with Claude Code's native installer (`~/.local/bin/claude`, put on `PATH`): the newest version, a large download (minutes without output on a slow link are the download). It stays at that version for the container's life (`DISABLE_AUTOUPDATER=1`); a new container gets the newest |
-| Claude Code config | root's `~/.claude.json` answers the first start's questions ahead, as GEAK's CI and Hyperloom do: the onboarding, trust in `/workspace/Petra`, bypass permissions mode and, for an `ANTHROPIC_API_KEY`, using it. The rest of the file is kept; like everything of root's, it goes with the container |
+| Claude Code config | root's `~/.claude.json` answers the first start's questions ahead, as GEAK's CI and Hyperloom do: the onboarding, trust in `/workspace/InferPilot`, bypass permissions mode and, for an `ANTHROPIC_API_KEY`, using it. The rest of the file is kept; like everything of root's, it goes with the container |
 | git | trusts checkouts on host mounts, which belong to you, not root (`safe.directory '*'`) |
-| git identity | root commits as `PETRA_GIT_NAME <PETRA_GIT_EMAIL>` from the keys file (or the environment), so no commit reads `root@<this host>`; with neither it says so and sets nothing |
+| git identity | root commits as `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` from the keys file (or the environment), so no commit reads `root@<this host>`; with neither it says so and sets nothing |
 | shell | root's `~/.bashrc` gets `PYTHONDONTWRITEBYTECODE=1` (no root-owned `__pycache__` in checkouts on host mounts) and `DISABLE_AUTOUPDATER=1`, and loads the keys file, also one put in place later; with `LLM_GATEWAY_KEY` and no `ANTHROPIC_BASE_URL`, it points Claude Code at the AMD LLM gateway |
 | framework | the image's `/sgl-workspace/sglang`, still as the image left it (detached at the commit it built, its packaging files rewritten for ROCm), is put on main: the packaging changes discarded, then `git checkout main` and `git pull`. Never `pip install -e` from it afterwards: its `pyproject.toml` is then upstream's, which would pull CUDA packages. A checkout already on a branch, or with other changes, is left as it is; `--framework-dir` names a host checkout instead (used as it is, or cloned with its whole history when missing) |
 | checks | GPUs, sglang, API access, `GITHUB_TOKEN`, counting what the keys file sets (detect only) |
 
-The clone runs only when `/workspace/Petra` is not there yet; the bootstrap never writes keys.
+The clone runs only when `/workspace/InferPilot` is not there yet; the bootstrap never writes keys.
 
 ### 4. Start Claude Code and give it a task (inside the container)
 
 ```bash
-cd /workspace/Petra && IS_SANDBOX=1 claude --dangerously-skip-permissions
+cd /workspace/InferPilot && IS_SANDBOX=1 claude --dangerously-skip-permissions
 ```
 
-`IS_SANDBOX=1` lets Claude Code auto-approve permissions as root, which Petra's agents need. Step 3
+`IS_SANDBOX=1` lets Claude Code auto-approve permissions as root, which InferPilot's agents need. Step 3
 answered the first start's questions in Claude Code's config, so it opens on its input box. Should one
 still come up (step 3 reported `claude-config` as `skipped`), three of the defaults would stop you:
 
@@ -260,11 +260,11 @@ the page shows at that prompt.
 
 Once it runs, the bottom line shows `bypass permissions on` for the whole session: that is the mode
 `--dangerously-skip-permissions` turned on, not a question. Leave it as it is (Shift+Tab would switch to
-a mode that waits for your approval before commands, and Petra's agents would stall) and type the task
+a mode that waits for your approval before commands, and InferPilot's agents would stall) and type the task
 in the input box above it:
 
 ```
-use /workspace/Petra/petra.js with mode=scan, petra_dir=/workspace/Petra
+use /workspace/InferPilot/inferpilot.js with mode=scan, inferpilot_dir=/workspace/InferPilot
 ```
 
 The scan changes no code. It writes the day's report on the framework since the last report (else the
@@ -272,30 +272,30 @@ last 7 days): the AMD CI on main (every failing job, since when it fails and wha
 open AMD user issues under P0, P1 and P2, and the upstream changes AMD needs to follow. It ranks the
 tasks in them into `exp/scan_<time>/task_queue.md`, each with the task definition that starts it, and
 writes the report, without anything about this machine, to `exp/scan_<time>/daily_report.md` for you
-to share; Petra posts it nowhere. One report a day is enough: when one is less than 24 hours old, the scan asks before it starts again
+to share; InferPilot posts it nowhere. One report a day is enough: when one is less than 24 hours old, the scan asks before it starts again
 (answer `rescan`), and `upstream_repos` adds repositories to follow, such as vLLM. To take one task,
 stopping after the reproduction to confirm the environment, name its fields:
 
 ```
-use /workspace/Petra/petra.js with mode=issue, task=https://github.com/sgl-project/sglang/issues/41299,
-petra_dir=/workspace/Petra, model_path=<weights>, gpu_ids=0, stop_after=Reproduce
+use /workspace/InferPilot/inferpilot.js with mode=issue, task=https://github.com/sgl-project/sglang/issues/41299,
+inferpilot_dir=/workspace/InferPilot, model_path=<weights>, gpu_ids=0, stop_after=Reproduce
 ```
 
 or say it in plain words and let the Intake phase write the definition:
 
 ```
-use /workspace/Petra/petra.js with petra_dir=/workspace/Petra, request="DeepSeek-V4.1 decode
+use /workspace/InferPilot/inferpilot.js with inferpilot_dir=/workspace/InferPilot, request="DeepSeek-V4.1 decode
 is slow on MI355X, make it faster"
 ```
 
 When something is missing (here: which fixed workload every measurement uses), the run starts
 nothing and returns `status: needs_input` with one question per field. Answer them in the chat;
-Claude Code runs `petra.js` again with the same arguments plus `answers={"workload": ...}`.
+Claude Code runs `inferpilot.js` again with the same arguments plus `answers={"workload": ...}`.
 [Running it](#running-it) lists all arguments.
 
 ### 5. After a run (in the container)
 
-Every run that got past Setup has its directory in `/workspace/Petra/exp` (ignored by git), named
+Every run that got past Setup has its directory in `/workspace/InferPilot/exp` (ignored by git), named
 `<mode>_<slug>_<time>`: the mode, a short name of the task and its start in UTC, e.g.
 `issue_41299-glm-dcp_20261106-071502Z` or `scan_20261106-064327Z`. `exp/index.md` lists every run of
 the container with its status. A run directory holds:
@@ -307,70 +307,70 @@ the container with its status. A run directory holds:
 | `experiment_ledger.md` | the environment, the baseline and every measurement |
 | `logs/` | one log per server or benchmark launch, `<tag>_<time>.log` |
 | `pr_body.md`, `patches/` | the PR description and the branch's commits as patches |
-| `knowledge_pr.md` | the description of the curator's pull request to Petra's repository |
+| `knowledge_pr.md` | the description of the curator's pull request to InferPilot's repository |
 | `daily_report.md`, `task_queue.md` | a scan's daily report, for you to share (below); the ranked tasks with local detail, each with the definition that starts it, next to what each source found (`<source>.json`) |
 
 A scan's `daily_report.md` is written to be shared, and `scripts/daily_report.py check` has made sure
-it names nothing about this machine: open a new issue in Petra's repository on GitHub, title it
-`Petra daily report <date>` and paste the whole file. Its first line, a hidden marker, lets the next
+it names nothing about this machine: open a new issue in InferPilot's repository on GitHub, title it
+`InferPilot daily report <date>` and paste the whole file. Its first line, a hidden marker, lets the next
 scan, in any container, find it there and mark what changed since.
 
-Petra never pushes. The task's branch, `petra/<slug>`, is in `/sgl-workspace/sglang`, and the report
+InferPilot never pushes. The task's branch, `inferpilot/<slug>`, is in `/sgl-workspace/sglang`, and the report
 gives the exact `git -C /sgl-workspace/sglang push ...`: run it here with credentials that can push.
 Run directories go with the container; to keep one, or to push from the host, where your git
 credentials are, copy it out on the host (`<name>` is the container's name, `<run>` the run
 directory's):
 
 ```bash
-docker cp <name>:/workspace/Petra/exp/<run> ~/
+docker cp <name>:/workspace/InferPilot/exp/<run> ~/
 ```
 
-The copy is yours, not root's. On the host, in your sglang checkout, `git checkout -b petra/<slug> <base>`
+The copy is yours, not root's. On the host, in your sglang checkout, `git checkout -b inferpilot/<slug> <base>`
 with the base commit the report names, then `git am ~/<run>/patches/*.patch`, and push from there.
 
 ### Re-running and options
 
-Each step of `petra.bootstrap` reports `kept`, `installed`, `updated`, `added`, `created`, `skipped` or
+Each step of `inferpilot.bootstrap` reports `kept`, `installed`, `updated`, `added`, `created`, `skipped` or
 `failed`; a summary lists them, the next steps list only what is still missing, and the exit code is 1
 when a step failed. In a new container it installs Claude Code, which takes a minute or two, and writes
 its config and the git and shell settings. `--claude-only` runs only the keys and Claude Code steps,
-`--check` only the checks. Inside a container, `cd /workspace && pip install -v git+https://github.com/At1a8/Petra` runs
-step 3 the GEAK way, cloning Petra to `/workspace/Petra` (pip shows the output only with `-v`; a cached wheel skips it).
+`--check` only the checks. Inside a container, `cd /workspace && pip install -v git+https://github.com/At1a8/InferPilot` runs
+step 3 the GEAK way, cloning InferPilot to `/workspace/InferPilot` (pip shows the output only with `-v`; a cached wheel skips it).
 
 | Variable | Used by | Default |
 |---|---|---|
 | `IMAGE` | `scripts/run_docker.sh` | the newest daily `rocm/sgl-dev` image of `IMAGE_VARIANT` (the newest local one when Docker Hub cannot be reached) |
 | `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS` | `scripts/run_docker.sh` | `rocm10-mi35x`; your user name; more directories to mount, space-separated |
 | `DOCKER_SOCKET` | `scripts/run_docker.sh` | unset; `1` also mounts the host's Docker socket and `docker` |
-| `PETRA_LOCK_FILE` | `scripts/run_lock.py` | `/dev/shm/petra-run.lock`, the machine's one-task lock |
-| `PETRA_HOME` | bootstrap | `./Petra`, or the checkout you run from |
-| `PETRA_KEYS` | bootstrap | root's `~/.petra_env`, where run_docker.sh mounts yours: the keys file the container's shells load |
-| `PETRA_HOST_HOME` | bootstrap | unset; in a container that mounts `/home`, your home there, where the bootstrap looks for the keys file (without it, the home of the user the container is named after) |
-| `PETRA_REPO_URL`, `PETRA_REF` | bootstrap | `https://github.com/At1a8/Petra.git`, its default branch |
+| `INFERPILOT_LOCK_FILE` | `scripts/run_lock.py` | `/dev/shm/inferpilot-run.lock`, the machine's one-task lock |
+| `INFERPILOT_HOME` | bootstrap | `./InferPilot`, or the checkout you run from |
+| `INFERPILOT_KEYS` | bootstrap | root's `~/.inferpilot_env`, where run_docker.sh mounts yours: the keys file the container's shells load |
+| `INFERPILOT_HOST_HOME` | bootstrap | unset; in a container that mounts `/home`, your home there, where the bootstrap looks for the keys file (without it, the home of the user the container is named after) |
+| `INFERPILOT_REPO_URL`, `INFERPILOT_REF` | bootstrap | `https://github.com/At1a8/InferPilot.git`, its default branch |
 | `CLAUDE_VERSION`, `CLAUDE_BIN_DIR` | bootstrap | `latest`, `~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code, bootstrap | unset (`~`): Claude Code's own, where its config lives; the bootstrap writes the first-start answers there |
-| `PETRA_GIT_NAME`, `PETRA_GIT_EMAIL` | `~/.petra_env`, bootstrap | unset; the identity root commits with in the container |
-| `PETRA_REPO_TOKEN` | `~/.petra_env`, `scripts/propose_knowledge.py` | unset; a fine-grained token for Petra's own repository alone (Contents, Pull requests: read and write), with which the curator opens its pull request |
-| `LLM_GATEWAY_KEY` | `~/.petra_env`, the container's shell settings | unset; set, Claude Code runs on the AMD LLM gateway unless `ANTHROPIC_BASE_URL` names another |
-| `PETRA_FRAMEWORK_DIR`, `PETRA_FRAMEWORK_REPO` | bootstrap: `--framework-dir`, `--framework-repo` | the image's `/sgl-workspace/sglang`; sglang |
-| `PETRA_SKIP_BOOTSTRAP` | bootstrap | unset; set it to install the package with no side effects (CI, images) |
+| `INFERPILOT_GIT_NAME`, `INFERPILOT_GIT_EMAIL` | `~/.inferpilot_env`, bootstrap | unset; the identity root commits with in the container |
+| `INFERPILOT_REPO_TOKEN` | `~/.inferpilot_env`, `scripts/propose_knowledge.py` | unset; a fine-grained token for InferPilot's own repository alone (Contents, Pull requests: read and write), with which the curator opens its pull request |
+| `LLM_GATEWAY_KEY` | `~/.inferpilot_env`, the container's shell settings | unset; set, Claude Code runs on the AMD LLM gateway unless `ANTHROPIC_BASE_URL` names another |
+| `INFERPILOT_FRAMEWORK_DIR`, `INFERPILOT_FRAMEWORK_REPO` | bootstrap: `--framework-dir`, `--framework-repo` | the image's `/sgl-workspace/sglang`; sglang |
+| `INFERPILOT_SKIP_BOOTSTRAP` | bootstrap | unset; set it to install the package with no side effects (CI, images) |
 
 ## Running it
 
-Petra is a GEAK-style workflow: `petra.js` holds the control flow, `roles/` the agent instructions,
-`knowledge/` the method, `templates/` the artifacts. In Claude Code, name `petra.js` and its arguments
+InferPilot is a GEAK-style workflow: `inferpilot.js` holds the control flow, `roles/` the agent instructions,
+`knowledge/` the method, `templates/` the artifacts. In Claude Code, name `inferpilot.js` and its arguments
 in one sentence, as in [step 4](#4-start-claude-code-and-give-it-a-task-inside-the-container). GEAK is needed in two cases
-only: the `geak` kernel back end (`kernel_backend_dir`), and running `petra.js` outside Claude Code,
+only: the `geak` kernel back end (`kernel_backend_dir`), and running `inferpilot.js` outside Claude Code,
 which uses GEAK's workflow runtime (Node 20+; also what the dry run uses):
 
 ```bash
-node /path/to/GEAK/interface/runtime/engine/run_workflow.mjs petra.js --agent codex \
-  --args '{"mode":"scan","petra_dir":"'"$PWD"'","framework_dir":"/path/to/sglang"}'
+node /path/to/GEAK/interface/runtime/engine/run_workflow.mjs inferpilot.js --agent codex \
+  --args '{"mode":"scan","inferpilot_dir":"'"$PWD"'","framework_dir":"/path/to/sglang"}'
 ```
 
 | Argument | Meaning |
 |---|---|
-| `petra_dir` | absolute path of this checkout (required) |
+| `inferpilot_dir` | absolute path of this checkout (required) |
 | `request` | the task in plain words, any language; the Intake phase turns it into the fields below (`roles/intake.md`), and fields given with it win |
 | `answers` | replies to a `needs_input` result, `{"<field>": <value>}`, passed with the same arguments as before |
 | `mode` | `feature` \| `issue` \| `ci` \| `perf` \| `scan` (required; inferred from `request` when not given) |
@@ -380,8 +380,8 @@ node /path/to/GEAK/interface/runtime/engine/run_workflow.mjs petra.js --agent co
 | `model_path` | the model the baseline and the gates run (required for `feature` and `perf`) |
 | `framework`, `platform`, `gpu_ids` | target and environment (`sglang`; empty `gpu_ids` lets Setup pick idle GPUs, which every later role then uses through `HIP_VISIBLE_DEVICES`) |
 | `workload` | the benchmark every measurement uses, e.g. `{"isl":8192,"osl":1024,"conc":64}`; required for `perf`, fixed at Setup |
-| `container` | only when Petra runs on the host: the framework's container, reached with `docker exec` |
-| `exp_root` | where run directories go (default `<petra_dir>/exp`, which git ignores) |
+| `container` | only when InferPilot runs on the host: the framework's container, reached with `docker exec` |
+| `exp_root` | where run directories go (default `<inferpilot_dir>/exp`, which git ignores) |
 | `kernel_backend` | `none` (default) \| `geak` \| `command`: where kernel hand-offs go |
 | `kernel_backend_dir` | `geak` back end: the GEAK checkout providing `kernel_workflow/kernel_lane.js` |
 | `kernel_backend_command` | `command` back end: shell command with `{task_dir}`, `{out_dir}`, `{gpu_ids}` |
@@ -396,7 +396,7 @@ node /path/to/GEAK/interface/runtime/engine/run_workflow.mjs petra.js --agent co
 | `max_fix_rounds`, `max_investigate_rounds`, `max_review_rounds`, `max_work_packages` | budgets |
 | `agent_retries`, `agent_timeout_ms` | an agent call is retried after an error (the retry checks what the failed attempt left), never after a timeout: the timed-out agent may still be running, so it goes on the report's attention list. Default timeout 3 h, 6 h for the verify and performance engineers and the investigator |
 
-Everything but `petra_dir`, `request`, `answers`, `exp_root`, `review_model` and the budgets is the task
+Everything but `inferpilot_dir`, `request`, `answers`, `exp_root`, `review_model` and the budgets is the task
 definition; the result of every run that started records the definition it used (`task_def`), where
 each field came from (`provenance`) and the intake's `assumptions`.
 
@@ -445,26 +445,26 @@ checkout: skills it names that are gone, and new ones it does not name yet (the 
 scan). `scripts/find_skill.py "<query>"` lists the feature skills whose tags, id or feature name occur
 in a request or task title, best match first (the intake and the director run it). `scripts/latest_image.py [--variant rocm10-mi30x]` prints the newest daily sglang image
 (`run_docker.sh` starts from it; the director compares a run's image with it). `scripts/run_lock.py`
-keeps one Petra task per machine (`acquire`, `release`, `status`). `scripts/daily_report.py check`
+keeps one InferPilot task per machine (`acquire`, `release`, `status`). `scripts/daily_report.py check`
 tells whether a daily report can be made public (no local path, hostname or internal site) and fits in
-an issue; `latest` finds the newest report shared in Petra's repository, which the next scan, in any
+an issue; `latest` finds the newest report shared in InferPilot's repository, which the next scan, in any
 container, continues from. Both only read.
 `scripts/propose_knowledge.py` turns the curator's changes under `knowledge/` into a pull request
-from `petra/knowledge/<run>` to main, built on the current main in a throwaway worktree, and then
+from `inferpilot/knowledge/<run>` to main, built on the current main in a throwaway worktree, and then
 restores `knowledge/` in the checkout, so later runs read only merged knowledge.
 
 ## Tests
 
 ```bash
-GEAK_HOME=/path/to/GEAK node tests/dry_run.mjs   # every control path of petra.js on GEAK's runtime, no GPU
+GEAK_HOME=/path/to/GEAK node tests/dry_run.mjs   # every control path of inferpilot.js on GEAK's runtime, no GPU
 python3 -m unittest discover -s tests             # the scripts' parsers and rules, the bootstrap, Claude Code's workflow rules, the two READMEs in step; offline
 ```
 
 ## Layout
 
 ```
-Petra/
-├── petra.js                 # orchestration: five modes, gates, budgets, rollback, kernel back ends
+InferPilot/
+├── inferpilot.js            # orchestration: five modes, gates, budgets, rollback, kernel back ends
 ├── roles/                   # intake, director, scout, dispatcher, analyst, architect, implementer,
 │                            # test_engineer, verify_engineer, investigator, perf_engineer, issue_triager,
 │                            # ci_guardian, kernel_liaison, reviewer, pr_engineer, curator
@@ -481,9 +481,9 @@ Petra/
 │                            # pr_body, issue_triage, ci_triage, perf_analysis, task_queue
 ├── scripts/                 # task collection, audits, run_docker.sh, latest_image.py, run_lock.py,
 │                            # restore_owner.sh
-├── petra/bootstrap.py       # setup step 3, in the container; safe to re-run
+├── inferpilot/bootstrap.py  # setup step 3, in the container; safe to re-run
 ├── setup.py, pyproject.toml # packaging; setup.py runs the bootstrap when pip builds the wheel
-├── tests/                   # dry run of petra.js, unit tests of the scripts, the bootstrap, Claude Code's
+├── tests/                   # dry run of inferpilot.js, unit tests of the scripts, the bootstrap, Claude Code's
 │                            # workflow rules and the READMEs
 ├── README.md, README.zh-CN.md
 └── docs/design.md
@@ -492,14 +492,14 @@ Petra/
 ## Relationship to GEAK and Hyperloom
 
 - A kernel's speed is the kernel workflow's job, on whichever back end is selected (GEAK's kernel lane
-  is one): Petra writes a functional kernel with a unit test, hands over the op spec with the reference
+  is one): InferPilot writes a functional kernel with a unit test, hands over the op spec with the reference
   as the oracle, and integrates a verified gain.
 - Flag and backend searches for a workload belong to Hyperloom and GEAK `e2e_workflow`; their upstream
-  candidates are Petra inputs, and features Petra lands become their options.
+  candidates are InferPilot inputs, and features InferPilot lands become their options.
 
 ## Origin
 
 The method, validation doctrine, known-issue register, templates and the HiSparse V2 feature skill come
 from GEAK's `framework_workflow` (branch `fangyuan/framework_agent_init`, commit `fc857c9`), which was at
-its knowledge-first phase. Petra adds the orchestration that was planned there, the roles, the issue /
+its knowledge-first phase. InferPilot adds the orchestration that was planned there, the roles, the issue /
 CI / performance / scan entry points from the design, and the task-collection scripts.

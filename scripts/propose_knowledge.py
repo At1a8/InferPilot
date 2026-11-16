@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Propose the curator's knowledge/ changes as a pull request to Petra's own repository.
+"""Propose the curator's knowledge/ changes as a pull request to InferPilot's own repository.
 
     python3 scripts/propose_knowledge.py --run-dir RUN_DIR --body RUN_DIR/knowledge_pr.md
     python3 scripts/propose_knowledge.py --run-dir RUN_DIR --body RUN_DIR/knowledge_pr.md --dry-run
 
 Only changes under knowledge/ go in. They are applied as a patch onto the current origin/main in a
-throwaway worktree, committed on petra/knowledge/<run directory name> and pushed there, never to main;
+throwaway worktree, committed on inferpilot/knowledge/<run directory name> and pushed there, never to main;
 the pull request targets main and a human merges it. Once it is open, those files are restored in the
 checkout, so later runs read knowledge/ as merged, not as proposed; a re-run updates the same branch
-and pull request. It pushes with PETRA_REPO_TOKEN, a fine-grained token for this repository alone
+and pull request. It pushes with INFERPILOT_REPO_TOKEN, a fine-grained token for this repository alone
 (Contents, Pull requests: read and write). The repository is public: added lines or a body that name a
 local path, this machine or an internal site stop it, as in scripts/daily_report.py. Without the token,
 or on any failure, the changes stay where they are. Standard library and git only.
@@ -30,15 +30,15 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from daily_report import default_repo, leaks  # noqa: E402
 
-PETRA = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MARKER = "<!-- petra:knowledge -->"
-AUTHOR = ["-c", "user.name=Petra curator", "-c", "user.email=petra-curator@users.noreply.github.com"]
+INFERPILOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MARKER = "<!-- inferpilot:knowledge -->"
+AUTHOR = ["-c", "user.name=InferPilot curator", "-c", "user.email=inferpilot-curator@users.noreply.github.com"]
 
 
 def api(method: str, path: str, token: str, data: dict | None = None):
     req = urllib.request.Request("https://api.github.com" + path, method=method,
                                  data=json.dumps(data).encode() if data else None,
-                                 headers={"Accept": "application/vnd.github+json", "User-Agent": "petra-curator",
+                                 headers={"Accept": "application/vnd.github+json", "User-Agent": "inferpilot-curator",
                                           "Authorization": "Bearer " + token})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r)
@@ -52,10 +52,10 @@ def git(repo: str, *args, check: bool = True, env: dict | None = None) -> str:
     return p.stdout
 
 
-def changed(petra: str) -> tuple[list, list]:
+def changed(inferpilot: str) -> tuple[list, list]:
     """(tracked, untracked) paths under knowledge/ that differ from HEAD."""
     tracked, untracked = [], []
-    entries = iter(git(petra, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "knowledge/").split("\0"))
+    entries = iter(git(inferpilot, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "knowledge/").split("\0"))
     for e in entries:
         if len(e) <= 3:
             continue
@@ -65,10 +65,10 @@ def changed(petra: str) -> tuple[list, list]:
     return [t for t in tracked if t], untracked
 
 
-def patch(petra: str, tracked: list, untracked: list) -> str:
-    out = git(petra, "diff", "HEAD", "--binary", "--", *tracked) if tracked else ""
+def patch(inferpilot: str, tracked: list, untracked: list) -> str:
+    out = git(inferpilot, "diff", "HEAD", "--binary", "--", *tracked) if tracked else ""
     for f in untracked:
-        out += git(petra, "diff", "--no-index", "--binary", "--", "/dev/null", f, check=False)
+        out += git(inferpilot, "diff", "--no-index", "--binary", "--", "/dev/null", f, check=False)
     return out
 
 
@@ -83,12 +83,12 @@ def auth_env(token: str) -> dict:
             "GIT_CONFIG_VALUE_0": "AUTHORIZATION: basic " + basic}
 
 
-def commit_branch(petra: str, branch: str, diff: str, title: str, run: str, push_url: str, token: str) -> str:
+def commit_branch(inferpilot: str, branch: str, diff: str, title: str, run: str, push_url: str, token: str) -> str:
     """Apply the patch onto origin/main in a throwaway worktree, commit, push the branch; the commit."""
-    git(petra, "fetch", "-q", push_url, "+refs/heads/main:refs/remotes/origin/main", env=auth_env(token))
-    wt = tempfile.mkdtemp(prefix="petra-knowledge-")
+    git(inferpilot, "fetch", "-q", push_url, "+refs/heads/main:refs/remotes/origin/main", env=auth_env(token))
+    wt = tempfile.mkdtemp(prefix="inferpilot-knowledge-")
     os.rmdir(wt)
-    git(petra, "worktree", "add", "-q", "--detach", wt, "origin/main")
+    git(inferpilot, "worktree", "add", "-q", "--detach", wt, "origin/main")
     try:
         git(wt, "checkout", "-q", "-B", branch)
         with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
@@ -97,13 +97,13 @@ def commit_branch(petra: str, branch: str, diff: str, title: str, run: str, push
             git(wt, "apply", "--3way", "--index", f.name)
         finally:
             os.unlink(f.name)
-        git(wt, *AUTHOR, "commit", "-q", "-m", title, "-m", "From the Petra run %s." % run)
+        git(wt, *AUTHOR, "commit", "-q", "-m", title, "-m", "From the InferPilot run %s." % run)
         sha = git(wt, "rev-parse", "HEAD").strip()
         git(wt, "push", "-q", "--force", push_url, "HEAD:refs/heads/%s" % branch, env=auth_env(token))
         return sha
     finally:
-        git(petra, "worktree", "remove", "--force", wt, check=False)
-        git(petra, "branch", "-D", branch, check=False)
+        git(inferpilot, "worktree", "remove", "--force", wt, check=False)
+        git(inferpilot, "branch", "-D", branch, check=False)
 
 
 def open_pr(repo: str, branch: str, title: str, body: str, token: str) -> dict:
@@ -117,16 +117,16 @@ def open_pr(repo: str, branch: str, title: str, body: str, token: str) -> dict:
     return {"action": "created", "url": pr.get("html_url", ""), "number": pr["number"]}
 
 
-def restore(petra: str, tracked: list, untracked: list) -> None:
+def restore(inferpilot: str, tracked: list, untracked: list) -> None:
     """Put knowledge/ back as HEAD has it: the changes now live on the pull request's branch."""
     if tracked:
-        git(petra, "checkout", "HEAD", "--", *tracked)
+        git(inferpilot, "checkout", "HEAD", "--", *tracked)
     for f in untracked:
-        path = os.path.join(petra, f)
+        path = os.path.join(inferpilot, f)
         if os.path.isfile(path) or os.path.islink(path):
             os.remove(path)
         d = os.path.dirname(path)
-        while d.startswith(os.path.join(petra, "knowledge") + os.sep) and os.path.isdir(d) and not os.listdir(d):
+        while d.startswith(os.path.join(inferpilot, "knowledge") + os.sep) and os.path.isdir(d) and not os.listdir(d):
             os.rmdir(d)
             d = os.path.dirname(d)
 
@@ -137,18 +137,18 @@ def main(argv=None) -> int:
     ap.add_argument("--body", required=True, help="the pull request's description, e.g. RUN_DIR/knowledge_pr.md")
     ap.add_argument("--title", default="", help="default: knowledge: what <run> learned")
     ap.add_argument("--repo", default="", help="owner/name (default: the origin of this checkout)")
-    ap.add_argument("--petra-dir", default=PETRA, help=argparse.SUPPRESS)
+    ap.add_argument("--inferpilot-dir", default=INFERPILOT, help=argparse.SUPPRESS)
     ap.add_argument("--push-url", default="", help=argparse.SUPPRESS)
     ap.add_argument("--dry-run", action="store_true", help="show what would be proposed")
     a = ap.parse_args(argv)
     run = os.path.basename(os.path.normpath(a.run_dir))
-    branch, title = "petra/knowledge/%s" % run, a.title or "knowledge: what %s learned" % run
+    branch, title = "inferpilot/knowledge/%s" % run, a.title or "knowledge: what %s learned" % run
     try:
-        tracked, untracked = changed(a.petra_dir)
+        tracked, untracked = changed(a.inferpilot_dir)
         if not tracked and not untracked:
             print(json.dumps({"action": "none", "reason": "no changes under knowledge/"}))
             return 0
-        diff = patch(a.petra_dir, tracked, untracked)
+        diff = patch(a.inferpilot_dir, tracked, untracked)
         body = open(a.body, encoding="utf-8").read()
         bad = leaks(added(diff), socket.gethostname()) + leaks(body, socket.gethostname())
         if bad:
@@ -158,27 +158,27 @@ def main(argv=None) -> int:
         if a.dry_run:
             print(json.dumps({"dry_run": True, "branch": branch, "title": title, "files": files}, indent=1))
             return 0
-        token = os.environ.get("PETRA_REPO_TOKEN", "")
+        token = os.environ.get("INFERPILOT_REPO_TOKEN", "")
         repo = a.repo or default_repo()
         if not token or not repo:
             print("propose_knowledge: %s; the changes stay in %s/knowledge. Propose them later with:\n  python3 %s "
-                  "--run-dir %s --body %s" % ("PETRA_REPO_TOKEN is not set" if not token else "no GitHub repository",
-                                              a.petra_dir, sys.argv[0], a.run_dir, a.body), file=sys.stderr)
+                  "--run-dir %s --body %s" % ("INFERPILOT_REPO_TOKEN is not set" if not token else "no GitHub repository",
+                                              a.inferpilot_dir, sys.argv[0], a.run_dir, a.body), file=sys.stderr)
             return 2
-        sha = commit_branch(a.petra_dir, branch, diff, title, run, a.push_url or "https://github.com/%s.git" % repo, token)
+        sha = commit_branch(a.inferpilot_dir, branch, diff, title, run, a.push_url or "https://github.com/%s.git" % repo, token)
         pr = open_pr(repo, branch, title, body, token)
-        restore(a.petra_dir, tracked, untracked)
+        restore(a.inferpilot_dir, tracked, untracked)
         print(json.dumps({**pr, "branch": branch, "commit": sha, "files": files}, indent=1))
         return 0
     except urllib.error.HTTPError as e:
         print("propose_knowledge: HTTP %d from GitHub%s; the changes stay where they are" % (
-            e.code, " (PETRA_REPO_TOKEN cannot write to the repository; README step 1)" if e.code in (401, 403) else ""),
+            e.code, " (INFERPILOT_REPO_TOKEN cannot write to the repository; README step 1)" if e.code in (401, 403) else ""),
             file=sys.stderr)
         return 2 if e.code in (401, 403) else 1
     except RuntimeError as e:
         denied = any(k in str(e) for k in ("403", "401", "Authentication failed", "Permission to"))
         print("propose_knowledge: %s; the changes stay where they are%s" % (
-            e, " (PETRA_REPO_TOKEN cannot push; README step 1)" if denied else ""), file=sys.stderr)
+            e, " (INFERPILOT_REPO_TOKEN cannot push; README step 1)" if denied else ""), file=sys.stderr)
         return 4 if "apply" in str(e) else 2 if denied else 1
     except (urllib.error.URLError, OSError, ValueError) as e:
         print("propose_knowledge: %s; the changes stay where they are" % e, file=sys.stderr)

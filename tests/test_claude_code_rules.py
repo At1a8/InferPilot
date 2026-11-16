@@ -1,4 +1,4 @@
-"""Rules Claude Code's Workflow tool enforces on petra.js and the agents it runs (Claude Code 2.1.317):
+"""Rules Claude Code's Workflow tool enforces on inferpilot.js and the agents it runs (Claude Code 2.1.317):
 
 - meta must be a pure literal: the tool reads it without running the script and rejects any expression
   there ("meta must be a pure literal: non-literal node type in meta: ...");
@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = (ROOT / "petra.js").read_text(encoding="utf-8")
+SRC = (ROOT / "inferpilot.js").read_text(encoding="utf-8")
 START = "export const meta = "
 TOKEN = re.compile(r"""\s+|//[^\n]*|/\*.*?\*/|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\$])*`"""
                    r"""|-?\d+(?:\.\d+)?|[A-Za-z_$][\w$]*|[{}\[\]:,]|.""", re.S)
@@ -47,7 +47,7 @@ def literal(tokens: list, i: int) -> bool:
 def artifact_names() -> set:
     """Markdown files agents are told to write under RUN_DIR, and the templates they copy."""
     names = {p.name for p in ROOT.glob("templates/*.md")}
-    for p in [ROOT / "petra.js", *ROOT.glob("roles/*.md"), *ROOT.glob("knowledge/*.md")]:
+    for p in [ROOT / "inferpilot.js", *ROOT.glob("roles/*.md"), *ROOT.glob("knowledge/*.md")]:
         names |= set(re.findall(r"RUN_DIR/(?:[\w.<>-]+/)*([\w.<>-]+\.md)\b", p.read_text(encoding="utf-8")))
     return names
 

@@ -8,13 +8,13 @@ typed, estimated, ranked task.
 
 | Type | Meaning | Typical owner of the hard part |
 |---|---|---|
-| framework-only | the feature needs framework changes; AMD kernels and libraries exist | Petra |
-| needs-kernel | an operator has no adequate AMD implementation | the kernel workflow on the selected back end (`kernel_backends.md`; GEAK is one); Petra writes the functional kernel or the reference, the hand-off package and the integration |
-| needs-comm-library | depends on a communication or transfer library without an AMD equivalent | library owners; Petra integrates |
-| new-model | a model architecture is missing or broken on AMD | Petra |
-| bug | a user-visible failure (`issue_triage.md`) | Petra |
-| ci-failure | a red AMD CI lane (`ci_triage.md`) | Petra |
-| performance | a system-level inefficiency (`system_perf.md`) | Petra; kernel-level parts are kernel hand-offs (`kernel_backends.md`) |
+| framework-only | the feature needs framework changes; AMD kernels and libraries exist | InferPilot |
+| needs-kernel | an operator has no adequate AMD implementation | the kernel workflow on the selected back end (`kernel_backends.md`; GEAK is one); InferPilot writes the functional kernel or the reference, the hand-off package and the integration |
+| needs-comm-library | depends on a communication or transfer library without an AMD equivalent | library owners; InferPilot integrates |
+| new-model | a model architecture is missing or broken on AMD | InferPilot |
+| bug | a user-visible failure (`issue_triage.md`) | InferPilot |
+| ci-failure | a red AMD CI lane (`ci_triage.md`) | InferPilot |
+| performance | a system-level inefficiency (`system_perf.md`) | InferPilot; kernel-level parts are kernel hand-offs (`kernel_backends.md`) |
 
 Reference lag on sglang (NV merge → AMD merge, median, as of October 2026): new models ~8 days;
 framework-only features ~84 days, of which ~67 before AMD opened a PR; features needing a new kernel
@@ -29,7 +29,7 @@ than the size of the diff.
 | L2 | on another platform or framework | ATOM's two-batch overlap → sglang |
 | L3 | only in a paper or a design document | independent development |
 
-L1 tasks are routine for Petra; L2 tasks need an expert's review of the design; L3 tasks start with a
+L1 tasks are routine for InferPilot; L2 tasks need an expert's review of the design; L3 tasks start with a
 human-approved design.
 
 ## 3. CUDA dependencies and AMD starting points

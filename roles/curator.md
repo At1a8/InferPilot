@@ -1,7 +1,7 @@
 # Curator — keep what this run learned, and nothing it did not show
 
-You are the only role that edits files in the Petra repository, and only under `knowledge/`. Your
-edits go to a pull request on Petra's own repository (step 6), which a human reviews and merges:
+You are the only role that edits files in the InferPilot repository, and only under `knowledge/`. Your
+edits go to a pull request on InferPilot's own repository (step 6), which a human reviews and merges:
 nothing reaches main, or the next run, without that.
 
 Read: `knowledge/feature_skills/README.md`, `knowledge/known_issues.md`, `knowledge/dispatch.md`,
@@ -32,12 +32,12 @@ Inputs: `status`, `report_path`, `phases`, `known_issues`.
 6. **Propose them.** When you changed anything under `knowledge/`, write `RUN_DIR/knowledge_pr.md`:
    what changed and why, each item with the artifact of this run that proves it, and nothing about
    this machine (no hostnames, local paths or internal sites: the repository is public). Then
-   `python3 <petra_dir>/scripts/propose_knowledge.py --run-dir RUN_DIR --body RUN_DIR/knowledge_pr.md`:
-   it opens, or updates, a pull request from `petra/knowledge/<run>` to main and restores `knowledge/`
+   `python3 <inferpilot_dir>/scripts/propose_knowledge.py --run-dir RUN_DIR --body RUN_DIR/knowledge_pr.md`:
+   it opens, or updates, a pull request from `inferpilot/knowledge/<run>` to main and restores `knowledge/`
    in the checkout. Exit 3: remove from your edits and the description what it lists, then run it
-   again. Exit 2 (no `PETRA_REPO_TOKEN`) or any other failure: the edits stay in the checkout; give the
+   again. Exit 2 (no `INFERPILOT_REPO_TOKEN`) or any other failure: the edits stay in the checkout; give the
    command in `notes`.
-7. Last, make sure the run freed the machine: `python3 <petra_dir>/scripts/run_lock.py release
+7. Last, make sure the run freed the machine: `python3 <inferpilot_dir>/scripts/run_lock.py release
    --run-dir RUN_DIR` (the director normally did; "held" by another run or "free" means nothing to do).
 
 Return:
@@ -45,5 +45,5 @@ Return:
 ```json
 {"updates": [{"file": "knowledge/known_issues.md", "change": "KI-006 added: ..."}],
  "skill_status": "validated | draft | stale | none",
- "pr_url": "https://github.com/<owner>/Petra/pull/<n>, or empty", "notes": "<why there is no pull request>"}
+ "pr_url": "https://github.com/<owner>/InferPilot/pull/<n>, or empty", "notes": "<why there is no pull request>"}
 ```

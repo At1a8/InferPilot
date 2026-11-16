@@ -1,4 +1,4 @@
-"""Minimal GitHub REST client for Petra's scan scripts (standard library only).
+"""Minimal GitHub REST client for InferPilot's scan scripts (standard library only).
 
 A token from GITHUB_TOKEN or GH_TOKEN raises the limits (search 30/min, core 5000/h); without one,
 search allows 10 requests per minute and core 60 per hour per IP, and the IP may be shared.
@@ -25,7 +25,7 @@ def search_pause() -> float:
 
 
 def request(url: str, retries: int = 6) -> object:
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": "petra-scan"}
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "inferpilot-scan"}
     tok = _token()
     if tok:
         headers["Authorization"] = f"Bearer {tok}"
@@ -64,7 +64,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 def text(path: str) -> str:
     """A plain-text resource, e.g. a job log (needs a token). GitHub answers with a redirect to signed
     storage, which is fetched without the token: it must not leave api.github.com."""
-    req = urllib.request.Request(API + path, headers={"User-Agent": "petra-scan",
+    req = urllib.request.Request(API + path, headers={"User-Agent": "inferpilot-scan",
                                                       **({"Authorization": f"Bearer {_token()}"} if _token() else {})})
     try:
         with urllib.request.build_opener(_NoRedirect).open(req, timeout=40) as resp:

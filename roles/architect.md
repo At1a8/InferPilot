@@ -53,7 +53,7 @@ Return:
 
 Inputs: `opportunities` from the profile (`analysis_path`) and `apply_prs` (candidate PRs to apply).
 
-1. Keep the opportunities Petra owns whose upper bound is worth the risk; order by measured upper bound
+1. Keep the opportunities InferPilot owns whose upper bound is worth the risk; order by measured upper bound
    per unit of risk.
 2. Each kept opportunity becomes one or more work packages; each names its correctness test and the
    metric the trace must show moving (e.g. syncs per decode step 5 → 0).

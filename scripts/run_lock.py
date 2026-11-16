@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One Petra task per machine: a lock in /dev/shm, which every container started with --ipc=host
+"""One InferPilot task per machine: a lock in /dev/shm, which every container started with --ipc=host
 shares with the host (scripts/run_docker.sh starts them that way), which no other machine sees, and
 which a reboot clears.
 
@@ -23,7 +23,7 @@ import socket
 import sys
 import time
 
-LOCK_FILE = os.environ.get("PETRA_LOCK_FILE", "/dev/shm/petra-run.lock")
+LOCK_FILE = os.environ.get("INFERPILOT_LOCK_FILE", "/dev/shm/inferpilot-run.lock")
 REPORTS = ("run_report.md", "validation_report.md", "report.md")  # report.md: runs before run_report.md
 
 
@@ -112,7 +112,7 @@ def acquire(lock: str, run_dir: str, task: str = "", mode: str = "", idle_hours:
             return {"status": "busy", "holder": holder}
         new = {"run_dir": run_dir, "mode": mode, "task": task, "idle_hours": idle_hours, "started": now,
                "started_at": time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(now)),
-               "host": socket.gethostname(), "container": os.environ.get("PETRA_CONTAINER", "")}
+               "host": socket.gethostname(), "container": os.environ.get("INFERPILOT_CONTAINER", "")}
         _write(fd, new)
         out = {"status": "acquired", "holder": new}
         if reason != "free":
@@ -161,8 +161,8 @@ def status(lock: str, now: float | None = None) -> dict:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="One Petra task per machine.")
-    ap.add_argument("--lock", default=LOCK_FILE, help="lock file (default %(default)s; PETRA_LOCK_FILE)")
+    ap = argparse.ArgumentParser(description="One InferPilot task per machine.")
+    ap.add_argument("--lock", default=LOCK_FILE, help="lock file (default %(default)s; INFERPILOT_LOCK_FILE)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     acq = sub.add_parser("acquire", help="take the machine for a run; exit 1 when another task holds it")
     acq.add_argument("--run-dir", required=True)

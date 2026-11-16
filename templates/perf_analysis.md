@@ -67,7 +67,7 @@ Layer table — per forward pass and layer type:
 
 | # | Kind (`system_perf.md` §2) | Where (file : function) | Evidence | Upper bound of the gain | Owner |
 |---|---|---|---|---|---|
-| O1 | | | | | Petra / kernel_workflow / Hyperloom |
+| O1 | | | | | InferPilot / kernel_workflow / Hyperloom |
 
 ## Plan
 

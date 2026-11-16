@@ -1,7 +1,7 @@
 export const meta = {
-  name: 'petra',
-  description: 'Petra: the framework agent for open-source LLM inference frameworks on AMD GPUs (sglang first). It turns one task (an upstream feature to bring to AMD, an AMD user issue, a red AMD CI job, a system-level performance gap) into a verified, reviewable pull request: correct first (independent unit gates, G0-G4 against a same-pattern baseline, an investigation loop with controls), then fast (equal-budget G5), within the community rules of knowledge/guardrails.md. mode=scan writes the day\'s report on the framework (the AMD CI on main, user issues by priority, upstream changes AMD needs to follow) and ranks the tasks in it, changing no code. Petra never pushes and never posts upstream: it prepares the branch, the PR body and the reply drafts for a human; the one thing it posts is the knowledge a run proved, as a pull request to its own repository for a human to merge; a scan\'s daily report is a local file for a human to share.',
-  whenToUse: 'Pass args.petra_dir (absolute path of the Petra checkout, required) and the task, either as args.request (the user\'s words, any language; the Intake phase turns it into a task definition) or as the task-definition fields of templates/task_definition.md: args.mode (feature | issue | ci | perf | scan), args.task (the upstream PR or design, issue URL, CI job or tracker cluster, or performance goal), args.framework_dir (the framework checkout; for sglang the image\'s /sgl-workspace/sglang by default), args.model_path (required for feature and perf), args.workload (required for perf: the fixed benchmark every measurement uses), args.goal (what done means), args.framework (default sglang), args.platform, args.gpu_ids, args.container, args.apply_prs (perf), args.sources, args.since, args.upstream_repos and args.rescan (scan: a report from the last 24 hours makes the run ask before scanning again), args.image (the image a task must run on; by default the newest daily one, and another stops Setup to ask) and args.image_ok, args.stop_after (a phase title), args.resume_from="implement" with args.run_dir (feature: continue after a human approved design.md), args.kernel_backend (none | geak | command) with args.kernel_backend_dir (geak) or args.kernel_backend_command (command), args.kernel_budget. A definition that lacks something its mode needs returns status=needs_input with questions and starts nothing: answer them and run again with the same args plus args.answers ({"<field>": <value>}). Operator settings: args.exp_root, args.review_model (the reviewer\'s model, where the runtime takes one per call), args.max_fix_rounds, args.max_investigate_rounds, args.max_review_rounds, args.max_work_packages, args.agent_retries, args.agent_timeout_ms.',
+  name: 'inferpilot',
+  description: 'InferPilot: the framework agent for open-source LLM inference frameworks on AMD GPUs (sglang first). It turns one task (an upstream feature to bring to AMD, an AMD user issue, a red AMD CI job, a system-level performance gap) into a verified, reviewable pull request: correct first (independent unit gates, G0-G4 against a same-pattern baseline, an investigation loop with controls), then fast (equal-budget G5), within the community rules of knowledge/guardrails.md. mode=scan writes the day\'s report on the framework (the AMD CI on main, user issues by priority, upstream changes AMD needs to follow) and ranks the tasks in it, changing no code. InferPilot never pushes and never posts upstream: it prepares the branch, the PR body and the reply drafts for a human; the one thing it posts is the knowledge a run proved, as a pull request to its own repository for a human to merge; a scan\'s daily report is a local file for a human to share.',
+  whenToUse: 'Pass args.inferpilot_dir (absolute path of the InferPilot checkout, required) and the task, either as args.request (the user\'s words, any language; the Intake phase turns it into a task definition) or as the task-definition fields of templates/task_definition.md: args.mode (feature | issue | ci | perf | scan), args.task (the upstream PR or design, issue URL, CI job or tracker cluster, or performance goal), args.framework_dir (the framework checkout; for sglang the image\'s /sgl-workspace/sglang by default), args.model_path (required for feature and perf), args.workload (required for perf: the fixed benchmark every measurement uses), args.goal (what done means), args.framework (default sglang), args.platform, args.gpu_ids, args.container, args.apply_prs (perf), args.sources, args.since, args.upstream_repos and args.rescan (scan: a report from the last 24 hours makes the run ask before scanning again), args.image (the image a task must run on; by default the newest daily one, and another stops Setup to ask) and args.image_ok, args.stop_after (a phase title), args.resume_from="implement" with args.run_dir (feature: continue after a human approved design.md), args.kernel_backend (none | geak | command) with args.kernel_backend_dir (geak) or args.kernel_backend_command (command), args.kernel_budget. A definition that lacks something its mode needs returns status=needs_input with questions and starts nothing: answer them and run again with the same args plus args.answers ({"<field>": <value>}). Operator settings: args.exp_root, args.review_model (the reviewer\'s model, where the runtime takes one per call), args.max_fix_rounds, args.max_investigate_rounds, args.max_review_rounds, args.max_work_packages, args.agent_retries, args.agent_timeout_ms.',
   phases: [
     { title: 'Intake', detail: 'intake: turn a request, or a definition with gaps, into a complete task definition; questions when something is missing' },
     { title: 'Setup', detail: 'director: run dir, the task\'s branch in the framework checkout, launch scripts, baseline (not in scan)' },
@@ -24,7 +24,7 @@ export const meta = {
     { title: 'PR', detail: 'pr_engineer: hygiene, lint, upstream sync, pr_body.md, exact push command; never pushes' },
     { title: 'Collect', detail: 'scout: the AMD CI on main, user issues, upstream changes (platform gates, host syncs on request) -> candidates; asks first when a report from the last 24 hours exists [scan]' },
     { title: 'Dispatch', detail: 'dispatcher: type, level, priority, dependencies, effort, ranking, ecosystem-matrix changes -> the daily report [scan]' },
-    { title: 'Report', detail: 'director: final report for every outcome of a run that has its run directory (for a scan, the daily report a human shares), then frees the machine; curator: knowledge updates, proposed as a pull request to Petra\'s own repository' },
+    { title: 'Report', detail: 'director: final report for every outcome of a run that has its run directory (for a scan, the daily report a human shares), then frees the machine; curator: knowledge updates, proposed as a pull request to InferPilot\'s own repository' },
   ],
 };
 
@@ -35,17 +35,17 @@ export const meta = {
 // ---------------------------------------------------------------------------
 const RAW = args || {};
 const MODES = ['feature', 'issue', 'ci', 'perf', 'scan'];
-// Kernel back ends: where kernel-level work goes (tuning a kernel Petra wrote for a feature, or a
+// Kernel back ends: where kernel-level work goes (tuning a kernel InferPilot wrote for a feature, or a
 // kernel-level performance opportunity). knowledge/kernel_backends.md describes the contract.
 //   none     record the hand-off package in the report and run nothing (default)
 //   geak     GEAK's single-language kernel lane from the checkout args.kernel_backend_dir, nested once
-//            like GEAK's own e2e_workflow does; the only place Petra uses GEAK
+//            like GEAK's own e2e_workflow does; the only place InferPilot uses GEAK
 //   command  any other CLI, run by the kernel liaison from args.kernel_backend_command
 const KERNEL_BACKENDS = ['none', 'geak', 'command'];
-const PETRA = String(RAW.petra_dir || '').replace(/\/+$/, '');
-if (!PETRA) {
-  throw new Error('args.petra_dir is required: absolute path of the Petra checkout ' +
-    '(the directory containing petra.js, roles/, knowledge/ and templates/)');
+const INFERPILOT = String(RAW.inferpilot_dir || '').replace(/\/+$/, '');
+if (!INFERPILOT) {
+  throw new Error('args.inferpilot_dir is required: absolute path of the InferPilot checkout ' +
+    '(the directory containing inferpilot.js, roles/, knowledge/ and templates/)');
 }
 
 const int = (v, d) => {
@@ -85,7 +85,7 @@ const strs = arr(str);
 // ---------------------------------------------------------------------------
 // The task definition (templates/task_definition.md): the fields that define a task, named as the
 // arguments are. A request in plain words, or a definition with gaps, becomes a complete one in the
-// Intake phase before anything runs; operator settings (petra_dir, exp_root, budgets, review_model)
+// Intake phase before anything runs; operator settings (inferpilot_dir, exp_root, budgets, review_model)
 // stay outside it.
 // ---------------------------------------------------------------------------
 const TASK_KEYS = ['mode', 'task', 'goal', 'framework', 'framework_dir', 'model_path', 'platform', 'gpu_ids',
@@ -162,7 +162,7 @@ function missingFields(a) {
   }
   if (mode !== 'scan' && !a.task) ask('task', TASK_PROMPTS[mode], 'it is the source of truth the run works from');
   if (mode !== 'scan' && !a.framework_dir) {
-    ask('framework_dir', 'Which framework checkout should Petra take the code from (absolute path)?',
+    ask('framework_dir', 'Which framework checkout should InferPilot take the code from (absolute path)?',
       'Setup clones the task\'s own working copy from it');
   }
   if ((mode === 'feature' || mode === 'perf') && !a.model_path) {
@@ -205,26 +205,26 @@ async function intakeStage(raw) {
   const answers = pick(asObject(raw.answers), TASK_KEYS);
   if (!request && missingFields({ ...answers, ...given }).length === 0) return { args: { ...raw, ...answers, ...given } };
   enter('Intake');
-  const res = await call('intake', 'define', { request, given, answers, petra_dir: PETRA }, INTAKE, 'intake');
+  const res = await call('intake', 'define', { request, given, answers, inferpilot_dir: INFERPILOT }, INTAKE, 'intake');
   const merged = { ...(res && res.task_def ? pick(res.task_def, TASK_KEYS) : {}), ...answers, ...given };
   const asked = res && res.status === 'needs_input' ? (res.questions || []) : [];
   const questions = [...asked, ...missingFields(merged).filter((q) => !asked.some((a) => a.field === q.field))];
   const provenance = (res && res.provenance) || {};
   const assumptions = (res && res.assumptions) || [];
   const stopped = (status, summary, extra) => {
-    log(`[petra] intake: ${status} — ${summary}`);
+    log(`[inferpilot] intake: ${status} — ${summary}`);
     return { record: { mode: String(merged.mode || ''), status, stopped_at: 'Intake', run_dir: '', report_path: '',
       summary, task_def: merged, provenance, assumptions,
       phases: [{ phase: 'Intake', verdict: status, summary }], ...extra } };
   };
   if (res && res.status === 'rejected') {
-    const why = res.reason || res.summary || 'outside what Petra does';
+    const why = res.reason || res.summary || 'outside what InferPilot does';
     return stopped('rejected', why, { reason: why });
   }
   if (questions.length) {
     return stopped('needs_input', `missing: ${questions.map((q) => q.field).join(', ')}`, {
       questions,
-      next: 'answer the questions, then run petra.js again with the same arguments plus answers={"<field>": <value>}',
+      next: 'answer the questions, then run inferpilot.js again with the same arguments plus answers={"<field>": <value>}',
     });
   }
   return {
@@ -252,7 +252,7 @@ const STOP_AFTER = String(A.stop_after || '').trim().toLowerCase();
 const IMAGE_WANTED = String(A.image || '').trim();  // the image the task asks for; empty: the newest daily one
 const IMAGE_OK = A.image_ok === true || String(A.image_ok).toLowerCase() === 'true';
 const RESUME = String(A.resume_from || '').trim().toLowerCase();
-const EXP_ROOT = String(A.exp_root || `${PETRA}/exp`).replace(/\/+$/, '');
+const EXP_ROOT = String(A.exp_root || `${INFERPILOT}/exp`).replace(/\/+$/, '');
 const KERNEL_BACKEND = String(A.kernel_backend || 'none').trim().toLowerCase();
 const KERNEL_BACKEND_DIR = String(A.kernel_backend_dir || '').replace(/\/+$/, '');
 
@@ -260,7 +260,7 @@ const KERNEL_BACKEND_DIR = String(A.kernel_backend_dir || '').replace(/\/+$/, ''
 const C = {
   mode: MODE,
   task: A.task ? (typeof A.task === 'string' ? A.task : JSON.stringify(A.task)) : '',
-  petra_dir: PETRA,
+  inferpilot_dir: INFERPILOT,
   exp_root: EXP_ROOT,
   framework: String(A.framework || 'sglang'),
   framework_dir: String(A.framework_dir || ''),
@@ -324,13 +324,13 @@ function rolePrompt(role, sub, ins, attempt) {
     ? 'No RUN_DIR exists yet: change nothing; every check you run is read-only. Never push, never post on GitHub.'
     : `Write artifacts only under RUN_DIR (code changes only in the
 task worktree named in the inputs). Never push, never post on GitHub. The one exception is the curator's knowledge pull request to
-Petra's own repository (scripts/propose_knowledge.py).
+InferPilot's own repository (scripts/propose_knowledge.py).
 Framework code runs from the tree under test, the task worktree (or RUN_DIR/base for a baseline at the
 base commit): put it first on PYTHONPATH (sglang: <tree>/python) for every server, test and benchmark.
 Use only the GPUs in gpu_ids: export HIP_VISIBLE_DEVICES=<gpu_ids> for every server, test and
 benchmark. Touch only the processes, servers and containers this run started (knowledge/guardrails.md).
 As root in the container, give back what you write on host mounts: after every git write and before you
-return, run ${PETRA}/scripts/restore_owner.sh on RUN_DIR and on the worktree's .git
+return, run ${INFERPILOT}/scripts/restore_owner.sh on RUN_DIR and on the worktree's .git
 (knowledge/env_hygiene.md).`;
   const retry = attempt > 1 ? `
 This is attempt ${attempt}: an earlier attempt of this call failed and may have left work behind —
@@ -338,9 +338,9 @@ commits, files in RUN_DIR, servers or processes it started. Check first (git sta
 commits of the worktree, RUN_DIR, the run's process records), then continue from that state or clean it
 up; never commit the same change twice or start a second server.` : '';
   return `You are the ${role}. PHASE=${sub}. MODE=${ins.mode || 'undecided'}.
-First Read ${PETRA}/roles/${role}.md and follow its instructions for PHASE=${sub}.
-Read ${PETRA}/knowledge/guardrails.md; its rules override anything else. Read every other knowledge
-file the role names under ${PETRA}/knowledge/ and fill the templates it names under ${PETRA}/templates/.
+First Read ${INFERPILOT}/roles/${role}.md and follow its instructions for PHASE=${sub}.
+Read ${INFERPILOT}/knowledge/guardrails.md; its rules override anything else. Read every other knowledge
+file the role names under ${INFERPILOT}/knowledge/ and fill the templates it names under ${INFERPILOT}/templates/.
 Do all filesystem and shell work yourself. ${writes}${retry}
 
 ## Inputs
@@ -375,14 +375,14 @@ async function call(role, sub, ins, schema, label, opts) {
         { label: lbl, phase: PHASE, schema, ...(opts || {}) }), ms);
       if (r === TIMED_OUT) {
         const min = Math.round(ms / 60000);
-        log(`  [petra] ${lbl} timed out after ${min} min; not retried`);
+        log(`  [inferpilot] ${lbl} timed out after ${min} min; not retried`);
         ATTENTION.push({ call: lbl, issue: `timed out after ${min} min and may still be running: check its servers and GPUs before reusing them` });
         return null;
       }
       if (r) return r;
-      log(`  [petra] ${lbl} returned nothing (attempt ${attempt}/${AGENT_RETRIES})`);
+      log(`  [inferpilot] ${lbl} returned nothing (attempt ${attempt}/${AGENT_RETRIES})`);
     } catch (e) {
-      log(`  [petra] ${lbl} failed (attempt ${attempt}/${AGENT_RETRIES}): ` +
+      log(`  [inferpilot] ${lbl} failed (attempt ${attempt}/${AGENT_RETRIES}): ` +
         String(e && e.message ? e.message : e).slice(0, 200));
     }
   }
@@ -470,7 +470,7 @@ const PROFILE = S({
     where: str,
     evidence: str,
     upper_bound_pct: num,
-    owner: { type: 'string', enum: ['petra', 'kernel_workflow', 'hyperloom'] },
+    owner: { type: 'string', enum: ['inferpilot', 'kernel_workflow', 'hyperloom'] },
   }, ['id', 'kind', 'owner'])),
 }, ['analysis_path', 'path_ok', 'opportunities']);
 const PERF_PLAN = S({
@@ -600,7 +600,7 @@ async function finish(status, at) {
     }
   }
   R.run_dir = C.run_dir;
-  log(`[petra] mode=${MODE} status=${status}${at ? ` at ${at}` : ''}` +
+  log(`[inferpilot] mode=${MODE} status=${status}${at ? ` at ${at}` : ''}` +
     `${R.report_path ? ` report=${R.report_path}` : ''}${R.attention.length ? ` attention=${R.attention.length}` : ''}`);
   return R;
 }
@@ -640,13 +640,13 @@ function askImage(img) {
     questions: [{ field: 'image_ok', question: `${why}. Run on ${cur} anyway?`,
       why: 'tasks test the newest sglang unless you name an image; a run on another image tests something else',
       options: [true, false] }],
-    next: `to run on ${want}, start a container from it (README step 2) and run petra.js there; to run here anyway, ` +
-      'run petra.js again with the same arguments plus answers={"image_ok": true}' });
-  log(`[petra] mode=${MODE} status=needs_input: ${why}`);
+    next: `to run on ${want}, start a container from it (README step 2) and run inferpilot.js there; to run here anyway, ` +
+      'run inferpilot.js again with the same arguments plus answers={"image_ok": true}' });
+  log(`[inferpilot] mode=${MODE} status=needs_input: ${why}`);
   return R;
 }
 
-// true, false, 'busy' when another Petra task holds the machine, or {ask} when the image check stopped
+// true, false, 'busy' when another InferPilot task holds the machine, or {ask} when the image check stopped
 // the run (nothing was created in either case).
 async function setup(requireBaseline) {
   enter('Setup');
@@ -654,7 +654,7 @@ async function setup(requireBaseline) {
     image_ok: IMAGE_OK }), SETUP);
   if (s && s.lock === 'skipped') return { ask: s.image || {} };
   if (s && s.lock === 'busy') {
-    note('Setup', 'busy', `another Petra task holds this machine${s.notes ? `: ${s.notes}` : ''}`);
+    note('Setup', 'busy', `another InferPilot task holds this machine${s.notes ? `: ${s.notes}` : ''}`);
     return 'busy';
   }
   if (!s || !s.run_dir) {
@@ -691,7 +691,7 @@ async function implementAll(wps) {
   for (const wp of list) {
     const known = new Set(R.done.map((d) => d.wp));
     const missing = (wp.depends_on || []).filter((d) => !known.has(d));
-    if (missing.length) log(`  [petra] ${wp.id} depends on unverified ${missing.join(', ')}; order follows the design`);
+    if (missing.length) log(`  [inferpilot] ${wp.id} depends on unverified ${missing.join(', ')}; order follows the design`);
     let feedback = '';
     let passed = false;
     for (let round = 0; round <= MAX_FIX_ROUNDS && !passed; round++) {
@@ -795,7 +795,7 @@ async function verifyLoop(extraGates) {
   }
 }
 
-// An integrated kernel that fails Petra's gates goes back to the functional kernel (its commit is
+// An integrated kernel that fails InferPilot's gates goes back to the functional kernel (its commit is
 // reverted). With a back end it is handed back once more, the failing case added to its tests, and
 // integrated again only if the back end passes it; otherwise it ends `rejected`.
 async function rejectKernels(ids, counterexample) {
@@ -807,7 +807,7 @@ async function rejectKernels(ids, counterexample) {
   for (const h of hs) {
     const rb = await call('implementer', 'rollback', inputs({
       work_package: { id: h.integrated_wp, goal: `back to the functional kernel of ${h.id}`, test: '' },
-      revert: h.commit, reason: `the integrated kernel fails Petra's gates: ${counterexample}`,
+      revert: h.commit, reason: `the integrated kernel fails InferPilot's gates: ${counterexample}`,
     }), ROLLBACK, `implementer:revert:${h.id}`);
     const suffix = rolledBack(rb, h.integrated_wp);
     if (!rb || rb.clean !== true) {
@@ -1222,7 +1222,7 @@ async function runPerf() {
       note('Plan', 'kernel_only', `${kernelHandoffs} kernel hand-off(s) for kernel_backend=${KERNEL_BACKEND}`);
       return deliver([], [], plan.perf_claim || 'the planned gain', true);
     }
-    note('Plan', 'no_work', `${(plan.handoffs || []).length} hand-off(s), nothing for Petra`);
+    note('Plan', 'no_work', `${(plan.handoffs || []).length} hand-off(s), nothing for InferPilot`);
     for (const h of R.handoffs) if (!h.status) h.status = 'recorded';
     return finish('handed_off', 'Plan');
   }
@@ -1247,12 +1247,12 @@ async function runScan() {
     Object.assign(R, { status: 'needs_input', stopped_at: 'Collect', recent: r,
       questions: [{ field: 'rescan', question: `A daily report from ${when} exists (${where}). Scan again anyway?`,
         why: 'one report a day is enough: another scan repeats the same API calls and agent work', options: [true, false] }],
-      next: 'to scan anyway, run petra.js again with the same arguments plus answers={"rescan": true}' });
-    log(`[petra] mode=scan status=needs_input: a scan from ${when} exists (${where})`);
+      next: 'to scan anyway, run inferpilot.js again with the same arguments plus answers={"rescan": true}' });
+    log(`[inferpilot] mode=scan status=needs_input: a scan from ${when} exists (${where})`);
     return R;
   }
   if (col && col.lock === 'busy') {
-    note('Collect', 'busy', `another Petra task holds this machine${col.notes ? `: ${col.notes}` : ''}`);
+    note('Collect', 'busy', `another InferPilot task holds this machine${col.notes ? `: ${col.notes}` : ''}`);
     return finish('busy', 'Collect');
   }
   if (!col || !col.run_dir) {
@@ -1277,5 +1277,5 @@ async function runScan() {
 }
 
 const RUNNERS = { feature: runFeature, issue: runIssue, ci: runCi, perf: runPerf, scan: runScan };
-log(`[petra] mode=${MODE} petra_dir=${PETRA} framework=${C.framework}${C.framework_dir ? ` (${C.framework_dir})` : ''}`);
+log(`[inferpilot] mode=${MODE} inferpilot_dir=${INFERPILOT} framework=${C.framework}${C.framework_dir ? ` (${C.framework_dir})` : ''}`);
 return await RUNNERS[MODE]();

@@ -12,7 +12,7 @@ worktree, with `knowledge/platforms/rocm_skills.md` for what differs on ROCm.
 ## PHASE=investigate (after a failed Verify)
 
 Inputs: `failures` (from the verify engineer), `round`, `known_issues`, `integrated_kernels` (kernels a
-kernel back end tuned and Petra integrated: `handoff`, `wp`, `commit`).
+kernel back end tuned and InferPilot integrated: `handoff`, `wp`, `commit`).
 
 1. Write each symptom precisely: which requests, which step, how often, which configuration; classify it.
 2. **Controls first**, before any instrumentation: same-pattern baseline; feature off on the branch;
@@ -30,8 +30,8 @@ kernel back end tuned and Petra integrated: `handoff`, `wp`, `commit`).
    - `kernel_regression`: the failure goes away with an integrated kernel reverted. Name its hand-offs
      in `kernel_handoffs` and describe the failing case in `counterexample` — gate, shapes, dtype,
      configuration and the command that shows it — so the kernel back end can be given it as a test.
-     Petra goes back to the functional kernel and hands the kernel back once; do not plan a fix inside
-     the tuned kernel (Petra does not tune kernels).
+     InferPilot goes back to the functional kernel and hands the kernel back once; do not plan a fix inside
+     the tuned kernel (InferPilot does not tune kernels).
    - `fix_needed`: you can explain the mechanism. Return the fix as work packages, each with the
      regression test that would have caught it.
    - `inconclusive`: say what is known and what experiment would decide it.

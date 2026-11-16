@@ -1,10 +1,10 @@
 # Development methodology — phases, artifacts, gates
 
-Read this on every Petra task that changes framework code: a feature, an issue fix, a CI fix or a
+Read this on every InferPilot task that changes framework code: a feature, an issue fix, a CI fix or a
 performance change. It defines **what must exist before a phase may end**. The other knowledge files
 explain *how*; this one is the contract.
 
-The phases below are written for the longest path, landing a feature. The other modes of `petra.js`
+The phases below are written for the longest path, landing a feature. The other modes of `inferpilot.js`
 replace the front of the pipeline with their own diagnosis and then run the same phases with the same
 gates:
 

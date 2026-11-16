@@ -6,7 +6,7 @@ accidents.
 
 ## Git: as root in the container, give the files back
 
-Petra runs git inside the container, as root. What it works in inside the container (Petra and the run
+InferPilot runs git inside the container, as root. What it works in inside the container (InferPilot and the run
 directories in `/workspace`, the image's `/sgl-workspace/sglang`) is root's; a checkout on a host mount
 (a `framework_dir` in a mounted data directory such as `/data`, or in one added with `EXTRA_MOUNTS`)
 belongs to a host user, and the rules below are about those.
@@ -17,7 +17,7 @@ belongs to a host user, and the rules below are about those.
   **after** updating the working tree and index but **before** moving the branch ref, leaving hundreds
   of staged changes on an old HEAD.
 - So after every git write, and before handing over a push command, give them back:
-  `<petra_dir>/scripts/restore_owner.sh <run_dir> <worktree>/.git`, plus the `.git` of any other host
+  `<inferpilot_dir>/scripts/restore_owner.sh <run_dir> <worktree>/.git`, plus the `.git` of any other host
   checkout you fetched into (each path goes to the owner of its closest ancestor
   that is not root's; nothing happens when not root, in the container's `/workspace`, or for the image's
   own checkout).
@@ -41,14 +41,14 @@ belongs to a host user, and the rules below are about those.
 - The image provides the runtime — PyTorch, aiter, sgl-kernel — and the framework, installed in
   editable mode from the image's checkout (`/sgl-workspace/sglang` in `rocm/sgl-dev`): a plain
   `python -m sglang.launch_server` runs whatever is checked out there.
-- That checkout has the whole history and is Petra's default `framework_dir`, and each task works in it
+- That checkout has the whole history and is InferPilot's default `framework_dir`, and each task works in it
   on its own branch. The image leaves it detached at the commit it built, with the build's changes to
   the packaging files (`python/pyproject.toml` becomes the ROCm one); setup (README step 3) discards
   those, checks out main and pulls, once per container. Never `pip install -e` from it afterwards: its
   `pyproject.toml` is upstream's, which would pull CUDA packages into the ROCm environment.
 - The checkout is the container's, and a task's branch and commits stay in it; the PR engineer writes
   them to `RUN_DIR/patches`, so the change can leave the container with the run directory (README step
-  5). Run directories are the container's too, in `<petra_dir>/exp`. A task starts only from a clean
+  5). Run directories are the container's too, in `<inferpilot_dir>/exp`. A task starts only from a clean
   checkout: changes left there stop Setup and are never discarded.
 - Run every server, test and benchmark from the tree under test, first on `PYTHONPATH` (sglang:
   `PYTHONPATH=<tree>/python`), and check it once per launch script:

@@ -2,7 +2,7 @@
 
 ## Before opening the PR
 
-Petra's implementer meets these in every work package; the reviewer and the PR engineer check them and
+InferPilot's implementer meets these in every work package; the reviewer and the PR engineer check them and
 send what is missing back as work packages, so the branch that is pushed is the one that was verified.
 
 - [ ] Debug instrumentation removed, or gated behind an environment switch that is off by default.
@@ -67,7 +67,7 @@ Every number comes from `validation_report.md` or the experiment ledger.
 
 ## Keeping up with main
 
-- Before the PR exists, Petra only trial-merges main to report conflicts; it does not update a
+- Before the PR exists, InferPilot only trial-merges main to report conflicts; it does not update a
   verified branch. Updating it is the owner's step, and the gates run again on the merged tree.
 - Prefer merging main into the PR branch (no force push, review history kept); maintainers squash at
   merge time.

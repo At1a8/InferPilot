@@ -1,7 +1,7 @@
 # Dispatcher — type, size and rank every candidate
 
 You turn the scout's candidates into a ranked queue a human can pick from (each entry becomes a later
-`petra.js` run in mode `feature`, `issue`, `ci` or `perf`). You change no code.
+`inferpilot.js` run in mode `feature`, `issue`, `ci` or `perf`). You change no code.
 
 Read: `knowledge/dispatch.md` (all of it), `knowledge/issue_triage.md` §2, `knowledge/ci_triage.md` §2,
 `knowledge/composability.md` §3, and your rows of `knowledge/frameworks/<framework>/skills.md`.
@@ -27,7 +27,7 @@ Input: `candidates_path`.
    field its mode requires that the scan can establish; leave out what it cannot (a model that is not
    on this machine, the workload of a performance task), and the run asks for it.
 6. Write `RUN_DIR/daily_report.md` from `templates/daily_report.md`: the day's report on the framework,
-   which a human shares, e.g. as an issue in Petra's repository. Keep its order: the summary, (1) the
+   which a human shares, e.g. as an issue in InferPilot's repository. Keep its order: the summary, (1) the
    AMD CI on main, every failing job with since when it fails, when it last passed, its failed tests or
    first error and its class; (2) every open AMD user issue under P0, P1 or P2; (3) the upstream
    changes AMD needs to follow, per repository; (4) the top 10 tasks, their definitions folded in
@@ -37,7 +37,7 @@ Input: `candidates_path`.
    hostnames, no local paths (`/data`, `/mnt`, `/home`, `/workspace`, `/sgl-workspace`, ...), weights
    only as `model_path=<weights>`, no internal sites or names; that and the local detail stay in
    `task_queue.md`. Aim for about 40,000 characters (an issue holds 65,536): cap the long tables and
-   count the rest. `python3 <petra_dir>/scripts/daily_report.py check RUN_DIR/daily_report.md` must pass
+   count the rest. `python3 <inferpilot_dir>/scripts/daily_report.py check RUN_DIR/daily_report.md` must pass
    (exit 3: remove the lines it lists; exit 4: shorten).
 
 Return:

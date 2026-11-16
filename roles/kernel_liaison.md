@@ -25,7 +25,7 @@ Inputs: `handoff` (`id`, `source`, the package paths, `reason`, `wp`), `kernel_b
 4. `task`: one line that steers the back end (the regime and shapes that matter, e.g.
    "decode, M <= 64, graph-captured").
 5. A hand-off with `counterexamples` is its one retry: the kernel integrated from the last attempt
-   failed Petra's gates there and was reverted. Add every failing case to the unit test and to
+   failed InferPilot's gates there and was reverted. Add every failing case to the unit test and to
    `op_spec.shapes`, check that the frozen reference passes them, start again from that reference (not
    from the rejected kernel), and say in `task` what failed.
 

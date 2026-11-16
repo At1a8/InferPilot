@@ -2,7 +2,7 @@
 
 AMD's gap is often not a missing feature but a missing combination. InferenceX v2 (SemiAnalysis,
 2026-02-16) found MI355X FP8 PD disaggregation + wide EP on par with B200 on sglang, but not competitive
-once PD disaggregation, wide EP and FP4 were enabled together. Petra tests combinations on purpose and
+once PD disaggregation, wide EP and FP4 were enabled together. InferPilot tests combinations on purpose and
 feeds every failing combination back into the task queue.
 
 ## 1. Matrix

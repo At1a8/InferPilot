@@ -1,6 +1,6 @@
 # System-level performance — the time between and around the kernels
 
-Read this in `mode=perf` and in the Performance phase of any mode. Petra optimizes the end-to-end
+Read this in `mode=perf` and in the Performance phase of any mode. InferPilot optimizes the end-to-end
 timeline outside kernel compute: GPU idle gaps, host-device synchronization and copies, compute and
 communication that run one after another, padding, scheduling overhead and memory-management stalls.
 
@@ -8,9 +8,9 @@ Boundaries:
 
 | Work | Owner |
 |---|---|
-| making one kernel faster (tiling, fusion inside a kernel, a new kernel) | the kernel workflow on the selected back end (`kernel_backends.md`, e.g. GEAK) — Petra hands it an op spec and a reference |
+| making one kernel faster (tiling, fusion inside a kernel, a new kernel) | the kernel workflow on the selected back end (`kernel_backends.md`, e.g. GEAK) — InferPilot hands it an op spec and a reference |
 | searching launch flags and backend choices for a workload | Hyperloom / GEAK `e2e_workflow` |
-| changing how the framework executes: graphs, streams, syncs, overlap, scheduling, memory | **Petra** |
+| changing how the framework executes: graphs, streams, syncs, overlap, scheduling, memory | **InferPilot** |
 
 ## 1. Measure first
 

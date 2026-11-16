@@ -20,7 +20,7 @@
 
 ## Starting the top tasks
 
-<!-- One task definition per top entry (task_definition.md), passed to petra.js as it is. Fields the
+<!-- One task definition per top entry (task_definition.md), passed to inferpilot.js as it is. Fields the
      scan cannot establish (a model not on this machine, a performance task's workload) stay out; the
      run asks for them. -->
 
