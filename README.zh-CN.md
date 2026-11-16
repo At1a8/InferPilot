@@ -301,6 +301,7 @@ Petra/
 │   ├── dispatch.md, issue_triage.md, ci_triage.md, system_perf.md, composability.md, kernel_backends.md
 │   ├── frameworks/sglang/feature_dev_map.md, platforms/rocm.md, known_issues.md
 │   ├── frameworks/sglang/skills.md, platforms/rocm_skills.md   # sglang 自带 skill 的索引 + ROCm 说明
+│   ├── kernels/aklr/skills.md, playbook.md   # AKLR 自带文档的索引；kernel 收益何时落到 AKLR
 │   └── feature_skills/      # 按特性整理的已验证方案（首个是 hisparse-v2）
 ├── templates/               # task_definition, feature_spec, design, experiment_ledger, validation_report,
 │                            # pr_body, issue_triage, ci_triage, perf_analysis, task_queue
