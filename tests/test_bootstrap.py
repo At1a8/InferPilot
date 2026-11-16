@@ -260,9 +260,9 @@ class RunDockerTest(unittest.TestCase):
         make_exe(fake / "sudo").write_text('#!/bin/sh\nexec "$@"\n')
         self.path = "%s:%s" % (fake, os.environ.get("PATH", "/usr/bin:/bin"))
 
-    def run_docker(self, existing="", image=""):
+    def run_docker(self, existing="", image="", **extra):
         env = {"PATH": self.path, "HOME": str(self.tmp / "home"), "USER": "tester", "DOCKER_LOG": str(self.log),
-               "FAKE_IMAGE": existing, "IMAGE": image}
+               "FAKE_IMAGE": existing, "IMAGE": image, **extra}
         r = subprocess.run(["bash", str(ROOT / "scripts" / "run_docker.sh")], env=env, capture_output=True, text=True)
         calls = self.log.read_text().splitlines() if self.log.exists() else []
         self.log.unlink(missing_ok=True)
@@ -296,9 +296,17 @@ class RunDockerTest(unittest.TestCase):
         run = calls[-1]
         self.assertIn("-w /workspace", run)
         self.assertTrue(run.endswith("--name tester rocm/sgl-dev:new"), run)
-        self.assertNotIn("-v /home:/home", run, "your home stays out: it holds credentials the agents do not need")
-        self.assertNotIn("INFERPILOT_HOST_HOME", run)
+        self.assertIn("-v /home:/home", run)
+        self.assertIn("-e INFERPILOT_HOST_HOME=%s" % (self.tmp / "home"), run)
         self.assertNotIn(".inferpilot_env", run, "no keys file to mount")
+
+    def test_mount_home_0_leaves_home_out(self):
+        """For a task that must not see the homes on the machine, such as a clean-room re-implementation."""
+        rc, calls = self.run_docker(image="rocm/sgl-dev:new", MOUNT_HOME="0")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("-v /home:/home", calls[-1])
+        self.assertNotIn("INFERPILOT_HOST_HOME", calls[-1])
+        self.assertIn("-w /workspace", calls[-1])
 
     def test_the_keys_file_is_mounted_read_only(self):
         home = self.tmp / "home"

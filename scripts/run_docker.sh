@@ -7,6 +7,7 @@
 #   IMAGE=rocm/sgl-dev:<tag> NAME=<name> scripts/run_docker.sh
 #   EXTRA_MOUNTS="/home/<you>/models" scripts/run_docker.sh   # more host directories, at the same paths
 #   DOCKER_SOCKET=1 scripts/run_docker.sh                # also mount the host's Docker socket
+#   MOUNT_HOME=0 scripts/run_docker.sh                   # leave /home out (a clean-room task)
 #   bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts/run_docker.sh)   # no checkout
 #
 # Each container keeps its own /workspace, where InferPilot and its runs live, and its own copy of the image's
@@ -18,11 +19,12 @@
 # removes one you are done with, and its /workspace with it. Run README step 3 once in every new
 # container: it installs Claude Code there.
 #
-# The data directories that exist (/data, /mnt, ...) are mounted at the same paths; your home is not.
-# InferPilot's agents run as root with permissions auto-approved, and a home holds credentials (git, ssh)
-# they do not need. Your keys come in as one file: ~/.inferpilot_env, mounted read-only as root's
-# ~/.inferpilot_env. The host's Docker socket is not mounted by default either: it would let the agents stop
-# or start any container on the host, and InferPilot inside the container does not need it.
+# /home and the data directories that exist (/data, /mnt, ...) are mounted at the same paths. InferPilot's
+# agents run as root with permissions auto-approved, so they can read every home on the machine and the
+# credentials in it (git, ssh): MOUNT_HOME=0 leaves /home out, for a task that must not see what is there
+# (a clean-room re-implementation). Your keys also come in as root's ~/.inferpilot_env, mounted read-only.
+# The host's Docker socket is not mounted by default: it would let the agents stop or start any container
+# on the host, and InferPilot inside the container does not need it.
 VARIANT=${IMAGE_VARIANT:-rocm10-mi35x}
 NAME=${NAME:-${SUDO_USER:-$USER}}
 HOST_HOME=$HOME
@@ -67,8 +69,14 @@ if [ -z "$IMAGE" ]; then
 fi
 echo "run_docker.sh: new container $NAME from $IMAGE" >&2
 
+DIRS="/data /data2 /apps /mnt /shared /nfs_shared1 /kmd2 $EXTRA_MOUNTS"
+HOME_ENV=()
+if [ "${MOUNT_HOME:-1}" != 0 ]; then
+  DIRS="/home $DIRS"
+  HOME_ENV=(-e INFERPILOT_HOST_HOME="$HOST_HOME")
+fi
 MOUNTS=()
-for d in /data /data2 /apps /mnt /shared /nfs_shared1 /kmd2 $EXTRA_MOUNTS; do
+for d in $DIRS; do
   [ -d "$d" ] && MOUNTS+=(-v "$d:$d")
 done
 # Only a file that exists: docker would create a directory in place of a missing one.
@@ -85,5 +93,6 @@ exec $SUDO docker run -it \
   --cap-add=SYS_PTRACE --security-opt seccomp=unconfined -w /workspace \
   "${MOUNTS[@]}" \
   -e PYTHONDONTWRITEBYTECODE=1 -e DISABLE_AUTOUPDATER=1 -e INFERPILOT_IMAGE="$IMAGE" -e INFERPILOT_CONTAINER="$NAME" \
+  "${HOME_ENV[@]}" \
   --shm-size=512G --ulimit memlock=-1 --ulimit stack=67108864 \
   --entrypoint /bin/bash --name "$NAME" "$IMAGE"

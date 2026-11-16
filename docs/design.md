@@ -115,9 +115,10 @@ framework's Python environment. Each task gets its own container, and what it wo
 container, apart from every other container's: InferPilot's checkout and the run directories in `/workspace`,
 and the image's own sglang checkout. `scripts/run_docker.sh` takes the user back into an existing container and never
 removes one. As in GEAK's CI and Hyperloom, Claude Code is installed in each container, its first-start
-questions answered in its config, and the user's home is not mounted: from it the container gets only
-the keys file, `~/.inferpilot_env`, read-only, since the agents run as root with permissions auto-approved
-and a home holds credentials they do not need. What a run writes as root into a checkout on a host mount
+questions answered in its config. `/home` is mounted at the same paths, so the user's scripts and files
+are at hand; since the agents run as root with permissions auto-approved and can then read every home,
+credentials included, `MOUNT_HOME=0` leaves it out for a task that must not see them. The keys file,
+`~/.inferpilot_env`, also comes in read-only as root's. What a run writes as root into a checkout on a host mount
 goes back to its owner (`scripts/restore_owner.sh`).
 Machines are shared: one InferPilot task runs per machine at a
 time (a lock in `/dev/shm`, `scripts/run_lock.py`; a second run ends as `busy`), a run uses only the

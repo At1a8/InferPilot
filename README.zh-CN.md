@@ -98,7 +98,7 @@ InferPilot 像 GEAK 一样，以 root 身份运行在 ROCm 容器里：Claude Co
 bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts/run_docker.sh)    # NAME 默认是你的用户名
 ```
 
-这一行下载 [`scripts/run_docker.sh`](scripts/run_docker.sh) 并运行它，所以宿主机上不需要 InferPilot 的代码；在 InferPilot 的 checkout 里直接运行 `scripts/run_docker.sh` 效果相同。它就是常见的 ROCm `run_docker.sh`：一个带 GPU 的特权容器，以相同路径挂载存在的数据目录（`/data`、`/mnt` 等，`EXTRA_MOUNTS` 可以再加），并在容器的 `/workspace` 里打开一个 root shell。和很多同类脚本不同，它既不挂载你的 home，也不挂载宿主机的 Docker socket（`DOCKER_SOCKET=1` 才挂 socket）：InferPilot 的 agent 以 root 身份、自动批准权限运行，home 里有它们用不着的凭据（git、ssh），挂上 socket 就能操作宿主机上的所有容器。它只从你的 home 里拿 `~/.inferpilot_env` 一个文件，以只读方式挂成 root 的 `~/.inferpilot_env`。
+这一行下载 [`scripts/run_docker.sh`](scripts/run_docker.sh) 并运行它，所以宿主机上不需要 InferPilot 的代码；在 InferPilot 的 checkout 里直接运行 `scripts/run_docker.sh` 效果相同。它就是常见的 ROCm `run_docker.sh`：一个带 GPU 的特权容器，以相同路径挂载 `/home` 和存在的数据目录（`/data`、`/mnt` 等，`EXTRA_MOUNTS` 可以再加），并在容器的 `/workspace` 里打开一个 root shell。InferPilot 的 agent 以 root 身份、自动批准权限运行，因此能读到这台机器上所有人的 home，包括里面的凭据（git、ssh）：需要时用 `MOUNT_HOME=0` 不挂 `/home`，适合不能看到那些内容的任务（比如独立重新实现）。你的 key 另外以只读方式挂成 root 的 `~/.inferpilot_env`。和很多同类脚本不同，它不挂载宿主机的 Docker socket（`DOCKER_SOCKET=1` 才挂）：挂上它，agent 就能操作宿主机上的所有容器。
 
 - **镜像。** 任务要在最新的 sglang 上测试，所以默认使用 ROCm 10、MI35x 下最新的每日 `rocm/sgl-dev` 镜像（[`scripts/latest_image.py`](scripts/latest_image.py)，例如 `v0.5.23-rocm10-mi35x-20261103`；同一页面上的 `miles` 镜像用于强化学习，会被跳过）。每天的新镜像在第一次使用时拉取，约 43 GB。MI30x 设置 `IMAGE_VARIANT=rocm10-mi30x`；要固定镜像，设置 `IMAGE=rocm/sgl-dev:<tag>`。容器一直使用它启动时的镜像：回到一个镜像已经不是最新每日镜像的容器时，run_docker.sh 会提醒；在里面跑任务，会在 Setup 阶段、创建任何东西之前停下来，问你是否仍在这个镜像上运行（`image_ok`），除非任务指定的就是这个镜像（`image`）。scan 会照常进行，并在日报里写明所用的镜像。
 - **测的是哪份代码。** 镜像提供 PyTorch、aiter、sgl-kernel，以及它自带的 sglang checkout `/sgl-workspace/sglang`（带完整历史），sglang 就是以 editable 方式从这里安装的：这里检出的是什么，运行的就是什么，所以不需要另外克隆或指定 sglang。第 3 步把它切到当前的 main；之后每个任务都在它上面、从最新的 main 开自己的分支，Setup 会先 fetch。在基础 commit 上跑的 baseline 和 scan 读的当前 main，用的是同一个仓库在运行目录下的 worktree（每个约 0.2 GB）。运行记录会写下镜像、镜像里 sglang 的版本和任务的基础 commit。
@@ -199,12 +199,12 @@ docker cp <name>:/workspace/inferpilot/exp/<run> ~/
 | 变量 | 使用者 | 默认值 |
 |---|---|---|
 | `IMAGE` | `scripts/run_docker.sh` | `IMAGE_VARIANT` 下最新的每日 `rocm/sgl-dev` 镜像（访问不了 Docker Hub 时用本地最新的） |
-| `IMAGE_VARIANT`、`NAME`、`EXTRA_MOUNTS` | `scripts/run_docker.sh` | `rocm10-mi35x`；你的用户名；额外要挂载的目录，用空格分隔 |
+| `IMAGE_VARIANT`、`NAME`、`EXTRA_MOUNTS`、`MOUNT_HOME` | `scripts/run_docker.sh` | `rocm10-mi35x`；你的用户名；额外要挂载的目录，用空格分隔；设为 `0` 时不挂 `/home` |
 | `DOCKER_SOCKET` | `scripts/run_docker.sh` | 不设置；设为 `1` 时额外挂载宿主机的 Docker socket 和 `docker` |
 | `INFERPILOT_LOCK_FILE` | `scripts/run_lock.py` | `/dev/shm/inferpilot-run.lock`，这台机器"一个任务"的锁 |
 | `INFERPILOT_HOME` | bootstrap | `./inferpilot`，或你所在的 checkout |
 | `INFERPILOT_KEYS` | bootstrap | root 的 `~/.inferpilot_env`，也就是 run_docker.sh 挂载你那份的位置：容器里的 shell 加载的 key 文件 |
-| `INFERPILOT_HOST_HOME` | bootstrap | 不设置；在挂载了 `/home` 的容器里，指你在那里的 home，bootstrap 到这里找 key 文件（没有它时，用容器名对应的那个用户的 home） |
+| `INFERPILOT_HOST_HOME` | `scripts/run_docker.sh`（挂载了 `/home` 时）、bootstrap | 在挂载了 `/home` 的容器里，指你在那里的 home，bootstrap 到这里找 key 文件（没有它时，用容器名对应的那个用户的 home） |
 | `INFERPILOT_REPO_URL`、`INFERPILOT_REF` | bootstrap | `https://github.com/At1a8/inferpilot.git`，它的默认分支 |
 | `CLAUDE_VERSION`、`CLAUDE_BIN_DIR` | bootstrap | `latest`，`~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code、bootstrap | 不设置（`~`）：Claude Code 自己的变量，指它的配置所在的目录；bootstrap 把首次启动的回答写在那里 |
