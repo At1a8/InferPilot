@@ -72,11 +72,11 @@ class VersionAndSettingsTest(unittest.TestCase):
 
     def test_settings(self):
         with tempfile.TemporaryDirectory() as d:
-            co = make_checkout(Path(d) / "InferPilot")
+            co = make_checkout(Path(d) / "inferpilot")
             self.assertEqual(S(co, HOME=d)["home"], str(co))
             work = Path(d) / "work"
             work.mkdir()
-            self.assertEqual(S(work, HOME=d)["home"], str(work / "InferPilot"))
+            self.assertEqual(S(work, HOME=d)["home"], str(work / "inferpilot"))
             s = bs.settings({"PWD": str(work), "HOME": d, "INFERPILOT_FRAMEWORK_DIR": "~/sglang"}, {"framework_repo": "/r"})
             self.assertEqual((s["framework_dir"], s["framework_repo"]), (os.path.join(d, "sglang"), "/r"))
             self.assertEqual(s["claude_bin_dir"], os.path.join(d, ".local", "bin"))
@@ -94,7 +94,7 @@ class KeysTest(unittest.TestCase):
         self.root.mkdir()
 
     def test_the_mounted_keys_file_comes_first(self):
-        co = make_checkout(self.tmp / "u" / "InferPilot")
+        co = make_checkout(self.tmp / "u" / "inferpilot")
         (self.tmp / "u" / ".inferpilot_env").write_text("export LLM_GATEWAY_KEY=k\n")
         s = S("/", HOME=str(self.root), INFERPILOT_HOME=str(co))
         self.assertEqual(bs.keys_file(s), str(self.tmp / "u" / ".inferpilot_env"), "the checkout's owner's home")
@@ -111,7 +111,7 @@ class KeysTest(unittest.TestCase):
     def test_inferpilot_host_home_names_your_home(self):
         home = self.tmp / "u"
         home.mkdir()
-        co = make_checkout(self.tmp / "workspace" / "InferPilot")
+        co = make_checkout(self.tmp / "workspace" / "inferpilot")
         s = S("/", HOME=str(self.root), INFERPILOT_HOME=str(co), INFERPILOT_HOST_HOME=str(home))
         self.assertEqual((bs.owner_dirs(s), bs.keys_file(s)), ([str(home)], ""))
         self.assertIn("nor one in %s" % home, bs.keys_missing(s))
@@ -122,14 +122,14 @@ class KeysTest(unittest.TestCase):
         self.assertIn("(not mounted)", bs.keys_missing(gone))
 
     def test_no_keys_file_sets_up_the_rest(self):
-        s = S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/InferPilot")
+        s = S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/inferpilot")
         with mock.patch.object(bs, "container_name", return_value=""), Quiet() as q:
             self.assertEqual(bs.ensure_keys(s), ("skipped", "no keys file"))
         self.assertIn("no %s" % (self.root / ".inferpilot_env"), q.err.getvalue())
 
     def test_a_checkout_of_root_names_no_home(self):
         """InferPilot cloned into /workspace belongs to root, which says nothing about your home."""
-        s = S("/", HOME="/root", INFERPILOT_HOME=str(make_checkout(self.tmp / "workspace" / "InferPilot")))
+        s = S("/", HOME="/root", INFERPILOT_HOME=str(make_checkout(self.tmp / "workspace" / "inferpilot")))
         of_root = os.stat_result((0o40755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
         with mock.patch.object(bs.os, "stat", return_value=of_root):
             self.assertEqual(bs.owner_dirs(s), [])
@@ -170,20 +170,20 @@ class KeysTest(unittest.TestCase):
         homes = self.tmp / "home"
         (homes / "alice").mkdir(parents=True)
         (homes / "alice" / ".inferpilot_env").write_text("")
-        s = S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/InferPilot")
+        s = S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/inferpilot")
         with mock.patch.object(bs, "HOMES", str(homes)), \
                 mock.patch.object(bs, "container_name", return_value="alice-0116"), Quiet() as q:
             self.assertEqual(bs.ensure_keys(s), ("found", str(homes / "alice" / ".inferpilot_env")))
         self.assertIn("named after (alice-0116)", q.err.getvalue())
         self.assertIn("INFERPILOT_KEYS=<your keys file>", q.err.getvalue())
         self.assertEqual(bs.keys_file(s), str(homes / "alice" / ".inferpilot_env"))
-        s = S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/InferPilot")
+        s = S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/inferpilot")
         with mock.patch.object(bs, "HOMES", str(homes)), \
                 mock.patch.object(bs, "container_name", return_value="box"), Quiet() as q:
             self.assertEqual(bs.ensure_keys(s)[0], "skipped")
         self.assertIn("matches this container's name (box)", q.err.getvalue())
-        for given in (S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/InferPilot", INFERPILOT_HOST_HOME=str(self.tmp / "x")),
-                      S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/InferPilot", INFERPILOT_KEYS=str(self.tmp / "x"))):
+        for given in (S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/inferpilot", INFERPILOT_HOST_HOME=str(self.tmp / "x")),
+                      S("/", HOME=str(self.root), INFERPILOT_HOME="/nonexistent/inferpilot", INFERPILOT_KEYS=str(self.tmp / "x"))):
             with mock.patch.object(bs, "HOMES", str(homes)), \
                     mock.patch.object(bs, "container_name", return_value="alice") as name, Quiet():
                 self.assertEqual(bs.ensure_keys(given)[0], "skipped", "a INFERPILOT_HOST_HOME or INFERPILOT_KEYS you set wins")
@@ -193,7 +193,7 @@ class KeysTest(unittest.TestCase):
 class CheckoutTest(unittest.TestCase):
     def test_existing_checkouts_are_kept(self):
         with tempfile.TemporaryDirectory() as d:
-            co = make_checkout(Path(d) / "InferPilot")
+            co = make_checkout(Path(d) / "inferpilot")
             with mock.patch.object(bs, "_run") as run, Quiet():
                 self.assertEqual(bs.ensure_checkout(S(co))[0], "kept")
                 self.assertEqual(bs.ensure_checkout(S(d, INFERPILOT_HOME=str(co)))[0], "kept")
@@ -201,20 +201,20 @@ class CheckoutTest(unittest.TestCase):
 
     def test_other_content_is_left_alone(self):
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "InferPilot").mkdir()
-            (Path(d) / "InferPilot" / "notes.txt").write_text("mine")
+            (Path(d) / "inferpilot").mkdir()
+            (Path(d) / "inferpilot" / "notes.txt").write_text("mine")
             with mock.patch.object(bs, "_run") as run, Quiet():
                 self.assertEqual(bs.ensure_checkout(S(d))[0], "skipped")
             run.assert_not_called()
-            self.assertEqual((Path(d) / "InferPilot" / "notes.txt").read_text(), "mine")
+            self.assertEqual((Path(d) / "inferpilot" / "notes.txt").read_text(), "mine")
 
     def test_clone_only_when_missing(self):
         with tempfile.TemporaryDirectory() as d:
             with mock.patch.object(bs, "_has", return_value=True), mock.patch.object(bs, "give_back") as back, \
                     mock.patch.object(bs, "_run", return_value=OK) as run, Quiet():
                 self.assertEqual(bs.ensure_checkout(S(d, INFERPILOT_REF="main"))[0], "created")
-            run.assert_called_once_with(["git", "clone", "--branch", "main", bs.DEFAULT_REPO_URL, str(Path(d) / "InferPilot")])
-            back.assert_called_once_with(str(Path(d) / "InferPilot"))
+            run.assert_called_once_with(["git", "clone", "--branch", "main", bs.DEFAULT_REPO_URL, str(Path(d) / "inferpilot")])
+            back.assert_called_once_with(str(Path(d) / "inferpilot"))
             with mock.patch.object(bs, "_has", return_value=False), Quiet():
                 self.assertEqual(bs.ensure_checkout(S(d))[0], "failed")
 
@@ -407,7 +407,7 @@ class ShellRcTest(unittest.TestCase):
     @unittest.skipUnless(shutil.which("bash"), "needs bash")
     def test_container_env_and_keys_added_once(self):
         host = self.home / "u"
-        co = make_checkout(host / "InferPilot")
+        co = make_checkout(host / "inferpilot")
         make_exe(host / ".local" / "bin" / "claude")
         (host / ".inferpilot_env").write_text("export ANTHROPIC_API_KEY=sk-test\n")
         s = S("/", HOME=str(self.home), SHELL="/bin/bash", INFERPILOT_HOME=str(co))
@@ -422,7 +422,7 @@ class ShellRcTest(unittest.TestCase):
     @unittest.skipUnless(shutil.which("bash"), "needs bash")
     def test_keys_put_in_place_later_load(self):
         """Where run_docker.sh mounts your keys; one written there after the bootstrap loads too."""
-        s = S("/", HOME=str(self.home), SHELL="/bin/bash", INFERPILOT_HOME="/nonexistent/InferPilot")
+        s = S("/", HOME=str(self.home), SHELL="/bin/bash", INFERPILOT_HOME="/nonexistent/inferpilot")
         with Quiet():
             self.assertEqual(bs.ensure_shell_env(s)[0], "added")
         (self.home / ".inferpilot_env").write_text("export LLM_GATEWAY_KEY=k9\n")
@@ -433,7 +433,7 @@ class ShellRcTest(unittest.TestCase):
     @unittest.skipUnless(shutil.which("bash"), "needs bash")
     def test_an_amd_gateway_key_points_claude_code_at_the_gateway(self):
         host = self.home / "u"
-        co = make_checkout(host / "InferPilot")
+        co = make_checkout(host / "inferpilot")
         make_exe(host / ".local" / "bin" / "claude")
         (host / ".inferpilot_env").write_text("export LLM_GATEWAY_KEY=k123\n")
         s = S("/", HOME=str(self.home), SHELL="/bin/bash", INFERPILOT_HOME=str(co))
@@ -461,7 +461,7 @@ class ClaudeConfigTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root_home = Path(tmp.name) / "root"
         self.root_home.mkdir()
-        self.s = S("/", HOME=str(self.root_home), INFERPILOT_HOME="/workspace/InferPilot")
+        self.s = S("/", HOME=str(self.root_home), INFERPILOT_HOME="/workspace/inferpilot")
         self.config = self.root_home / ".claude.json"
         self.user_settings = self.root_home / ".claude" / "settings.json"
 
@@ -474,7 +474,7 @@ class ClaudeConfigTest(unittest.TestCase):
             self.assertEqual(bs.ensure_claude_config(self.s, env={})[0], "kept")
         data = self.read()
         self.assertTrue(data["hasCompletedOnboarding"] and data["bypassPermissionsModeAccepted"])
-        self.assertTrue(data["projects"]["/workspace/InferPilot"]["hasTrustDialogAccepted"])
+        self.assertTrue(data["projects"]["/workspace/inferpilot"]["hasTrustDialogAccepted"])
         self.assertNotIn("customApiKeyResponses", data, "no Anthropic API key, nothing to approve")
         self.assertEqual(stat.S_IMODE(os.stat(self.config).st_mode), 0o600)
         self.assertEqual(json.loads(self.user_settings.read_text()), {"skipDangerousModePermissionPrompt": True},
@@ -691,7 +691,7 @@ class ReportTest(unittest.TestCase):
 
     def test_next_steps_in_a_new_container(self):
         with tempfile.TemporaryDirectory() as d:
-            co = make_checkout(Path(d) / "workspace" / "InferPilot")
+            co = make_checkout(Path(d) / "workspace" / "inferpilot")
             s = bs.settings({"PWD": "/", "HOME": d, "INFERPILOT_HOME": str(co), "INFERPILOT_FRAMEWORK_DIR": "/x/sglang"})
             with mock.patch.object(bs, "in_container", return_value=True):
                 fresh = bs.next_steps(s, {"shell": "added"}, {"api": False}, path_env="/usr/bin")

@@ -38,7 +38,7 @@ framework step puts on main once, discarding only the image build's changes to i
 
 Environment (a flag wins over its variable):
   INFERPILOT_HOME, INFERPILOT_REPO_URL, INFERPILOT_REF
-                                the checkout (default ./InferPilot, or the one you are in)
+                                the checkout (default ./inferpilot, or the one you are in)
   INFERPILOT_KEYS               (container) your keys file, when it is not ~/.inferpilot_env
   INFERPILOT_HOST_HOME          (container that mounts /home) your home there
   INFERPILOT_CONTAINER          (container) its name (run_docker.sh passes it; without it, asked of
@@ -64,7 +64,7 @@ import subprocess
 import sys
 
 CLAUDE_MIN_VERSION = "2.1.177"  # first Claude Code with the dynamic Workflow tool inferpilot.js runs in
-DEFAULT_REPO_URL = "https://github.com/At1a8/InferPilot.git"
+DEFAULT_REPO_URL = "https://github.com/At1a8/inferpilot.git"
 DEFAULT_FRAMEWORK_REPO = "https://github.com/sgl-project/sglang.git"
 INSTALL_DOCS = "https://code.claude.com/docs/en/setup"
 KEYS_FILE = ".inferpilot_env"
@@ -190,7 +190,7 @@ def settings(env=None, opts=None) -> dict:
     env = os.environ if env is None else env
     opts = opts or {}
     inv = _invocation_dir(env)
-    home = env.get("INFERPILOT_HOME") or (inv if is_inferpilot_checkout(inv) else os.path.join(inv, "InferPilot"))
+    home = env.get("INFERPILOT_HOME") or (inv if is_inferpilot_checkout(inv) else os.path.join(inv, "inferpilot"))
     framework_dir = opts.get("framework_dir") or env.get("INFERPILOT_FRAMEWORK_DIR") or ""
     return {
         "invocation_dir": inv,

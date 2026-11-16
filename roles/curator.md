@@ -45,5 +45,5 @@ Return:
 ```json
 {"updates": [{"file": "knowledge/known_issues.md", "change": "KI-006 added: ..."}],
  "skill_status": "validated | draft | stale | none",
- "pr_url": "https://github.com/<owner>/InferPilot/pull/<n>, or empty", "notes": "<why there is no pull request>"}
+ "pr_url": "https://github.com/<owner>/inferpilot/pull/<n>, or empty", "notes": "<why there is no pull request>"}
 ```

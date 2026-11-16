@@ -1,6 +1,6 @@
 """Packaging for InferPilot, with a build-time hook that sets up a machine for it.
 
-`pip install git+https://github.com/At1a8/InferPilot` (or `pip install .` in a checkout) runs the
+`pip install git+https://github.com/At1a8/inferpilot` (or `pip install .` in a checkout) runs the
 bootstrap in inferpilot/bootstrap.py while building the wheel: clone the checkout and install the
 Claude Code CLI.
 
@@ -43,7 +43,7 @@ def run_bootstrap():
     except Exception as exc:
         sys.stderr.write("[inferpilot-bootstrap WARN] bootstrap failed: %r\n" % (exc,))
         sys.stderr.write("[inferpilot-bootstrap WARN] run `python3 -m inferpilot.bootstrap` after the install, "
-                         "or see https://github.com/At1a8/InferPilot#setup\n")
+                         "or see https://github.com/At1a8/inferpilot#setup\n")
 
 
 class BuildPyWithBootstrap(build_py):
@@ -61,7 +61,7 @@ setup(
                 "Installing it clones the checkout and the Claude Code CLI its workflow runs inside.",
     long_description=read("README.md"),
     long_description_content_type="text/markdown",
-    url="https://github.com/At1a8/InferPilot",
+    url="https://github.com/At1a8/inferpilot",
     license="Apache-2.0",
     python_requires=">=3.9",
     packages=["inferpilot"],

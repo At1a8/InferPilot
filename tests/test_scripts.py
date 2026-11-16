@@ -187,12 +187,12 @@ class DailyReportTest(unittest.TestCase):
 
     def issue(self, number, date, created="T01:00:00Z", marker=True):
         return {"number": number, "title": daily_report.title(date), "state": "open", "created_at": date + created,
-                "html_url": "https://github.com/At1a8/InferPilot/issues/%d" % number,
+                "html_url": "https://github.com/At1a8/inferpilot/issues/%d" % number,
                 "body": ("q\n" + daily_report.MARKER) if marker else "unrelated"}
 
     def test_repo_from_url(self):
-        for url in ("https://github.com/At1a8/InferPilot.git", "git@github.com:At1a8/InferPilot.git", "https://github.com/At1a8/InferPilot"):
-            self.assertEqual(daily_report.repo_from_url(url), "At1a8/InferPilot")
+        for url in ("https://github.com/At1a8/inferpilot.git", "git@github.com:At1a8/inferpilot.git", "https://github.com/At1a8/inferpilot"):
+            self.assertEqual(daily_report.repo_from_url(url), "At1a8/inferpilot")
         self.assertEqual(daily_report.repo_from_url("https://gitlab.com/a/b.git"), "")
 
     def test_a_private_detail_stops_the_report(self):
@@ -216,13 +216,13 @@ class DailyReportTest(unittest.TestCase):
         items = [self.issue(9, "2026-11-07", marker=False), {"number": 4, "title": "a PR", "pull_request": {}, "body": daily_report.MARKER},
                  self.issue(8, "2026-11-06"), self.issue(6, "2026-11-05")]
         with mock.patch.object(daily_report, "get", return_value=items):
-            got = daily_report.latest("At1a8/InferPilot")
+            got = daily_report.latest("At1a8/inferpilot")
         self.assertEqual((got["date"], got["number"], got["created_at"]), ("2026-11-06", 8, "2026-11-06T01:00:00Z"))
         self.assertIsInstance(got["age_hours"], float)
         now = daily_report.dt.datetime(2026, 11, 7, 0, 30, tzinfo=daily_report.dt.timezone.utc)
         self.assertEqual(daily_report.age_hours("2026-11-06T01:00:00Z", now), 23.5)
         with mock.patch.object(daily_report, "get", return_value=[]):
-            self.assertEqual(daily_report.latest("At1a8/InferPilot"), {})
+            self.assertEqual(daily_report.latest("At1a8/inferpilot"), {})
 
     def test_it_never_writes(self):
         src = (Path(__file__).resolve().parent.parent / "scripts" / "daily_report.py").read_text()
@@ -243,7 +243,7 @@ class ProposeKnowledgeTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
-        self.origin, seed, self.inferpilot = root / "origin.git", root / "seed", root / "InferPilot"
+        self.origin, seed, self.inferpilot = root / "origin.git", root / "seed", root / "inferpilot"
         git("init", "-q", "--bare", str(self.origin))
         git("clone", "-q", str(self.origin), str(seed))
         (seed / "knowledge").mkdir()
@@ -266,7 +266,7 @@ class ProposeKnowledgeTest(unittest.TestCase):
             env["INFERPILOT_REPO_TOKEN"] = token
         with mock.patch.dict(os.environ, env, clear=True), redirect_stdout(io.StringIO()) as out, \
                 redirect_stderr(io.StringIO()) as err, mock.patch.object(propose_knowledge, "api", side_effect=api):
-            rc = propose_knowledge.main(["--run-dir", str(self.run), "--body", str(self.body), "--repo", "At1a8/InferPilot",
+            rc = propose_knowledge.main(["--run-dir", str(self.run), "--body", str(self.body), "--repo", "At1a8/inferpilot",
                                          "--inferpilot-dir", str(self.inferpilot), "--push-url", str(self.origin)])
         return rc, out.getvalue(), err.getvalue()
 
@@ -279,11 +279,11 @@ class ProposeKnowledgeTest(unittest.TestCase):
 
         def fake(method, path, token="", data=None):
             calls.append((method, path, data))
-            return [] if method == "GET" else {"number": 12, "html_url": "https://github.com/At1a8/InferPilot/pull/12"}
+            return [] if method == "GET" else {"number": 12, "html_url": "https://github.com/At1a8/inferpilot/pull/12"}
 
         rc, out, err = self.propose(api=fake)
         self.assertEqual(rc, 0, err)
-        self.assertEqual(json.loads(out)["url"], "https://github.com/At1a8/InferPilot/pull/12")
+        self.assertEqual(json.loads(out)["url"], "https://github.com/At1a8/inferpilot/pull/12")
         branch = "inferpilot/knowledge/" + self.run.name
         self.assertIn("KI-001", self.show(branch + ":knowledge/known_issues.md"))
         self.assertEqual(self.show(branch + ":knowledge/feature_skills/dcp/SKILL.md"), "draft\n")

@@ -159,7 +159,7 @@ its own `/root/.inferpilot_env`).
 - **InferPilot repository token (optional).** Only for the curator's knowledge changes: as a pull request
   from a `inferpilot/knowledge/<run>` branch to main, which you review and merge. That takes a token for
   this repository alone, so it can write nowhere else: a fine-grained token with *Only select
-  repositories* → `At1a8/InferPilot` and *Repository permissions* → *Contents* and *Pull requests*: *Read
+  repositories* → `At1a8/inferpilot` and *Repository permissions* → *Contents* and *Pull requests*: *Read
   and write*, added to `~/.inferpilot_env` as `export INFERPILOT_REPO_TOKEN=<token>`. InferPilot pushes only
   `inferpilot/` branches; protect main on GitHub (require a pull request) so the token cannot change it
   either. Without it the knowledge changes stay in the container's checkout, and the report gives the
@@ -171,7 +171,7 @@ its own `/root/.inferpilot_env`).
 ### 2. Start a container (host)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/InferPilot/main/scripts/run_docker.sh)    # NAME defaults to your user name
+bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts/run_docker.sh)    # NAME defaults to your user name
 ```
 
 This fetches [`scripts/run_docker.sh`](scripts/run_docker.sh) and runs it, so the host needs no copy of
@@ -216,8 +216,8 @@ This puts InferPilot in the container's `/workspace` and makes the container rea
 below lists:
 
 ```bash
-[ -d /workspace/InferPilot/.git ] || git clone https://github.com/At1a8/InferPilot /workspace/InferPilot
-cd /workspace/InferPilot && python3 -B -m inferpilot.bootstrap
+[ -d /workspace/inferpilot/.git ] || git clone https://github.com/At1a8/inferpilot /workspace/inferpilot
+cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap
 source ~/.bashrc
 claude --version    # installed in this container
 ```
@@ -226,19 +226,19 @@ claude --version    # installed in this container
 |---|---|
 | keys | root's `~/.inferpilot_env`, which run_docker.sh mounts from your home, or the file `INFERPILOT_KEYS` names. In a container that mounts `/home`, the one in your home there: `INFERPILOT_HOST_HOME`, else, with a warning, the home of the user the container is named after (`<you>`, `<you>-0116`). Without a keys file the rest is still set up, and the next steps say where a key goes |
 | `claude` | installed in the container with Claude Code's native installer (`~/.local/bin/claude`, put on `PATH`): the newest version, a large download (minutes without output on a slow link are the download). It stays at that version for the container's life (`DISABLE_AUTOUPDATER=1`); a new container gets the newest |
-| Claude Code config | root's `~/.claude.json` answers the first start's questions ahead, as GEAK's CI and Hyperloom do: the onboarding, trust in `/workspace/InferPilot`, bypass permissions mode and, for an `ANTHROPIC_API_KEY`, using it. The rest of the file is kept; like everything of root's, it goes with the container |
+| Claude Code config | root's `~/.claude.json` answers the first start's questions ahead, as GEAK's CI and Hyperloom do: the onboarding, trust in `/workspace/inferpilot`, bypass permissions mode and, for an `ANTHROPIC_API_KEY`, using it. The rest of the file is kept; like everything of root's, it goes with the container |
 | git | trusts checkouts on host mounts, which belong to you, not root (`safe.directory '*'`) |
 | git identity | root commits as `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` from the keys file (or the environment), so no commit reads `root@<this host>`; with neither it says so and sets nothing |
 | shell | root's `~/.bashrc` gets `PYTHONDONTWRITEBYTECODE=1` (no root-owned `__pycache__` in checkouts on host mounts) and `DISABLE_AUTOUPDATER=1`, and loads the keys file, also one put in place later; with `LLM_GATEWAY_KEY` and no `ANTHROPIC_BASE_URL`, it points Claude Code at the AMD LLM gateway |
 | framework | the image's `/sgl-workspace/sglang`, still as the image left it (detached at the commit it built, its packaging files rewritten for ROCm), is put on main: the packaging changes discarded, then `git checkout main` and `git pull`. Never `pip install -e` from it afterwards: its `pyproject.toml` is then upstream's, which would pull CUDA packages. A checkout already on a branch, or with other changes, is left as it is; `--framework-dir` names a host checkout instead (used as it is, or cloned with its whole history when missing) |
 | checks | GPUs, sglang, API access, `GITHUB_TOKEN`, counting what the keys file sets (detect only) |
 
-The clone runs only when `/workspace/InferPilot` is not there yet; the bootstrap never writes keys.
+The clone runs only when `/workspace/inferpilot` is not there yet; the bootstrap never writes keys.
 
 ### 4. Start Claude Code and give it a task (inside the container)
 
 ```bash
-cd /workspace/InferPilot && IS_SANDBOX=1 claude --dangerously-skip-permissions
+cd /workspace/inferpilot && IS_SANDBOX=1 claude --dangerously-skip-permissions
 ```
 
 `IS_SANDBOX=1` lets Claude Code auto-approve permissions as root, which InferPilot's agents need. Step 3
@@ -264,7 +264,7 @@ a mode that waits for your approval before commands, and InferPilot's agents wou
 in the input box above it:
 
 ```
-use /workspace/InferPilot/inferpilot.js with mode=scan, inferpilot_dir=/workspace/InferPilot
+use /workspace/inferpilot/inferpilot.js with mode=scan, inferpilot_dir=/workspace/inferpilot
 ```
 
 The scan changes no code. It writes the day's report on the framework since the last report (else the
@@ -277,14 +277,14 @@ to share; InferPilot posts it nowhere. One report a day is enough: when one is l
 stopping after the reproduction to confirm the environment, name its fields:
 
 ```
-use /workspace/InferPilot/inferpilot.js with mode=issue, task=https://github.com/sgl-project/sglang/issues/41299,
-inferpilot_dir=/workspace/InferPilot, model_path=<weights>, gpu_ids=0, stop_after=Reproduce
+use /workspace/inferpilot/inferpilot.js with mode=issue, task=https://github.com/sgl-project/sglang/issues/41299,
+inferpilot_dir=/workspace/inferpilot, model_path=<weights>, gpu_ids=0, stop_after=Reproduce
 ```
 
 or say it in plain words and let the Intake phase write the definition:
 
 ```
-use /workspace/InferPilot/inferpilot.js with inferpilot_dir=/workspace/InferPilot, request="DeepSeek-V4.1 decode
+use /workspace/inferpilot/inferpilot.js with inferpilot_dir=/workspace/inferpilot, request="DeepSeek-V4.1 decode
 is slow on MI355X, make it faster"
 ```
 
@@ -295,7 +295,7 @@ Claude Code runs `inferpilot.js` again with the same arguments plus `answers={"w
 
 ### 5. After a run (in the container)
 
-Every run that got past Setup has its directory in `/workspace/InferPilot/exp` (ignored by git), named
+Every run that got past Setup has its directory in `/workspace/inferpilot/exp` (ignored by git), named
 `<mode>_<slug>_<time>`: the mode, a short name of the task and its start in UTC, e.g.
 `issue_41299-glm-dcp_20261106-071502Z` or `scan_20261106-064327Z`. `exp/index.md` lists every run of
 the container with its status. A run directory holds:
@@ -322,7 +322,7 @@ credentials are, copy it out on the host (`<name>` is the container's name, `<ru
 directory's):
 
 ```bash
-docker cp <name>:/workspace/InferPilot/exp/<run> ~/
+docker cp <name>:/workspace/inferpilot/exp/<run> ~/
 ```
 
 The copy is yours, not root's. On the host, in your sglang checkout, `git checkout -b inferpilot/<slug> <base>`
@@ -334,8 +334,8 @@ Each step of `inferpilot.bootstrap` reports `kept`, `installed`, `updated`, `add
 `failed`; a summary lists them, the next steps list only what is still missing, and the exit code is 1
 when a step failed. In a new container it installs Claude Code, which takes a minute or two, and writes
 its config and the git and shell settings. `--claude-only` runs only the keys and Claude Code steps,
-`--check` only the checks. Inside a container, `cd /workspace && pip install -v git+https://github.com/At1a8/InferPilot` runs
-step 3 the GEAK way, cloning InferPilot to `/workspace/InferPilot` (pip shows the output only with `-v`; a cached wheel skips it).
+`--check` only the checks. Inside a container, `cd /workspace && pip install -v git+https://github.com/At1a8/inferpilot` runs
+step 3 the GEAK way, cloning InferPilot to `/workspace/inferpilot` (pip shows the output only with `-v`; a cached wheel skips it).
 
 | Variable | Used by | Default |
 |---|---|---|
@@ -343,10 +343,10 @@ step 3 the GEAK way, cloning InferPilot to `/workspace/InferPilot` (pip shows th
 | `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS` | `scripts/run_docker.sh` | `rocm10-mi35x`; your user name; more directories to mount, space-separated |
 | `DOCKER_SOCKET` | `scripts/run_docker.sh` | unset; `1` also mounts the host's Docker socket and `docker` |
 | `INFERPILOT_LOCK_FILE` | `scripts/run_lock.py` | `/dev/shm/inferpilot-run.lock`, the machine's one-task lock |
-| `INFERPILOT_HOME` | bootstrap | `./InferPilot`, or the checkout you run from |
+| `INFERPILOT_HOME` | bootstrap | `./inferpilot`, or the checkout you run from |
 | `INFERPILOT_KEYS` | bootstrap | root's `~/.inferpilot_env`, where run_docker.sh mounts yours: the keys file the container's shells load |
 | `INFERPILOT_HOST_HOME` | bootstrap | unset; in a container that mounts `/home`, your home there, where the bootstrap looks for the keys file (without it, the home of the user the container is named after) |
-| `INFERPILOT_REPO_URL`, `INFERPILOT_REF` | bootstrap | `https://github.com/At1a8/InferPilot.git`, its default branch |
+| `INFERPILOT_REPO_URL`, `INFERPILOT_REF` | bootstrap | `https://github.com/At1a8/inferpilot.git`, its default branch |
 | `CLAUDE_VERSION`, `CLAUDE_BIN_DIR` | bootstrap | `latest`, `~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code, bootstrap | unset (`~`): Claude Code's own, where its config lives; the bootstrap writes the first-start answers there |
 | `INFERPILOT_GIT_NAME`, `INFERPILOT_GIT_EMAIL` | `~/.inferpilot_env`, bootstrap | unset; the identity root commits with in the container |
@@ -463,7 +463,7 @@ python3 -m unittest discover -s tests             # the scripts' parsers and rul
 ## Layout
 
 ```
-InferPilot/
+inferpilot/
 ├── inferpilot.js            # orchestration: five modes, gates, budgets, rollback, kernel back ends
 ├── roles/                   # intake, director, scout, dispatcher, analyst, architect, implementer,
 │                            # test_engineer, verify_engineer, investigator, perf_engineer, issue_triager,

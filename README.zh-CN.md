@@ -89,13 +89,13 @@ InferPilot 像 GEAK 一样，以 root 身份运行在 ROCm 容器里：Claude Co
 
 - **LLM key（必填）。** 写的是 AMD LLM 网关 key 时，第 3 步会让 Claude Code 走这个网关（`https://llm-api.amd.com/Unified`，key 放在 `Ocp-Apim-Subscription-Key` 请求头里），网关按 Claude 模型的常用名字提供服务。不在 AMD 内部时，改写成 `export ANTHROPIC_API_KEY=sk-ant-...`，或者其他网关（`ANTHROPIC_BASE_URL` 加上 `ANTHROPIC_AUTH_TOKEN` 或 `ANTHROPIC_CUSTOM_HEADERS`）。用 Claude 订阅时，在任何有 Claude Code 和浏览器的地方运行 `claude setup-token`，写入 `export CLAUDE_CODE_OAUTH_TOKEN=<token>`；或者不写 key，在每个新容器首次启动时登录（第 4 步）。
 - **GitHub token（强烈建议）。** scan 和 issue 运行要通过 GitHub API 读取 issue、PR 和 CI 跟踪记录。没有 token 时，GitHub 对每个 IP 地址每小时只允许 60 次请求、每分钟 10 次搜索，同一出口 IP 下的所有人共用这个额度，扫描会非常慢，还可能中途停下；有 token 时每小时 5000 次。只读权限就够了：在 github.com 上进入 Settings → Developer settings → Personal access tokens → Fine-grained tokens，权限选 *Public repositories (read-only)*（不勾选任何权限的 classic token 也可以）。容器里的每个 agent 都能读到 `~/.inferpilot_env` 里的内容，所以不要把你日常用来 push 的 token 放进去。
-- **InferPilot 仓库 token（可选）。** 只用于 curator 的知识更新：从 `inferpilot/knowledge/<run>` 分支向 main 提一个 PR，由你审阅合并。这需要一个只对这个仓库有效的 token，这样它没法往别处写：fine-grained token，*Only select repositories* 选 `At1a8/InferPilot`，*Repository permissions* 里 *Contents* 和 *Pull requests* 都选 *Read and write*，然后以 `export INFERPILOT_REPO_TOKEN=<token>` 写进 `~/.inferpilot_env`。InferPilot 只 push `inferpilot/` 开头的分支；在 GitHub 上给 main 开分支保护（要求通过 PR 合并），这个 token 就也改不了 main。没有它时，知识更新只留在容器的 checkout 里，报告会给出提交它们的命令。
+- **InferPilot 仓库 token（可选）。** 只用于 curator 的知识更新：从 `inferpilot/knowledge/<run>` 分支向 main 提一个 PR，由你审阅合并。这需要一个只对这个仓库有效的 token，这样它没法往别处写：fine-grained token，*Only select repositories* 选 `At1a8/inferpilot`，*Repository permissions* 里 *Contents* 和 *Pull requests* 都选 *Read and write*，然后以 `export INFERPILOT_REPO_TOKEN=<token>` 写进 `~/.inferpilot_env`。InferPilot 只 push `inferpilot/` 开头的分支；在 GitHub 上给 main 开分支保护（要求通过 PR 合并），这个 token 就也改不了 main。没有它时，知识更新只留在容器的 checkout 里，报告会给出提交它们的命令。
 - **Git 身份（建议设置）。** 容器里没有你的 home，也就没有你的 git 配置：InferPilot 在那里的提交作者会是 `root@<本机主机名>`。加上 `export INFERPILOT_GIT_NAME="<你的名字>"` 和 `export INFERPILOT_GIT_EMAIL=<你的邮箱>`，第 3 步会把它们设给 root。
 
 ### 2. 启动容器（宿主机）
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/InferPilot/main/scripts/run_docker.sh)    # NAME 默认是你的用户名
+bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts/run_docker.sh)    # NAME 默认是你的用户名
 ```
 
 这一行下载 [`scripts/run_docker.sh`](scripts/run_docker.sh) 并运行它，所以宿主机上不需要 InferPilot 的代码；在 InferPilot 的 checkout 里直接运行 `scripts/run_docker.sh` 效果相同。它就是常见的 ROCm `run_docker.sh`：一个带 GPU 的特权容器，以相同路径挂载存在的数据目录（`/data`、`/mnt` 等，`EXTRA_MOUNTS` 可以再加），并在容器的 `/workspace` 里打开一个 root shell。和很多同类脚本不同，它既不挂载你的 home，也不挂载宿主机的 Docker socket（`DOCKER_SOCKET=1` 才挂 socket）：InferPilot 的 agent 以 root 身份、自动批准权限运行，home 里有它们用不着的凭据（git、ssh），挂上 socket 就能操作宿主机上的所有容器。它只从你的 home 里拿 `~/.inferpilot_env` 一个文件，以只读方式挂成 root 的 `~/.inferpilot_env`。
@@ -111,8 +111,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/InferPilot/main/script
 这一步把 InferPilot 放进容器的 `/workspace`，并让容器能运行它，具体做什么见下表：
 
 ```bash
-[ -d /workspace/InferPilot/.git ] || git clone https://github.com/At1a8/InferPilot /workspace/InferPilot
-cd /workspace/InferPilot && python3 -B -m inferpilot.bootstrap
+[ -d /workspace/inferpilot/.git ] || git clone https://github.com/At1a8/inferpilot /workspace/inferpilot
+cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap
 source ~/.bashrc
 claude --version    # 装在这个容器里的 Claude Code
 ```
@@ -121,19 +121,19 @@ claude --version    # 装在这个容器里的 Claude Code
 |---|---|
 | key | root 的 `~/.inferpilot_env`（run_docker.sh 从你的 home 挂进来），或者 `INFERPILOT_KEYS` 指定的文件。在挂载了 `/home` 的容器里，也用你 home 里的那份：先看 `INFERPILOT_HOST_HOME`，没有时发出警告，改用容器名对应的那个用户的 home（`<you>`、`<you>-0116`）。没有 key 文件时其余步骤照常完成，"下一步"会说明 key 该放在哪里 |
 | `claude` | 用 Claude Code 的原生安装器装在容器里（`~/.local/bin/claude`，并加到 `PATH`）：装的是最新版本，下载量较大（网速慢时几分钟没有输出，是在下载）。容器存在期间一直保持这个版本（`DISABLE_AUTOUPDATER=1`）；新容器会装最新的 |
-| Claude Code 配置 | 在 root 的 `~/.claude.json` 里预先回答首次启动的问题，和 GEAK 的 CI、Hyperloom 的做法一样：完成引导、信任 `/workspace/InferPilot`、接受 bypass permissions 模式，用 `ANTHROPIC_API_KEY` 时还批准使用这个 key。文件里的其他内容保留；和 root 的其他东西一样，它随容器删除 |
+| Claude Code 配置 | 在 root 的 `~/.claude.json` 里预先回答首次启动的问题，和 GEAK 的 CI、Hyperloom 的做法一样：完成引导、信任 `/workspace/inferpilot`、接受 bypass permissions 模式，用 `ANTHROPIC_API_KEY` 时还批准使用这个 key。文件里的其他内容保留；和 root 的其他东西一样，它随容器删除 |
 | git | 信任宿主机挂载目录里的 checkout，它们属于你而不是 root（`safe.directory '*'`） |
 | git 身份 | root 以 key 文件（或环境变量）里的 `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` 提交，所以不会出现作者为 `root@<本机主机名>` 的提交；两者都没有时，它会提示，不会自己编一个 |
 | shell | 在 root 的 `~/.bashrc` 里设置 `PYTHONDONTWRITEBYTECODE=1`（宿主机挂载目录里的 checkout 不会出现 root 所有的 `__pycache__`）和 `DISABLE_AUTOUPDATER=1`，并加载 key 文件，之后才放进去的也会加载；设置了 `LLM_GATEWAY_KEY` 且没有 `ANTHROPIC_BASE_URL` 时，让 Claude Code 走 AMD LLM 网关 |
 | 框架 | 镜像里的 `/sgl-workspace/sglang` 如果还是镜像留下的样子（detached 在构建时的 commit 上，打包文件被改成了 ROCm 版），就把它切到 main：丢弃这些打包改动，然后 `git checkout main`、`git pull`。之后不要在这里 `pip install -e`：这时它的 `pyproject.toml` 是上游默认的版本，会装进 CUDA 的包。已经在某个分支上、或者有其他改动的 checkout 原样保留；用 `--framework-dir` 可以改用宿主机上的 checkout（已有的原样使用，缺失时带完整历史克隆） |
 | 检查 | GPU、sglang、API 访问、`GITHUB_TOKEN`，key 文件里设置的也算（只检测） |
 
-只有 `/workspace/InferPilot` 还不存在时才会克隆；bootstrap 从不写入 key。
+只有 `/workspace/inferpilot` 还不存在时才会克隆；bootstrap 从不写入 key。
 
 ### 4. 启动 Claude Code 并交给它任务（容器内）
 
 ```bash
-cd /workspace/InferPilot && IS_SANDBOX=1 claude --dangerously-skip-permissions
+cd /workspace/inferpilot && IS_SANDBOX=1 claude --dangerously-skip-permissions
 ```
 
 `IS_SANDBOX=1` 让 Claude Code 以 root 身份自动批准权限，InferPilot 的 agent 需要这一点。第 3 步已经在 Claude Code 的配置里回答了首次启动的问题，所以它会直接打开输入框。如果还是出现了问题（第 3 步报告 `claude-config` 为 `skipped`），其中有三个按默认选项会卡住：
@@ -149,20 +149,20 @@ cd /workspace/InferPilot && IS_SANDBOX=1 claude --dangerously-skip-permissions
 启动完成后，最下面一行会一直显示 `bypass permissions on`：这是 `--dangerously-skip-permissions` 打开的模式，不是在问你问题。保持这个模式不变（Shift+Tab 会切换到执行命令前要等你确认的模式，InferPilot 的 agent 就会停住），在它上方的输入框里输入任务：
 
 ```
-use /workspace/InferPilot/inferpilot.js with mode=scan, inferpilot_dir=/workspace/InferPilot
+use /workspace/inferpilot/inferpilot.js with mode=scan, inferpilot_dir=/workspace/inferpilot
 ```
 
 scan 不改任何代码。它写出框架当天的日报，覆盖上一份日报以来（没有时为最近 7 天）的情况：main 上的 AMD CI（每个失败的 job、从何时开始失败、日志里说了什么）、按 P0、P1、P2 分好的开放 AMD 用户 issue，以及 AMD 需要跟进的上游改动。它把其中的任务排好序写进 `exp/scan_<time>/task_queue.md`，每项附可以启动它的任务定义，并把去掉本机信息的日报写进 `exp/scan_<time>/daily_report.md`，由你来分享；InferPilot 不会把它发到任何地方。一天一份日报就够了：已有不到 24 小时的日报时，scan 会先问你要不要重扫（回答 `rescan`）；`upstream_repos` 可以加上要跟进的其他仓库，比如 vLLM。要接手一个任务，并在复现之后停下来确认环境，就给出它的字段：
 
 ```
-use /workspace/InferPilot/inferpilot.js with mode=issue, task=https://github.com/sgl-project/sglang/issues/41299,
-inferpilot_dir=/workspace/InferPilot, model_path=<weights>, gpu_ids=0, stop_after=Reproduce
+use /workspace/inferpilot/inferpilot.js with mode=issue, task=https://github.com/sgl-project/sglang/issues/41299,
+inferpilot_dir=/workspace/inferpilot, model_path=<weights>, gpu_ids=0, stop_after=Reproduce
 ```
 
 或者直接用一句话描述，让 Intake 阶段写出任务定义：
 
 ```
-use /workspace/InferPilot/inferpilot.js with inferpilot_dir=/workspace/InferPilot, request="DeepSeek-V4.1 在 MI355X 上
+use /workspace/inferpilot/inferpilot.js with inferpilot_dir=/workspace/inferpilot, request="DeepSeek-V4.1 在 MI355X 上
 decode 太慢，帮我优化"
 ```
 
@@ -170,7 +170,7 @@ decode 太慢，帮我优化"
 
 ### 5. 运行结束后（容器内）
 
-每次过了 Setup 的运行，都在 `/workspace/InferPilot/exp`（git 会忽略它）里有自己的目录，名字是 `<mode>_<slug>_<time>`：模式、任务的简短名字和 UTC 开始时间，例如 `issue_41299-glm-dcp_20261106-071502Z` 或 `scan_20261106-064327Z`。`exp/index.md` 列出这个容器里的每次运行和它的结局。一个运行目录里有：
+每次过了 Setup 的运行，都在 `/workspace/inferpilot/exp`（git 会忽略它）里有自己的目录，名字是 `<mode>_<slug>_<time>`：模式、任务的简短名字和 UTC 开始时间，例如 `issue_41299-glm-dcp_20261106-071502Z` 或 `scan_20261106-064327Z`。`exp/index.md` 列出这个容器里的每次运行和它的结局。一个运行目录里有：
 
 | 文件 | 内容 |
 |---|---|
@@ -187,14 +187,14 @@ scan 的 `daily_report.md` 就是为分享而写的，`scripts/daily_report.py c
 InferPilot 从不 push。任务的分支 `inferpilot/<slug>` 在 `/sgl-workspace/sglang` 里，报告给出确切的 `git -C /sgl-workspace/sglang push ...`：可以在容器里用有 push 权限的凭据执行它。运行目录随容器保留和删除；要保留某次运行，或者要在宿主机上 push（你的 git 凭据在那里），就在宿主机上把它复制出来（`<name>` 是容器名，`<run>` 是运行目录的名字）：
 
 ```bash
-docker cp <name>:/workspace/InferPilot/exp/<run> ~/
+docker cp <name>:/workspace/inferpilot/exp/<run> ~/
 ```
 
 复制出来的文件属于你而不是 root。在宿主机上你的 sglang checkout 里，先用报告给出的基础 commit 执行 `git checkout -b inferpilot/<slug> <base>`，再执行 `git am ~/<run>/patches/*.patch`，然后 push。
 
 ### 重复执行与选项
 
-`inferpilot.bootstrap` 的每一步都会报告 `kept`、`installed`、`updated`、`added`、`created`、`skipped` 或 `failed`；最后有一份汇总，"下一步"只列出仍然缺少的内容，任何一步失败时退出码为 1。在新容器里，它会安装 Claude Code（需要一两分钟），并写好它的配置以及 git 和 shell 的设置。`--claude-only` 只运行 key 和 Claude Code 相关的步骤，`--check` 只运行检查。在容器里，`cd /workspace && pip install -v git+https://github.com/At1a8/InferPilot` 会按 GEAK 的方式执行第 3 步，把 InferPilot 克隆到 `/workspace/InferPilot`（加 `-v` 时 pip 才显示输出；用了缓存的 wheel 时会跳过）。
+`inferpilot.bootstrap` 的每一步都会报告 `kept`、`installed`、`updated`、`added`、`created`、`skipped` 或 `failed`；最后有一份汇总，"下一步"只列出仍然缺少的内容，任何一步失败时退出码为 1。在新容器里，它会安装 Claude Code（需要一两分钟），并写好它的配置以及 git 和 shell 的设置。`--claude-only` 只运行 key 和 Claude Code 相关的步骤，`--check` 只运行检查。在容器里，`cd /workspace && pip install -v git+https://github.com/At1a8/inferpilot` 会按 GEAK 的方式执行第 3 步，把 InferPilot 克隆到 `/workspace/inferpilot`（加 `-v` 时 pip 才显示输出；用了缓存的 wheel 时会跳过）。
 
 | 变量 | 使用者 | 默认值 |
 |---|---|---|
@@ -202,10 +202,10 @@ docker cp <name>:/workspace/InferPilot/exp/<run> ~/
 | `IMAGE_VARIANT`、`NAME`、`EXTRA_MOUNTS` | `scripts/run_docker.sh` | `rocm10-mi35x`；你的用户名；额外要挂载的目录，用空格分隔 |
 | `DOCKER_SOCKET` | `scripts/run_docker.sh` | 不设置；设为 `1` 时额外挂载宿主机的 Docker socket 和 `docker` |
 | `INFERPILOT_LOCK_FILE` | `scripts/run_lock.py` | `/dev/shm/inferpilot-run.lock`，这台机器"一个任务"的锁 |
-| `INFERPILOT_HOME` | bootstrap | `./InferPilot`，或你所在的 checkout |
+| `INFERPILOT_HOME` | bootstrap | `./inferpilot`，或你所在的 checkout |
 | `INFERPILOT_KEYS` | bootstrap | root 的 `~/.inferpilot_env`，也就是 run_docker.sh 挂载你那份的位置：容器里的 shell 加载的 key 文件 |
 | `INFERPILOT_HOST_HOME` | bootstrap | 不设置；在挂载了 `/home` 的容器里，指你在那里的 home，bootstrap 到这里找 key 文件（没有它时，用容器名对应的那个用户的 home） |
-| `INFERPILOT_REPO_URL`、`INFERPILOT_REF` | bootstrap | `https://github.com/At1a8/InferPilot.git`，它的默认分支 |
+| `INFERPILOT_REPO_URL`、`INFERPILOT_REF` | bootstrap | `https://github.com/At1a8/inferpilot.git`，它的默认分支 |
 | `CLAUDE_VERSION`、`CLAUDE_BIN_DIR` | bootstrap | `latest`，`~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code、bootstrap | 不设置（`~`）：Claude Code 自己的变量，指它的配置所在的目录；bootstrap 把首次启动的回答写在那里 |
 | `INFERPILOT_GIT_NAME`、`INFERPILOT_GIT_EMAIL` | `~/.inferpilot_env`、bootstrap | 不设置；容器里 root 提交时用的身份 |
@@ -288,7 +288,7 @@ python3 -m unittest discover -s tests             # 脚本的解析与规则、b
 ## 目录结构
 
 ```
-InferPilot/
+inferpilot/
 ├── inferpilot.js            # 编排：五种模式、门禁、预算、回滚、kernel 后端
 ├── roles/                   # intake, director, scout, dispatcher, analyst, architect, implementer,
 │                            # test_engineer, verify_engineer, investigator, perf_engineer, issue_triager,

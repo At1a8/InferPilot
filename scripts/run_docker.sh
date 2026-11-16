@@ -7,7 +7,7 @@
 #   IMAGE=rocm/sgl-dev:<tag> NAME=<name> scripts/run_docker.sh
 #   EXTRA_MOUNTS="/home/<you>/models" scripts/run_docker.sh   # more host directories, at the same paths
 #   DOCKER_SOCKET=1 scripts/run_docker.sh                # also mount the host's Docker socket
-#   bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/InferPilot/main/scripts/run_docker.sh)   # no checkout
+#   bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts/run_docker.sh)   # no checkout
 #
 # Each container keeps its own /workspace, where InferPilot and its runs live, and its own copy of the image's
 # /sgl-workspace/sglang, the code tasks change: apart from every other container's, for as long as the
@@ -28,7 +28,7 @@ NAME=${NAME:-${SUDO_USER:-$USER}}
 HOST_HOME=$HOME
 [ -n "$SUDO_USER" ] && HOST_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 SUDO=$([ -w /var/run/docker.sock ] || echo sudo)
-RAW=https://raw.githubusercontent.com/At1a8/InferPilot/main/scripts
+RAW=https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts
 
 latest_image() {  # scripts/latest_image.py next to this script, else the one on GitHub
   if [ -f "$(dirname "$0")/latest_image.py" ]; then

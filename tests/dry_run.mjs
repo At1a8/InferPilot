@@ -526,7 +526,7 @@ const scenarios = [
     const recent = (ins) => (ins.rescan
       ? { lock: 'acquired', run_dir: RUN, candidates_path: `${RUN}/candidates.json`, counts: { ci: 5, issues: 30, upstream: 40 } }
       : { lock: 'skipped', run_dir: '', candidates_path: '',
-        recent: { at: '2026-11-09T01:12:00Z', url: 'https://github.com/At1a8/InferPilot/issues/3', run_dir: '' } });
+        recent: { at: '2026-11-09T01:12:00Z', url: 'https://github.com/At1a8/inferpilot/issues/3', run_dir: '' } });
     const asked = await run({ mode: 'scan' }, { 'scout:collect': recent });
     check(asked.result.status === 'needs_input' && asked.result.stopped_at === 'Collect' && eqList(asked.keys, ['scout:collect']),
       `asks before scanning again: ${asked.result.status}, calls ${asked.keys}`);
