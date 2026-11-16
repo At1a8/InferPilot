@@ -114,9 +114,11 @@ Petra runs inside the framework's ROCm container as root, as GEAK does, next to 
 framework's Python environment. Each task gets its own container, and what it works on lives in that
 container, apart from every other container's: Petra's checkout and the run directories in `/workspace`,
 and the image's own sglang checkout. `scripts/run_docker.sh` takes the user back into an existing container and never
-removes one. Claude Code, installed once on the host, is linked into the container; its state and the
-keys stay in the user's home on the host (`PETRA_HOST_HOME`), shared by their containers. What a run
-writes as root into a checkout on a host mount goes back to its owner (`scripts/restore_owner.sh`).
+removes one. As in GEAK's CI and Hyperloom, Claude Code is installed in each container, its first-start
+questions answered in its config, and the user's home is not mounted: from it the container gets only
+the keys file, `~/.petra_env`, read-only, since the agents run as root with permissions auto-approved
+and a home holds credentials they do not need. What a run writes as root into a checkout on a host mount
+goes back to its owner (`scripts/restore_owner.sh`).
 Machines are shared: one Petra task runs per machine at a
 time (a lock in `/dev/shm`, `scripts/run_lock.py`; a second run ends as `busy`), a run uses only the
 GPUs Setup pinned (through `HIP_VISIBLE_DEVICES`) and touches only the processes and containers it

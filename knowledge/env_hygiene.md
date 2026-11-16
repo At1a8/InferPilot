@@ -8,8 +8,8 @@ accidents.
 
 Petra runs git inside the container, as root. What it works in inside the container (Petra and the run
 directories in `/workspace`, the image's `/sgl-workspace/sglang`) is root's; a checkout on a host mount
-(a `framework_dir` under `/home`, a run directory copied out) belongs to a host user, and the rules
-below are about those.
+(a `framework_dir` in a mounted data directory such as `/data`, or in one added with `EXTRA_MOUNTS`)
+belongs to a host user, and the rules below are about those.
 
 - Any git write as root (worktree add, fetch, commit, cherry-pick, rebase, `pre-commit install`) leaves
   root-owned files in `.git` (refs, objects, `ORIG_HEAD`, hooks) and in the worktree. The next host-side

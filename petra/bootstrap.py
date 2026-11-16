@@ -1,9 +1,10 @@
 """Petra bootstrap: set up Petra where it runs; safe to run again at any time.
 
 Petra runs inside a ROCm container as root, the way GEAK does: Petra, its runs and the code they
-change live in the container's /workspace, one copy per container. Claude Code, installed once, its
-state and your keys stay in your home on the host, which scripts/run_docker.sh mounts at the same path
-and names in PETRA_HOST_HOME. Run this once in every new container (README step 3).
+change live in the container's /workspace, one copy per container. As in GEAK's CI and Hyperloom,
+Claude Code is installed in the container and its first-start questions are answered in its config,
+and your keys come in as one file: scripts/run_docker.sh mounts your ~/.petra_env read-only as root's
+~/.petra_env, and not your home. Run this once in every new container (README step 3).
 
 Every step checks first, keeps what is already there and installs or creates only what is missing.
 Nothing is deleted, overwritten or re-cloned: a step that could only proceed by changing existing
@@ -11,17 +12,17 @@ state warns and leaves it alone. The one exception is the image's own sglang che
 framework step puts on main once, discarding only the image build's changes to its packaging files.
 
   checkout      clone Petra to $PETRA_HOME, unless run inside a checkout or one is already there
-  host-home     (root in a container) find your home on the host: PETRA_HOST_HOME, else, with a warning,
-                the home of the user the container is named after; without one nothing else is set up,
-                since this container would have neither your Claude Code nor your keys
-  claude-in     (container) link your Claude Code on the host onto PATH instead of installing another
+  keys          (root in a container) find your keys file: PETRA_KEYS, else ~/.petra_env, where
+                run_docker.sh mounts yours; in a container that mounts /home, the one in your home there
+                (PETRA_HOST_HOME, else, with a warning, the home of the user the container is named after)
   claude        install the Claude Code CLI if it is still missing; update one older than petra.js needs
   path          put the CLI's directory on PATH for new shells (one marked block in ~/.bashrc)
-  claude-state  (root in a container) keep Claude Code's state on the host, in ~/.petra/claude next to
-                the keys (CLAUDE_CONFIG_DIR): first-start answers and a /login are given once
-  git           (root in a container) trust the mounted checkouts, which belong to another user
-  shell         (root in a container) no __pycache__ in the checkouts, no Claude Code self-update, the
-                keys kept on the host in ~/.petra_env, and with LLM_GATEWAY_KEY Claude Code on the AMD LLM
+  claude-config (root in a container) answer Claude Code's first-start questions in its config: the
+                onboarding, trust in the Petra checkout, bypass permissions mode, and an Anthropic API
+                key from the keys file
+  git           (root in a container) trust checkouts on host mounts, which belong to another user
+  shell         (root in a container) no __pycache__ in checkouts on host mounts, no Claude Code
+                self-update, the keys file loaded, and with LLM_GATEWAY_KEY Claude Code on the AMD LLM
                 gateway
   framework     the image's /sgl-workspace/sglang by default, which the image installs sglang from in
                 editable mode: still as the image left it, it is put on main and pulled, so the current
@@ -30,18 +31,17 @@ framework step puts on main once, discarding only the image build's changes to i
   checks        git, docker (host only), ROCm, sglang, Node.js, API access, GitHub token (detect only)
 
   python3 -B -m petra.bootstrap [--framework-dir DIR]
-  python3 -B -m petra.bootstrap --claude-only   # the claude-in, claude, path and claude-state steps
+  python3 -B -m petra.bootstrap --claude-only   # the keys, claude, path and claude-config steps
   python3 -B -m petra.bootstrap --check         # the checks
 
 Environment (a flag wins over its variable):
   PETRA_HOME, PETRA_REPO_URL, PETRA_REF       the checkout (default ./Petra, or the one you are in)
-  PETRA_HOST_HOME                             (container) your home on the host: your Claude Code, its
-                                              state and ~/.petra_env (scripts/run_docker.sh passes it;
-                                              without it, found from the container's name)
-  PETRA_CONTAINER                             (container) the container's name (run_docker.sh passes it;
-                                              without it, asked of Docker when its socket is mounted)
+  PETRA_KEYS                                  (container) your keys file, when it is not ~/.petra_env
+  PETRA_HOST_HOME                             (container that mounts /home) your home there
+  PETRA_CONTAINER                             (container) its name (run_docker.sh passes it; without it,
+                                              asked of Docker when its socket is mounted)
   CLAUDE_VERSION, CLAUDE_BIN_DIR              native-installer target (latest), its bin dir (~/.local/bin)
-  CLAUDE_CONFIG_DIR                           when set, used as it is instead of ~/.petra/claude
+  CLAUDE_CONFIG_DIR                           Claude Code's own: where its config lives (default ~)
   PETRA_FRAMEWORK_DIR, PETRA_FRAMEWORK_REPO   --framework-dir (default: the image's checkout), --framework-repo
                                               (default: sglang)
   PETRA_SKIP_BOOTSTRAP                        set to skip everything (CI, image builds)
@@ -51,6 +51,7 @@ Environment (a flag wins over its variable):
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -61,22 +62,20 @@ CLAUDE_MIN_VERSION = "2.1.177"  # first Claude Code with the dynamic Workflow to
 DEFAULT_REPO_URL = "https://github.com/At1a8/Petra.git"
 DEFAULT_FRAMEWORK_REPO = "https://github.com/sgl-project/sglang.git"
 INSTALL_DOCS = "https://code.claude.com/docs/en/setup"
-CONTAINER_CLAUDE = "/usr/local/bin/claude"
 KEYS_FILE = ".petra_env"
 RC_BEGIN = "# >>> petra: Claude Code CLI on PATH >>>"
 RC_END = "# <<< petra: Claude Code CLI on PATH <<<"
 ENV_BEGIN = "# >>> petra: root in the container >>>"
 ENV_END = "# <<< petra: root in the container <<<"
-STATE_DIR = os.path.join(".petra", "claude")
-STATE_BEGIN = "# >>> petra: Claude Code state on the host >>>"
-STATE_END = "# <<< petra: Claude Code state on the host <<<"
 # scripts/run_docker.sh names a container after your login unless told otherwise (alice, or alice-0116
-# for the next task): without PETRA_HOST_HOME, that user's home is yours.
+# for the next task): in a container that mounts /home without PETRA_HOST_HOME, that user's home is yours.
 HOMES = "/home"
 NAME_SEPARATORS = "-_."
-# Root in the container must not leave root-owned __pycache__ in the host's checkouts, and must not
-# update the host's Claude Code install (the host updates it).
+# Root in the container must not leave root-owned __pycache__ in checkouts on host mounts; Claude Code
+# stays at the version installed here for the container's life (a new container gets the newest).
 CONTAINER_ENV = {"PYTHONDONTWRITEBYTECODE": "1", "DISABLE_AUTOUPDATER": "1"}
+# Claude Code keeps the last 20 characters of an Anthropic API key it was told to use.
+APPROVED_KEY_CHARS = 20
 # The AMD LLM gateway speaks the Anthropic Messages API and authenticates on the
 # Ocp-Apim-Subscription-Key header alone; the same key as a bearer token only keeps Claude Code from
 # asking for a login, and the gateway ignores it.
@@ -196,6 +195,7 @@ def settings(env=None, opts=None) -> dict:
         "claude_version": env.get("CLAUDE_VERSION") or "latest",
         "claude_bin_dir": _expand(env.get("CLAUDE_BIN_DIR") or "~/.local/bin", env),
         "user_home": _expand("~", env),
+        "keys": _expand(env["PETRA_KEYS"], env) if env.get("PETRA_KEYS") else "",
         "host_home": _expand(env["PETRA_HOST_HOME"], env) if env.get("PETRA_HOST_HOME") else "",
         "shell": env.get("SHELL") or "",
         "framework_dir": _expand(framework_dir, env) if framework_dir else "",
@@ -204,7 +204,7 @@ def settings(env=None, opts=None) -> dict:
 
 
 def owner_dirs(s: dict) -> list:
-    """Where the container looks for your Claude Code and keys, closest first: your home on the host
+    """In a container that mounts /home, where your keys may be, closest first: your home there
     (PETRA_HOST_HOME); without it, the ancestors of the Petra checkout owned by the checkout's owner,
     unless that is root, as for a checkout in /workspace."""
     if s.get("host_home"):
@@ -226,44 +226,29 @@ def owner_dirs(s: dict) -> list:
     return out
 
 
-def host_claude(s: dict) -> str:
-    for d in owner_dirs(s):
-        cand = os.path.join(d, ".local", "bin", "claude")
-        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+def keys_file(s: dict) -> str:
+    """Your keys file, '' when there is none: PETRA_KEYS; else ~/.petra_env, where scripts/run_docker.sh
+    mounts yours from the host; else, in a container that mounts /home, ~/.petra_env in your home there."""
+    if s.get("keys"):
+        return s["keys"] if os.path.isfile(s["keys"]) else ""
+    for d in [s["user_home"]] + owner_dirs(s):
+        cand = os.path.join(d, KEYS_FILE)
+        if os.path.isfile(cand):
             return cand
     return ""
 
 
-def host_home_missing(s: dict) -> str:
-    """Why owner_dirs found no home on the host, for the warnings; '' when it found one."""
-    if owner_dirs(s):
-        return ""
+def keys_missing(s: dict) -> str:
+    """Why keys_file found nothing, for the warnings."""
+    if s.get("keys"):
+        return "PETRA_KEYS=%s is not a file" % s["keys"]
+    why = "no %s" % os.path.join(s["user_home"], KEYS_FILE)
     if s.get("host_home"):
-        return "PETRA_HOST_HOME=%s is not mounted in this container" % s["host_home"]
-    why = "PETRA_HOST_HOME is not set (scripts/run_docker.sh passes it)"
-    if "container_name" not in s:
-        return why
-    if not s["container_name"]:
-        return why + ", and this container's name is unknown (no PETRA_CONTAINER, no Docker socket)"
-    return why + ", and no user in %s with Claude Code or %s matches this container's name (%s)" % (
-        HOMES, KEYS_FILE, s["container_name"])
-
-
-def keys_file(s: dict) -> str:
-    """~/.petra_env in your home on the host: next to your Claude Code, else in the topmost
-    directory owner_dirs names."""
-    claude = host_claude(s)
-    if claude:
-        return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(claude))), KEYS_FILE)
-    dirs = owner_dirs(s)
-    return os.path.join(dirs[-1], KEYS_FILE) if dirs else ""
-
-
-def claude_state_dir(s: dict) -> str:
-    """Where root in the container keeps Claude Code's state: ~/.petra/claude in your home on the host,
-    next to the keys. Separate from your own ~/.claude, which root would otherwise take over."""
-    keys = keys_file(s)
-    return os.path.join(os.path.dirname(keys), STATE_DIR) if keys else ""
+        where = s["host_home"] if os.path.isdir(s["host_home"]) else "PETRA_HOST_HOME=%s (not mounted)" % s["host_home"]
+        return "%s, nor one in %s" % (why, where)
+    if s.get("container_name"):
+        return "%s, and no user in %s with one matches this container's name (%s)" % (why, HOMES, s["container_name"])
+    return why
 
 
 def _ver_tuple(s: str) -> tuple:
@@ -301,7 +286,7 @@ def ensure_checkout(s: dict) -> tuple[str, str]:
     return "failed", "git clone"
 
 
-# --- your home on the host -------------------------------------------------------
+# --- your keys -------------------------------------------------------------------
 
 def container_name(env=None) -> str:
     """This container's name: PETRA_CONTAINER (scripts/run_docker.sh passes it), else Docker's answer when
@@ -318,26 +303,26 @@ def container_name(env=None) -> str:
 
 def home_from_container_name(name: str, homes: str | None = None) -> str:
     """The home of the user a container is named after: <user>, or <user> with a suffix after - _ or .
-    (the longest such user). Only a home with Claude Code or the keys in it counts (README step 1)."""
+    (the longest such user). Only a home with a keys file in it counts (README step 1)."""
     homes = HOMES if homes is None else homes
     try:
         users = os.listdir(homes)
     except OSError:
         return ""
-    marks = (KEYS_FILE, os.path.join(".local", "bin", "claude"), STATE_DIR)
     best = ""
     for u in users:
         if len(u) <= len(best) or not (name == u or (name.startswith(u) and name[len(u)] in NAME_SEPARATORS)):
             continue
-        if any(os.path.exists(os.path.join(homes, u, m)) for m in marks):
+        if os.path.isfile(os.path.join(homes, u, KEYS_FILE)):
             best = u
     return os.path.join(homes, best) if best else ""
 
 
 def find_host_home(s: dict, env=None) -> str:
-    """Without PETRA_HOST_HOME, the home of the user this container is named after, kept in s["host_home"].
-    '' when PETRA_HOST_HOME is set (mounted or not, it wins), the checkout names a home, or nothing matches."""
-    if s.get("host_home") or owner_dirs(s):
+    """In a container that mounts /home without PETRA_HOST_HOME, the home of the user it is named after,
+    kept in s["host_home"]. '' when PETRA_KEYS or PETRA_HOST_HOME is set (they win), the checkout names
+    a home, or nothing matches."""
+    if s.get("keys") or s.get("host_home") or owner_dirs(s):
         return ""
     s["container_name"] = container_name(env)
     home = home_from_container_name(s["container_name"]) if s["container_name"] else ""
@@ -346,59 +331,24 @@ def find_host_home(s: dict, env=None) -> str:
     return home
 
 
-def container_env() -> dict:
-    """The environment the container was started with (its first process's)."""
-    try:
-        with open("/proc/1/environ", "rb") as f:
-            raw = f.read().decode("utf-8", "replace")
-    except OSError:
-        return {}
-    return dict(kv.split("=", 1) for kv in raw.split("\0") if "=" in kv)
-
-
-def ensure_host_home(s: dict) -> tuple[str, str]:
-    """Without your home on the host, the steps after this one would install a second Claude Code, with
-    no keys and no state, which then asks for a login: none of them runs."""
-    if owner_dirs(s):
-        home = os.path.dirname(keys_file(s))
-        log("host-home: kept %s (your Claude Code, its state and %s)" % (home, KEYS_FILE))
-        return "kept", home
-    home = find_host_home(s)
-    if home:
-        warn("host-home: PETRA_HOST_HOME is not set, so scripts/run_docker.sh did not start this container; "
-             "using %s, the home of the user it is named after (%s). Not yours? Run this again with "
-             "PETRA_HOST_HOME=%s/<you> in front" % (home, s["container_name"], HOMES))
-        return "found", home
-    warn("host-home: %s; nothing else is set up (see the next steps)" % host_home_missing(s))
-    return "failed", "no home on the host"
+def ensure_keys(s: dict) -> tuple[str, str]:
+    """Without a keys file Claude Code here has no API access and asks for a login; the steps after this
+    one still run, and a keys file added later is loaded by new shells."""
+    keys = keys_file(s)
+    if keys:
+        log("keys: %s" % keys)
+        return "kept", keys
+    if find_host_home(s):
+        keys = keys_file(s)
+        warn("keys: no %s; using %s, in the home of the user this container is named after (%s). Not yours? "
+             "Run this again with PETRA_KEYS=<your keys file> in front"
+             % (os.path.join(s["user_home"], KEYS_FILE), keys, s["container_name"]))
+        return "found", keys
+    warn("keys: %s; Claude Code here has no API access until there is one (see the next steps)" % keys_missing(s))
+    return "skipped", "no keys file"
 
 
 # --- Claude Code -----------------------------------------------------------------
-
-def ensure_claude_link(s: dict) -> tuple[str, str]:
-    """In the container, call the host's Claude Code (seen through the /home mount) through a link on
-    PATH, so it is installed once and the host's updates reach every container."""
-    found = shutil.which("claude")
-    if found:
-        log("claude-in: kept (%s)" % found)
-        return "kept", found
-    host = host_claude(s)
-    if not host:
-        missing = host_home_missing(s)
-        warn("claude-in: %s" % (missing or "no Claude Code in %s; install it on the host (README step 1)"
-                                % owner_dirs(s)[0]))
-        return "skipped", "no host install"
-    if os.path.lexists(CONTAINER_CLAUDE):
-        warn("claude-in: %s exists but is not on PATH; left as it is" % CONTAINER_CLAUDE)
-        return "skipped", "%s exists" % CONTAINER_CLAUDE
-    try:
-        os.symlink(host, CONTAINER_CLAUDE)
-    except OSError as e:
-        warn("claude-in: could not link %s (%s)" % (CONTAINER_CLAUDE, e))
-        return "failed", CONTAINER_CLAUDE
-    log("claude-in: linked %s -> %s" % (CONTAINER_CLAUDE, host))
-    return "added", "%s -> %s" % (CONTAINER_CLAUDE, host)
-
 
 def find_claude(s: dict) -> str:
     """The claude on PATH, else one the native installer left in CLAUDE_BIN_DIR (not on PATH yet)."""
@@ -513,50 +463,92 @@ def ensure_shell_env(s: dict) -> tuple[str, str]:
     if ENV_BEGIN in _read(rc):
         log("shell: kept (%s)" % rc)
         return "kept", rc
-    names = list(CONTAINER_ENV)
     lines = ["export %s=%s" % kv for kv in CONTAINER_ENV.items()]
-    # A home found from the container's name, or given to this run only: later shells need it too
-    # (README step 5), and a container started without it never has it.
-    if s.get("host_home") and container_env().get("PETRA_HOST_HOME") != s["host_home"]:
-        names.append("PETRA_HOST_HOME")
-        lines.append('export PETRA_HOST_HOME="%s"' % s["host_home"])
-    keys = keys_file(s)
-    if keys:
-        lines.append('[ -r "%s" ] && . "%s"' % (keys, keys))
+    # Where run_docker.sh mounts your keys, also when there are none yet: a file put there later loads.
+    keys = keys_file(s) or os.path.join(s["user_home"], KEYS_FILE)
+    lines.append('[ -r "%s" ] && . "%s"' % (keys, keys))
     lines.append(GATEWAY_ENV)
     if not _append(rc, "\n%s\n%s\n%s\n" % (ENV_BEGIN, "\n".join(lines), ENV_END)):
         return "failed", rc
-    log("shell: added %s%s to %s" % (", ".join(names), " and %s" % keys if keys else "", rc))
+    log("shell: added %s and %s to %s" % (", ".join(CONTAINER_ENV), keys, rc))
     return "added", rc
 
 
-def ensure_claude_state(s: dict, env=None) -> tuple[str, str]:
-    """Root's home goes with the container, and with it every answer Claude Code asked for at its first
-    start (the API key, the folder trust, bypass permissions) and any /login. Keep them on the host."""
+def anthropic_api_key(s: dict, env=None) -> str:
+    """ANTHROPIC_API_KEY from this shell, else from the keys file when it sets it to a plain value."""
     env = os.environ if env is None else env
-    if env.get("CLAUDE_CONFIG_DIR"):
-        log("claude-state: kept (CLAUDE_CONFIG_DIR=%s)" % env["CLAUDE_CONFIG_DIR"])
-        return "kept", env["CLAUDE_CONFIG_DIR"]
-    d = claude_state_dir(s)
-    if not d:
-        warn("claude-state: %s; Claude Code's state stays in the container" % host_home_missing(s))
-        return "skipped", "no host home"
-    created = not os.path.isdir(d)
-    if created:
-        try:
-            os.makedirs(d, mode=0o700)
-        except OSError as e:
-            warn("claude-state: could not create %s (%s)" % (d, e))
-            return "failed", d
-    give_back(os.path.dirname(d))  # what Claude Code wrote there as root stays manageable from the host
-    rc = rc_file(s)
-    if STATE_BEGIN in _read(rc):
-        log("claude-state: kept (%s)" % rc)
-        return ("created" if created else "kept"), d
-    if not _append(rc, '\n%s\nexport CLAUDE_CONFIG_DIR="%s"\n%s\n' % (STATE_BEGIN, d, STATE_END)):
-        return "failed", rc
-    log("claude-state: Claude Code keeps its state in %s (CLAUDE_CONFIG_DIR, in %s)" % (d, rc))
-    return ("created" if created else "added"), d
+    if env.get("ANTHROPIC_API_KEY"):
+        return env["ANTHROPIC_API_KEY"]
+    keys = keys_file(s)
+    for line in _read(keys).splitlines() if keys else ():
+        m = re.match(r"\s*(?:export\s+)?ANTHROPIC_API_KEY=(.*)$", line)
+        value = m.group(1).strip().strip("'\"") if m else ""
+        if value and not value.startswith("<") and "$" not in value:
+            return value
+    return ""
+
+
+def _update_json(path: str, change) -> str:
+    """change(data) on the JSON object in path, the rest of it kept: 'added' when written, 'kept' when
+    nothing changed, 'skipped' when the file holds something else, 'failed' when it cannot be written."""
+    text = _read(path)
+    try:
+        data = json.loads(text) if text.strip() else {}
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        warn("claude-config: %s is not a JSON object; left as it is (Claude Code asks at its first start)" % path)
+        return "skipped"
+    before = json.dumps(data, sort_keys=True)
+    change(data)
+    if json.dumps(data, sort_keys=True) == before:
+        return "kept"
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.chmod(path, 0o600)
+    except OSError as e:
+        warn("claude-config: could not write %s (%s)" % (path, e))
+        return "failed"
+    return "added"
+
+
+def ensure_claude_config(s: dict, env=None) -> tuple[str, str]:
+    """Root's Claude Code is new in every container, and its first start would ask for the onboarding,
+    trust in the folder, bypass permissions mode and, for an Anthropic API key, whether to use it. Its
+    config answers them ahead, as GEAK's CI and Hyperloom write it; anything else in it is kept. The
+    bypass permissions answer lives in the user settings, the others in the global config."""
+    env = os.environ if env is None else env
+    config_dir = env.get("CLAUDE_CONFIG_DIR") or ""
+    config = os.path.join(config_dir or s["user_home"], ".claude.json")
+    user_settings = os.path.join(config_dir or os.path.join(s["user_home"], ".claude"), "settings.json")
+    key = anthropic_api_key(s, env).strip()[-APPROVED_KEY_CHARS:]
+
+    def answer(data):
+        data["hasCompletedOnboarding"] = True
+        data["bypassPermissionsModeAccepted"] = True
+        projects = data.get("projects") if isinstance(data.get("projects"), dict) else {}
+        project = projects.get(s["home"]) if isinstance(projects.get(s["home"]), dict) else {}
+        project["hasTrustDialogAccepted"] = True
+        projects[s["home"]] = project
+        data["projects"] = projects
+        if key:
+            answers = data.get("customApiKeyResponses") if isinstance(data.get("customApiKeyResponses"), dict) else {}
+            approved = [k for k in answers.get("approved") or [] if isinstance(k, str)]
+            answers["approved"] = approved + ([] if key in approved else [key])
+            answers.setdefault("rejected", [])
+            data["customApiKeyResponses"] = answers
+
+    results = {_update_json(config, answer),
+               _update_json(user_settings, lambda data: data.update(skipDangerousModePermissionPrompt=True))}
+    status = next(r for r in ("failed", "skipped", "added", "kept") if r in results)
+    if status == "kept":
+        log("claude-config: kept (%s, %s)" % (config, user_settings))
+    elif status == "added":
+        log("claude-config: Claude Code's first-start questions answered in %s and %s (onboarding, trust in %s, "
+            "bypass permissions%s)" % (config, user_settings, s["home"], ", the API key" if key else ""))
+    return status, config
 
 
 # --- git, as root in a container -------------------------------------------------
@@ -671,6 +663,7 @@ def ensure_framework(s: dict) -> tuple[str, str]:
 def api_configured(env, user_home: str) -> bool:
     config_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(user_home, ".claude")
     return bool(env.get("LLM_GATEWAY_KEY") or env.get("ANTHROPIC_API_KEY") or env.get("ANTHROPIC_AUTH_TOKEN")
+                or env.get("CLAUDE_CODE_OAUTH_TOKEN")
                 or (env.get("ANTHROPIC_BASE_URL") and env.get("ANTHROPIC_CUSTOM_HEADERS"))
                 or os.path.isfile(os.path.join(config_dir, ".credentials.json")))
 
@@ -729,7 +722,7 @@ def check_environment(env=None, keys_path: str = "") -> dict:
 # --- report ----------------------------------------------------------------------
 
 def summary(results: list) -> str:
-    rows = ["  %-12s %-10s %s" % r for r in results]
+    rows = ["  %-13s %-10s %s" % r for r in results]
     return "summary (safe to re-run: what is already there is kept):\n" + "\n".join(rows)
 
 
@@ -737,40 +730,27 @@ def next_steps(s: dict, statuses: dict, found: dict | None = None, path_env: str
                claude_only: bool = False) -> str:
     c_on, c_off = _styles(sys.stdout)
     hl = lambda t: "%s%s%s" % (c_on, t, c_off)  # noqa: E731
-    if statuses.get("host-home") == "failed":
-        lines = [
-            "Next steps:",
-            "1) This container cannot reach your home on the host: %s." % host_home_missing(s),
-            "     Your Claude Code, its state and %s are there; without them Claude Code here has no key and" % KEYS_FILE,
-            "     asks you to log in.",
-        ]
-        if not s.get("host_home") and os.path.isdir(HOMES):
-            lines += ["     If your home is mounted here, name it and run this again (later shells keep it):",
-                      "     " + hl("PETRA_HOST_HOME=%s/<you> python3 -B -m petra.bootstrap" % HOMES)]
-        lines += [
-            "     Otherwise leave the container and, on the host, start a new one under a NAME no container has",
-            "     yet: scripts/run_docker.sh mounts and passes your home (README step 2).",
-            "     " + hl("NAME=<new name> bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/Petra/main/scripts/run_docker.sh)"),
-            "     A docker run of your own needs " + hl("-e PETRA_HOST_HOME=$HOME") + ", with your home mounted at the same path.",
-        ]
-        return "\n".join(lines)
     path_env = os.environ.get("PATH", "") if path_env is None else path_env
     steps = []
     d = s["claude_bin_dir"]
-    reload_rc = statuses.get("shell") == "added" or statuses.get("claude-state") in ("added", "created") or (
+    reload_rc = statuses.get("shell") == "added" or (
         os.path.isfile(os.path.join(d, "claude")) and not _on_path(d, path_env) and statuses.get("path") in ("added", "kept"))
     if reload_rc:
         steps.append(["Load the new settings into this shell (new shells have them):", hl("source %s" % rc_file(s))])
-    state = ""
-    if statuses.get("claude-state") in ("added", "created", "kept"):
-        state = os.environ.get("CLAUDE_CONFIG_DIR") or claude_state_dir(s)
-    keys = keys_file(s) if in_container() else ""
+    container = in_container()
+    keys = keys_file(s) if container else ""
     api = (found or {}).get("api")
     if api is None:
-        api = api_configured(os.environ, s["user_home"])
-    if not api and not (keys and os.path.isfile(keys)):
-        where = ("on the host, in %s (only you can read it; every container loads it):" % keys) if keys \
-            else "(pick one; keep it in %s):" % rc_file(s)
+        env = dict(os.environ, **{name: "set in %s" % keys for name in keys_defined(keys)})
+        api = api_configured(env, s["user_home"])
+    if not api:
+        if keys:
+            where = "in %s, which new shells load:" % keys
+        elif container:
+            where = ("in ~/%s on the host (README step 1), which containers started after it get, or for this "
+                     "container only in %s:" % (KEYS_FILE, os.path.join(s["user_home"], KEYS_FILE)))
+        else:
+            where = "(pick one; keep it in %s):" % rc_file(s)
         steps.append([
             "Give Claude Code API access %s" % where,
             "a. AMD LLM gateway:     " + hl("export LLM_GATEWAY_KEY=<your key>") + "   (%s)" % AMD_GATEWAY_URL,
@@ -778,8 +758,9 @@ def next_steps(s: dict, statuses: dict, found: dict | None = None, path_env: str
             "c. another gateway:     " + hl("export ANTHROPIC_BASE_URL=https://your-gateway"),
             "                        " + hl("export ANTHROPIC_AUTH_TOKEN=your-token"),
             "   (a gateway that wants its own header: " + hl('export ANTHROPIC_CUSTOM_HEADERS="Header-Name: <key>"') + ")",
-            "d. interactive login:   " + hl("claude") + "   then /login"
-            + ("  (kept in %s)" % state if state else "  (lost with the container)" if keys else ""),
+            "d. Claude subscription: " + hl("export CLAUDE_CODE_OAUTH_TOKEN=<token>")
+            + "   (from " + hl("claude setup-token") + " where a browser is)",
+            "e. interactive login:   " + hl("claude") + "   then /login" + ("  (again in every new container)" if container else ""),
         ])
     if not claude_only:
         if s["framework_dir"]:
@@ -788,14 +769,13 @@ def next_steps(s: dict, statuses: dict, found: dict | None = None, path_env: str
             fw = "" if image_checkout() else ", framework_dir=/path/to/sglang"
         start = ["Start Claude Code from the checkout, permissions auto-approved (README step 4):",
                  hl("cd %s && IS_SANDBOX=1 claude --dangerously-skip-permissions" % s["home"])]
-        if in_container():
-            start += ["The first start asks a few questions %s; answer these, the defaults would stop you:"
-                      % ("once (the answers are kept in %s)" % state if state else "in every new container"),
+        if container and statuses.get("claude-config") not in ("added", "kept"):
+            start += ["The first start asks a few questions; answer these, the defaults would stop you:",
                       "  use the API key from your environment?  " + hl("Yes") + "   (asked only for an Anthropic API key)",
                       "  trust this folder?                      " + hl("Yes, I trust this folder"),
                       "  Bypass Permissions mode                 " + hl("Yes, I accept")]
         steps.append(start)
-        elsewhere = "" if in_container() else ", container=<container>"
+        elsewhere = "" if container else ", container=<container>"
         steps.append(["Give it a task, e.g. collect and rank tasks, or take one issue:",
                       "use %s/petra.js with mode=scan, petra_dir=%s%s" % (s["home"], s["home"], fw),
                       "use %s/petra.js with mode=issue, task=<issue URL>, petra_dir=%s%s, gpu_ids=0%s"
@@ -812,7 +792,7 @@ def main(argv=None) -> int:
                                  description="Set up Petra where it runs (README step 3). "
                                              "Safe to re-run: what is already there is kept.")
     g = ap.add_mutually_exclusive_group()
-    g.add_argument("--claude-only", action="store_true", help="only the Claude Code and PATH steps")
+    g.add_argument("--claude-only", action="store_true", help="only the keys, Claude Code, PATH and config steps")
     g.add_argument("--check", action="store_true", help="only the environment checks")
     ap.add_argument("--framework-dir", help="framework checkout for tasks; cloned only if missing (PETRA_FRAMEWORK_DIR)")
     ap.add_argument("--framework-repo", help="repository to clone it from (default: sglang; PETRA_FRAMEWORK_REPO)")
@@ -824,33 +804,24 @@ def main(argv=None) -> int:
     s = settings(opts={"framework_dir": a.framework_dir, "framework_repo": a.framework_repo})
     container = in_container()
     if a.check:
-        if container and is_root():
+        if container and is_root() and not keys_file(s):
             find_host_home(s)
         check_environment(keys_path=keys_file(s) if container else "")
         return 0
     steps = [] if a.claude_only else [("checkout", ensure_checkout)]
     if container and is_root():
-        steps.append(("host-home", ensure_host_home))
-    if container:
-        steps.append(("claude-in", ensure_claude_link))
+        steps.append(("keys", ensure_keys))
     steps += [("claude", ensure_claude_code), ("path", ensure_path)]
     if container and is_root():
-        steps.append(("claude-state", ensure_claude_state))
+        steps.append(("claude-config", ensure_claude_config))
     if not a.claude_only:
         if container and is_root():
             steps += [("git", ensure_git_trust), ("shell", ensure_shell_env)]
         steps.append(("framework", ensure_framework))
-    results = []
-    for name, step in steps:
-        results.append((name,) + step(s))
-        if name == "host-home" and results[-1][1] == "failed":
-            break
+    results = [(name,) + step(s) for name, step in steps]
     statuses = {step: status for step, status, _ in results}
-    state = {step: detail for step, _, detail in results}.get("claude-state")
-    if state and statuses.get("claude-state") in ("added", "created", "kept"):
-        os.environ.setdefault("CLAUDE_CONFIG_DIR", state)  # this run's checks see a login kept there
     keys = keys_file(s) if container else ""
-    found = None if a.claude_only or statuses.get("host-home") == "failed" else check_environment(keys_path=keys)
+    found = None if a.claude_only else check_environment(keys_path=keys)
     print("\n[petra-bootstrap] %s\n\n%s" % (summary(results), next_steps(s, statuses, found, claude_only=a.claude_only)),
           flush=True)
     return 1 if "failed" in statuses.values() else 0
