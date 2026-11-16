@@ -90,6 +90,7 @@ Petra 像 GEAK 一样，以 root 身份运行在 ROCm 容器里：Claude Code、
 - **LLM key（必填）。** 写的是 AMD LLM 网关 key 时，第 3 步会让 Claude Code 走这个网关（`https://llm-api.amd.com/Unified`，key 放在 `Ocp-Apim-Subscription-Key` 请求头里），网关按 Claude 模型的常用名字提供服务。不在 AMD 内部时，改写成 `export ANTHROPIC_API_KEY=sk-ant-...`，或者其他网关（`ANTHROPIC_BASE_URL` 加上 `ANTHROPIC_AUTH_TOKEN` 或 `ANTHROPIC_CUSTOM_HEADERS`）。用 Claude 订阅时，在任何有 Claude Code 和浏览器的地方运行 `claude setup-token`，写入 `export CLAUDE_CODE_OAUTH_TOKEN=<token>`；或者不写 key，在每个新容器首次启动时登录（第 4 步）。
 - **GitHub token（强烈建议）。** scan 和 issue 运行要通过 GitHub API 读取 issue、PR 和 CI 跟踪记录。没有 token 时，GitHub 对每个 IP 地址每小时只允许 60 次请求、每分钟 10 次搜索，同一出口 IP 下的所有人共用这个额度，扫描会非常慢，还可能中途停下；有 token 时每小时 5000 次。只读权限就够了：在 github.com 上进入 Settings → Developer settings → Personal access tokens → Fine-grained tokens，权限选 *Public repositories (read-only)*（不勾选任何权限的 classic token 也可以）。容器里的每个 agent 都能读到 `~/.petra_env` 里的内容，所以不要把你日常用来 push 的 token 放进去。
 - **Petra 仓库 token（可选）。** 只用于 curator 的知识更新：从 `petra/knowledge/<run>` 分支向 main 提一个 PR，由你审阅合并。这需要一个只对这个仓库有效的 token，这样它没法往别处写：fine-grained token，*Only select repositories* 选 `At1a8/Petra`，*Repository permissions* 里 *Contents* 和 *Pull requests* 都选 *Read and write*，然后以 `export PETRA_REPO_TOKEN=<token>` 写进 `~/.petra_env`。Petra 只 push `petra/` 开头的分支；在 GitHub 上给 main 开分支保护（要求通过 PR 合并），这个 token 就也改不了 main。没有它时，知识更新只留在容器的 checkout 里，报告会给出提交它们的命令。
+- **Git 身份（建议设置）。** 容器里没有你的 home，也就没有你的 git 配置：Petra 在那里的提交作者会是 `root@<本机主机名>`。加上 `export PETRA_GIT_NAME="<你的名字>"` 和 `export PETRA_GIT_EMAIL=<你的邮箱>`，第 3 步会把它们设给 root。
 
 ### 2. 启动容器（宿主机）
 
@@ -122,6 +123,7 @@ claude --version    # 装在这个容器里的 Claude Code
 | `claude` | 用 Claude Code 的原生安装器装在容器里（`~/.local/bin/claude`，并加到 `PATH`）：装的是最新版本，下载量较大（网速慢时几分钟没有输出，是在下载）。容器存在期间一直保持这个版本（`DISABLE_AUTOUPDATER=1`）；新容器会装最新的 |
 | Claude Code 配置 | 在 root 的 `~/.claude.json` 里预先回答首次启动的问题，和 GEAK 的 CI、Hyperloom 的做法一样：完成引导、信任 `/workspace/Petra`、接受 bypass permissions 模式，用 `ANTHROPIC_API_KEY` 时还批准使用这个 key。文件里的其他内容保留；和 root 的其他东西一样，它随容器删除 |
 | git | 信任宿主机挂载目录里的 checkout，它们属于你而不是 root（`safe.directory '*'`） |
+| git 身份 | root 以 key 文件（或环境变量）里的 `PETRA_GIT_NAME <PETRA_GIT_EMAIL>` 提交，所以不会出现作者为 `root@<本机主机名>` 的提交；两者都没有时，它会提示，不会自己编一个 |
 | shell | 在 root 的 `~/.bashrc` 里设置 `PYTHONDONTWRITEBYTECODE=1`（宿主机挂载目录里的 checkout 不会出现 root 所有的 `__pycache__`）和 `DISABLE_AUTOUPDATER=1`，并加载 key 文件，之后才放进去的也会加载；设置了 `LLM_GATEWAY_KEY` 且没有 `ANTHROPIC_BASE_URL` 时，让 Claude Code 走 AMD LLM 网关 |
 | 框架 | 镜像里的 `/sgl-workspace/sglang` 如果还是镜像留下的样子（detached 在构建时的 commit 上，打包文件被改成了 ROCm 版），就把它切到 main：丢弃这些打包改动，然后 `git checkout main`、`git pull`。之后不要在这里 `pip install -e`：这时它的 `pyproject.toml` 是上游默认的版本，会装进 CUDA 的包。已经在某个分支上、或者有其他改动的 checkout 原样保留；用 `--framework-dir` 可以改用宿主机上的 checkout（已有的原样使用，缺失时带完整历史克隆） |
 | 检查 | GPU、sglang、API 访问、`GITHUB_TOKEN`，key 文件里设置的也算（只检测） |
@@ -206,6 +208,7 @@ docker cp <name>:/workspace/Petra/exp/<run> ~/
 | `PETRA_REPO_URL`、`PETRA_REF` | bootstrap | `https://github.com/At1a8/Petra.git`，它的默认分支 |
 | `CLAUDE_VERSION`、`CLAUDE_BIN_DIR` | bootstrap | `latest`，`~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code、bootstrap | 不设置（`~`）：Claude Code 自己的变量，指它的配置所在的目录；bootstrap 把首次启动的回答写在那里 |
+| `PETRA_GIT_NAME`、`PETRA_GIT_EMAIL` | `~/.petra_env`、bootstrap | 不设置；容器里 root 提交时用的身份 |
 | `PETRA_REPO_TOKEN` | `~/.petra_env`、`scripts/propose_knowledge.py` | 不设置；只对 Petra 自己仓库有 Contents、Pull requests 读写权限的 fine-grained token，curator 用它提 PR |
 | `LLM_GATEWAY_KEY` | `~/.petra_env`、容器的 shell 配置 | 不设置；设置后 Claude Code 走 AMD LLM 网关，除非 `ANTHROPIC_BASE_URL` 指定了别的地址 |
 | `PETRA_FRAMEWORK_DIR`、`PETRA_FRAMEWORK_REPO` | bootstrap：`--framework-dir`、`--framework-repo` | 镜像里的 `/sgl-workspace/sglang`；sglang |

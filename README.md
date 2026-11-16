@@ -164,6 +164,9 @@ its own `/root/.petra_env`).
   `petra/` branches; protect main on GitHub (require a pull request) so the token cannot change it
   either. Without it the knowledge changes stay in the container's checkout, and the report gives the
   command that proposes them.
+- **Git identity (recommended).** The container carries no home, so no git config of yours: commits
+  Petra makes there would read `root@<this host>`. Add `export PETRA_GIT_NAME="<your name>"` and
+  `export PETRA_GIT_EMAIL=<your email>`; step 3 gives them to root.
 
 ### 2. Start a container (host)
 
@@ -225,6 +228,7 @@ claude --version    # installed in this container
 | `claude` | installed in the container with Claude Code's native installer (`~/.local/bin/claude`, put on `PATH`): the newest version, a large download (minutes without output on a slow link are the download). It stays at that version for the container's life (`DISABLE_AUTOUPDATER=1`); a new container gets the newest |
 | Claude Code config | root's `~/.claude.json` answers the first start's questions ahead, as GEAK's CI and Hyperloom do: the onboarding, trust in `/workspace/Petra`, bypass permissions mode and, for an `ANTHROPIC_API_KEY`, using it. The rest of the file is kept; like everything of root's, it goes with the container |
 | git | trusts checkouts on host mounts, which belong to you, not root (`safe.directory '*'`) |
+| git identity | root commits as `PETRA_GIT_NAME <PETRA_GIT_EMAIL>` from the keys file (or the environment), so no commit reads `root@<this host>`; with neither it says so and sets nothing |
 | shell | root's `~/.bashrc` gets `PYTHONDONTWRITEBYTECODE=1` (no root-owned `__pycache__` in checkouts on host mounts) and `DISABLE_AUTOUPDATER=1`, and loads the keys file, also one put in place later; with `LLM_GATEWAY_KEY` and no `ANTHROPIC_BASE_URL`, it points Claude Code at the AMD LLM gateway |
 | framework | the image's `/sgl-workspace/sglang`, still as the image left it (detached at the commit it built, its packaging files rewritten for ROCm), is put on main: the packaging changes discarded, then `git checkout main` and `git pull`. Never `pip install -e` from it afterwards: its `pyproject.toml` is then upstream's, which would pull CUDA packages. A checkout already on a branch, or with other changes, is left as it is; `--framework-dir` names a host checkout instead (used as it is, or cloned with its whole history when missing) |
 | checks | GPUs, sglang, API access, `GITHUB_TOKEN`, counting what the keys file sets (detect only) |
@@ -345,6 +349,7 @@ step 3 the GEAK way, cloning Petra to `/workspace/Petra` (pip shows the output o
 | `PETRA_REPO_URL`, `PETRA_REF` | bootstrap | `https://github.com/At1a8/Petra.git`, its default branch |
 | `CLAUDE_VERSION`, `CLAUDE_BIN_DIR` | bootstrap | `latest`, `~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code, bootstrap | unset (`~`): Claude Code's own, where its config lives; the bootstrap writes the first-start answers there |
+| `PETRA_GIT_NAME`, `PETRA_GIT_EMAIL` | `~/.petra_env`, bootstrap | unset; the identity root commits with in the container |
 | `PETRA_REPO_TOKEN` | `~/.petra_env`, `scripts/propose_knowledge.py` | unset; a fine-grained token for Petra's own repository alone (Contents, Pull requests: read and write), with which the curator opens its pull request |
 | `LLM_GATEWAY_KEY` | `~/.petra_env`, the container's shell settings | unset; set, Claude Code runs on the AMD LLM gateway unless `ANTHROPIC_BASE_URL` names another |
 | `PETRA_FRAMEWORK_DIR`, `PETRA_FRAMEWORK_REPO` | bootstrap: `--framework-dir`, `--framework-repo` | the image's `/sgl-workspace/sglang`; sglang |
