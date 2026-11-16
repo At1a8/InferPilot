@@ -6,7 +6,41 @@ merged with main `410e64bb84`). Two lanes on one 8-GPU node benched at the same 
 (`../scripts/lockstep_ab.sh`), arms rotated between the lanes. "Wn/t" = FLy window n, entropy
 threshold t. Measured 2026-11-13 to 2026-11-15.
 
-## Accuracy
+## Three-round sweep of W2 and W3 (the numbers to use)
+
+2026-11-15/16: every W2 / W3 setting at thresholds 0.2–0.7 ran 8k/1k and then the three accuracy sets on
+the same server, three rounds, with a baseline on each lane in every round (42 runs, two lanes in
+lockstep, settings rotated between the lanes). The first seven columns are this sweep alone, against its
+6 baselines (8k changes are the mean over c32 / 64 / 128; accept length is the mean over the three
+accuracy sets). The last two pool every campaign: 8k with the earlier three-round benchmark (and the
+W2/0.7 repeat), each run against its own campaign's baselines; simple_qa with every accuracy run,
+against all 14 baseline runs (mean 0.4443).
+
+| Setting | 8k total tok/s | TPOT mean | gsm8k | gpqa_diamond | simple_qa | accept length | pooled 8k (runs) | pooled simple_qa (runs) |
+|---|---|---|---|---|---|---|---|---|
+| baseline (6 runs) | 35,622 / 45,747 / 54,589 | 6.89 / 10.77 / 18.13 ms | 0.9722 | 0.9066 | 0.4423 | 3.79 / 3.15 / 3.05 | - | 0.4443 (14) |
+| W2/0.2 | +3.2% | −2.8% | −0.1pp | −0.6pp | −1.9pp | +11.9% | +3.7% (6) | −2.0pp (5) |
+| W2/0.3 | +2.6% | −2.5% | −0.2pp | +0.8pp | −1.2pp | +11.6% | +3.0% (6) | −1.6pp (5) |
+| W2/0.4 | +2.8% | −2.1% | +0.1pp | −0.1pp | −0.9pp | +10.3% | +3.2% (6) | −1.2pp (4) |
+| **W2/0.5 (default)** | +2.3% | −2.1% | +0.2pp | +0.1pp | −0.6pp | +9.1% | +2.4% (6) | −0.8pp (5) |
+| W2/0.6 | +1.9% | −1.5% | −0.0pp | −0.4pp | −0.3pp | +7.7% | +2.5% (6) | −0.6pp (4) |
+| W2/0.7 | +1.5% | −1.0% | −0.1pp | +0.2pp | −0.2pp | +5.7% | +1.9% (9) | −0.4pp (8) |
+| W3/0.2 | +1.3% | −1.0% | −0.1pp | +0.1pp | −0.9pp | +6.0% | +1.7% (6) | −1.2pp (4) |
+| W3/0.3 | +0.9% | −0.7% | +0.2pp | +0.9pp | −0.6pp | +5.6% | +1.4% (6) | −0.8pp (5) |
+| W3/0.4 | +0.1% | −0.3% | −0.0pp | +0.6pp | −0.3pp | +4.9% | +0.9% (6) | −0.6pp (4) |
+| W3/0.5 | +1.0% | −0.6% | −0.0pp | −0.1pp | +0.0pp | +4.2% | +1.2% (6) | −0.6pp (5) |
+| W3/0.6 | +1.4% | −0.8% | +0.2pp | +1.1pp | −0.3pp | +4.5% | +1.6% (6) | −0.3pp (4) |
+| W3/0.7 | −0.0% | −0.0% | +0.2pp | +0.1pp | −0.2pp | +2.5% | −0.1% (6) | −0.3pp (4) |
+
+- The baseline row gives total tok/s and TPOT mean at c32 / c64 / c128, and accept length on gsm8k /
+  gpqa_diamond / simple_qa. TPOT median stayed within ±1.1% for every setting.
+- The third round's two baselines scored simple_qa 0.4385 and 0.4348, the lowest of all 14 baseline runs
+  (the others 0.4431–0.4538), while the FLy runs of that round were not low: this sweep's own simple_qa
+  column understates the losses by about 0.3pp, and the pooled column is the one to read.
+- The same setting's 8k gain moved by about a point between campaigns (W2/0.7: +2.8%, +1.5%, +1.4%),
+  more than either campaign's spread: read the pooled column as the estimate and quote gains as ranges.
+
+## Accuracy, earlier campaigns (1–2 runs per setting; W1 and W4 included)
 
 evalscope, full sets: gsm8k (1319), gpqa_diamond (198), simple_qa (4326, LLM judge); thinking on,
 `reasoning_effort` max, `max_tokens` 102400, the server's default sampling (T = 1.0, top_p = 1.0).
@@ -38,7 +72,7 @@ Noise: the 5 baseline runs span simple_qa 0.4434–0.4475 over two days; two run
 setting differed by up to 0.9pp (W3/0.5: 0.4378 / 0.4290), so a single run is good to about ±0.5pp.
 gpqa_diamond has 198 questions: ±1.7pp is three questions.
 
-## Throughput, 8k/1k
+## Throughput, 8k/1k, earlier campaign
 
 Random prompts of exactly 8000 input / 1000 output tokens (`ignore_eos`), T = 1.0, concurrency 32 / 64 /
 128 with 4x prompts and 2x warm-up requests (`../scripts/bench_random.sh`). Each cell: the mean over the

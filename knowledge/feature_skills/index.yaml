@@ -19,7 +19,7 @@ skills:
   file: fly-dspark/SKILL.md
   match:
     framework: sglang
-    framework_ref: 39a6484176
+    framework_ref: 4e85e85498
     feature: fly_speculative_verification
     model_arch: [deepseek_v4]      # DeepSeek-V4.1-Flash with its bundled DSPARK block drafter (gamma 5)
     platforms: [rocm-gfx950]

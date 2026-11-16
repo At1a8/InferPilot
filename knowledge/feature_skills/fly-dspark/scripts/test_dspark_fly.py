@@ -537,13 +537,14 @@ class TestResolveFlyConfig(CustomTestCase):
         resolve = lambda gamma, **kw: resolve_fly_config(
             gamma=gamma,
             window_size=kw.get("window_size"),
-            entropy_threshold=kw.get("entropy_threshold", 0.3),
+            entropy_threshold=kw.get("entropy_threshold", 0.5),
             entropy_top_k=kw.get("entropy_top_k", 3),
         )
-        self.assertEqual(resolve(5).window_size, 4)
-        self.assertEqual(resolve(15).window_size, 6)
-        self.assertEqual(resolve(5, window_size=2).window_size, 2)
-        self.assertEqual(resolve(MAX_FLY_GAMMA).window_size, 6)
+        self.assertEqual(resolve(2).window_size, 1)
+        self.assertEqual(resolve(5).window_size, 2)
+        self.assertEqual(resolve(15).window_size, 2)
+        self.assertEqual(resolve(5, window_size=4).window_size, 4)
+        self.assertEqual(resolve(MAX_FLY_GAMMA).window_size, 2)
         top_k = resolve(5, entropy_top_k=MAX_FLY_ENTROPY_TOP_K).entropy_top_k
         self.assertEqual(top_k, MAX_FLY_ENTROPY_TOP_K)
         self.assertEqual(resolve(5, entropy_threshold=1.5).entropy_threshold, 1.5)

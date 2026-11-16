@@ -5,29 +5,28 @@ kind: feature_skill
 authors: [At1a8]
 match:
   framework: sglang
-  framework_ref: 39a6484176          # PR branch merged with main 56fa7ca6e7 (Nov 2026); measured on ed3831842a (main 410e64bb84)
+  framework_ref: 4e85e85498          # PR branch with the W2/0.5 defaults (Nov 2026); sweeps measured on ed3831842a (main 410e64bb84)
   feature: fly_speculative_verification
   model_arch: [deepseek_v4]          # DeepSeek-V4.1-Flash with its bundled DSPARK block drafter
   platforms: [rocm-gfx950]
 depends_on: ["vllm-project/vllm#53987", "vllm-project/vllm#66593"]   # FLy in vLLM; normalized entropy gate
 reference_pr: "sgl-project/sglang#50238"
 expects:
-  accuracy: "lossy by design: gsm8k and gpqa_diamond within noise; simple_qa loss grows with the deferral rate (W2/0.7 -0.6pp over 5 runs, W2/0.3 -1.9pp)"
+  accuracy: "lossy by design: gsm8k and gpqa_diamond within noise; simple_qa loss grows with the deferral rate (default W2/0.5 -0.8pp, W2/0.7 -0.4pp, W2/0.3 -1.6pp, pooled)"
   long_context: "not claimed: FLy changes only the accept decision (G3 not run)"
   stability: "no crash or failed launch over every sweep server (G4 as a dedicated stress test not run)"
-  perf: "8k/1k total tok/s +2.5..4% for W2, accept length +6..12% on the accuracy datasets; 100k/1k unchanged (prefill-bound)"
+  perf: "8k/1k total tok/s +1.9..3.7% for W2 (default W2/0.5 +2.4%), accept length +6..12% on the accuracy datasets; 100k/1k unchanged (prefill-bound)"
 validation:
   status: validated                  # for the gates claimed below: G0, G1, G2, G5
-  last_verified: "2026-11-15"
-  framework_commit: "ed3831842a (branch fangyuan/dspark_fly merged with main 410e64bb84); PR head 39a6484176"
+  last_verified: "2026-11-16"
+  framework_commit: "sweeps on ed3831842a (branch fangyuan/dspark_fly merged with main 410e64bb84); defaults and CI on 4e85e85498"
   model: DeepSeek-V4.1-Flash
   gpu: "gfx950 x4 (TP4/EP4); two such lanes on one 8-GPU node"
   measured:
     unit: "123 passed + 33 subtests: scripts/test_dspark_fly.py plus 7 DSPARK accept suites, on the merged tree"
-    ci_gsm8k: "0.9674 at accept length 4.53 (threshold 0.91), test_deepseek_v41_flash_fly_eval_mi35x.py, W2/0.3"
-    accuracy_w2_t0.7: "gsm8k 0.9725 / gpqa_diamond 0.9212 / simple_qa 0.4397 (5 runs) vs baseline 0.9708 / 0.9103 / 0.4458 (8 runs): simple_qa -0.61pp (s.e. 0.17pp; every W2/0.7 run below every baseline run)"
-    accept_w2_t0.7: "+5.9% averaged over gsm8k, gpqa_diamond and simple_qa (5 runs)"
-    perf_w2_t0.7: "8k/1k total tok/s +2.1% over 6 runs in two campaigns (campaign means +2.8% and +1.4%, single runs +0.5..+3.1), TPOT mean -1.5%"
+    ci_gsm8k: "0.9682 at accept length 4.45 with the defaults (W2/0.5), threshold 0.91, test_deepseek_v41_flash_fly_eval_mi35x.py; earlier at W2/0.3: 0.9674 / 0.9659"
+    default_w2_t0.5: "8k/1k total tok/s +2.4% (6 runs, two campaigns), TPOT mean -2.1%; accept length +9.1% on the three accuracy sets; simple_qa -0.8pp (5 runs vs 14 baselines); gsm8k and gpqa_diamond unchanged"
+    w2_t0.7: "8k/1k +1.9% (9 runs, three campaigns); accept length +5.7%; simple_qa -0.4pp (8 runs, s.e. 0.15pp)"
     perf_100k: "every configuration within +-0.6% total tok/s at 100k/1k (single runs)"
   artifact: "sglang PR #50238, branch fangyuan/dspark_fly; tables in references/results.md"
 role: advisory_prior
@@ -85,19 +84,20 @@ with DSpark at K = 7 among them), its V1 evaluation the default window 6 at K = 
 | the target row on one device | No: the shard accept keeps per-rank statistics | p(x), q(x) merged from the ranks' statistics; every rank holds the whole target row for the entropy, so the ranks agree |
 | every row verifies K drafts | No: ragged verify | the window must lie inside the row's `verify_lens - 1` drafts |
 | CUDA | No: ROCm only (the request) | the hook rejects other platforms; the worker builds the config only under `is_hip()`; split and shard accepts are already HIP-only |
-| K large (V1: 15 / 25) | No: gamma = 5 | the default window min(6, gamma - 1) = 4 lets only the first draft be deferred: FLy is nearly off at vLLM's default here |
+| K large (V1: 15 / 25) | No: gamma = 5 | vLLM's default window min(6, gamma - 1) = 4 lets only the first draft be deferred, so FLy is nearly off there; this port defaults to window min(2, gamma - 1) and threshold 0.5 |
 
 ## Design as built
 
-1. **Flags.** `--speculative-use-fly`, `--speculative-fly-window-size`, `--speculative-fly-entropy-threshold`
-   (default 0.3), `--speculative-fly-entropy-top-k` (default 3) in `srt/arg_groups/fields/spec.py`,
-   appended at the end of `srt/arg_groups/field_order.py`.
+1. **Flags.** `--speculative-use-fly`, `--speculative-fly-window-size` (unset: min(2, gamma - 1)),
+   `--speculative-fly-entropy-threshold` (default 0.5), `--speculative-fly-entropy-top-k` (default 3)
+   in `srt/arg_groups/fields/spec.py`, appended at the end of `srt/arg_groups/field_order.py`. The
+   defaults are the sweep's balanced setting (W2/0.5, below), not vLLM's (min(6, K - 1), 0.3).
 2. **Startup validation** (`srt/arg_groups/speculative_hook.py`): DSPARK only; ROCm only; not with
    `--speculative-use-block-verification`. `_handle_dspark` resolves the config with
    gamma = num_draft_tokens - 1, declares the resolved window, and logs a "FLy verification is lossy"
    warning that prints the `FlyConfig`.
 3. **`FlyConfig` / `resolve_fly_config`** (`srt/speculative/fly_config.py`): 2 <= gamma <= 31 (one
-   accept bit per draft in an int32); 1 <= window < gamma, default min(6, gamma - 1); 1 <= top-k <= 16
+   accept bit per draft in an int32); 1 <= window < gamma, default min(2, gamma - 1); 1 <= top-k <= 16
    (the Triton entropy unrolls the top-k); threshold >= 0, NaN rejected, no upper bound (as vLLM).
 4. **Worker** (`dspark_worker_v2.py`): `self._fly` is built only when `is_hip()` and the flag is on,
    and passed to `DsparkVerifyEpilogue(fly=...)` and `TargetVerifyExecutor(fly=...)`; the sampling
@@ -136,7 +136,7 @@ with DSpark at K = 7 among them), its V1 evaluation the default window 6 at K = 
 | 3 | Triton pre-passes | `kernels/ops/speculative/fly.py` (Triton) | `TestFlyTritonParity`, `test_triton_prepass_matches_torch` |
 | 4 | accept integration | `dspark/dspark_accept.py`, `dspark/dspark_accept_split.py`, `dspark/sharded_accept_hip.py` | `test_split_accept_matches_chain_rule`, `test_shard_accept_matches_chain_rule`; DSPARK accept suites unchanged |
 | 5 | worker / verify plumbing | `dspark_worker_v2.py`, `dspark_verify.py`, `dspark_sampling_accept_graph.py`; test stubs in `test/registered/unit/spec/test_spec_registry.py`, `test/registered/unit/speculative/test_dspark_engram_commit_in_graph.py` | the server logs `FlyConfig(...)`; accept length rises; the two stub tests pass |
-| 6 | CI accuracy test | `test/registered/amd/accuracy/mi35x/test_deepseek_v41_flash_fly_eval_mi35x.py` (nightly suite `nightly-amd-4-gpu-mi35x-deepseek-v41-flash`) | gsm8k 0.9659 / 0.9674 on two runs; threshold 0.91 |
+| 6 | CI accuracy test | `test/registered/amd/accuracy/mi35x/test_deepseek_v41_flash_fly_eval_mi35x.py` (nightly suite `nightly-amd-4-gpu-mi35x-deepseek-v41-flash`) | gsm8k 0.9682 at the defaults (0.9659 / 0.9674 earlier at W2/0.3); threshold 0.91 |
 
 ## Launch configuration (as validated)
 
@@ -150,13 +150,15 @@ sglang serve --trust-remote-code --model-path <model_dir>/DeepSeek-V4.1-Flash --
   --enforce-shared-experts-fusion --fp8-gemm-backend aiter --enable-decoder-swa-bounded-replay \
   --cuda-graph-max-bs-decode 128 --max-running-requests 128 --cuda-graph-backend-prefill disabled \
   --reasoning-parser auto --tool-call-parser auto \
-  --speculative-use-fly --speculative-fly-window-size 2 --speculative-fly-entropy-threshold 0.7
+  --speculative-use-fly
 ```
 
-- Startup log to check: `FLy verification is lossy ... (FlyConfig(window_size=2, entropy_threshold=0.7, entropy_top_k=3))`;
+- `--speculative-use-fly` alone runs the defaults (window 2 at this block size, threshold 0.5, top-k 3);
+  add `--speculative-fly-window-size` / `--speculative-fly-entropy-threshold` for another setting.
+- Startup log to check: `FLy verification is lossy ... (FlyConfig(window_size=2, entropy_threshold=0.5, entropy_top_k=3))`;
   without it the server ran standard verification.
-- The CI test uses its own launch (mem fraction 0.8, 256 running requests) with W2/0.3, the setting
-  vLLM evaluated.
+- The CI test uses its own launch (mem fraction 0.8, 256 running requests), FLy at its defaults, and
+  checks the resolved window and threshold in `/server_info`.
 
 ## Validation recipe
 
@@ -174,41 +176,41 @@ sglang serve --trust-remote-code --model-path <model_dir>/DeepSeek-V4.1-Flash --
 
 ## Choosing the window and the threshold (gamma = 5)
 
-Accuracy is the mean of the runs against the 5-run baseline mean; accept length is the mean change
-over the three datasets; 8k is the mean change over 3 runs x c32/64/128 (W1 and W4: one sweep run).
+Pooled over every campaign: simple_qa against all 14 baseline runs (mean 0.4443); 8k/1k as the mean
+change over c32 / 64 / 128, each run against its own campaign's baselines; accept length from the
+three-round sweep, the mean change over the three accuracy sets. W1 and W4: one earlier run each.
 
-| Setting | simple_qa | accept length | 8k/1k total tok/s |
+| Setting | simple_qa (runs) | accept length | 8k/1k total tok/s (runs) |
 |---|---|---|---|
-| W1/0.3 | −3.0pp | +21.7% | +8.1% |
-| W1/0.5 | −3.0pp | +17.3% | +7.5% |
-| W2/0.2 | −1.9pp | +12.3% | +4.1% |
-| W2/0.3 (vLLM's evaluation) | −1.9pp | +10.9% | +3.4% |
-| W2/0.5 | −0.9pp | +9.7% | +2.5% |
-| **W2/0.7** | **−0.4pp** (all 5 runs: −0.6pp) | **+6.0%** | **+2.8%** (all 6 runs: +2.1%) |
-| W3/0.3 | −0.9pp | +6.1% | +1.8% |
-| W3/0.7 | +0.0pp | +2.4% | −0.2% |
-| W4/0.3 (vLLM's default at gamma 5) | +0.7pp | +2.1% | +0.1% |
+| W1/0.3 | −2.9pp (1) | +21.7% | +8.1% (1) |
+| W1/0.5 | −2.9pp (1) | +17.3% | +7.5% (1) |
+| W2/0.2 | −2.0pp (5) | +11.9% | +3.7% (6) |
+| W2/0.3 (vLLM's evaluation) | −1.6pp (5) | +11.6% | +3.0% (6) |
+| W2/0.4 | −1.2pp (4) | +10.3% | +3.2% (6) |
+| **W2/0.5 (the default)** | **−0.8pp (5)** | **+9.1%** | **+2.4% (6)** |
+| W2/0.6 | −0.6pp (4) | +7.7% | +2.5% (6) |
+| W2/0.7 | −0.4pp (8) | +5.7% | +1.9% (9) |
+| W3/0.3 | −0.8pp (5) | +5.6% | +1.4% (6) |
+| W3/0.7 | −0.3pp (4) | +2.5% | −0.1% (6) |
+| W4/0.3 (vLLM's default at gamma 5) | +0.8pp (1) | +2.1% | +0.1% (1) |
 
-- The window decides how much FLy does; the threshold decides what it costs. Within W2, 8k throughput
-  drops 1.3 points from threshold 0.2 to 0.7 (+4.1% to +2.8%) while the simple_qa loss shrinks from
-  1.9 to 0.4 points; between 0.5 and 0.7 the throughput differences are within the noise. W3 is never
-  better than W2 at an equal cost.
-- gsm8k stayed within ±0.4pp and gpqa_diamond within its noise (±2pp) for every setting: only the
-  recall-heavy set shows the loss.
-- W2/0.7 was repeated (3 more rounds of both tests). Over 5 accuracy runs against 8 baselines its
-  simple_qa loss is −0.6pp (standard error 0.17pp; every W2/0.7 run scored below every baseline run);
-  over 6 benchmark runs in two campaigns its 8k gain is +2.1% (campaign means +2.8% and +1.4%); the
-  accept-length gain held at +5.9%.
-- Recommended: **W2/0.7** — about +1.5 to +3% 8k throughput and +6% accept length for a small but real
-  simple_qa loss (−0.6pp), gsm8k and gpqa unchanged. The settings without a measurable loss (W3/0.6,
-  W3/0.7, W4) gain at most +1.7%. More speed at about 1pp of simple_qa: W2/0.6 (+3.1%). Full tables,
-  W1–W4 at thresholds 0.2–0.7 and the repeat: `references/results.md`.
+- The window decides how much FLy does; the threshold decides what it costs. Within W2, from threshold
+  0.2 to 0.7 the 8k gain falls from +3.7% to +1.9% while the simple_qa loss shrinks from 2.0 to 0.4
+  points. W3 is never better than W2 at an equal cost; W3 settings without a measurable loss barely
+  gain.
+- gsm8k stayed within ±0.2pp and gpqa_diamond within its noise for every W2 / W3 setting in the
+  three-round sweep: only the recall-heavy set shows the loss.
+- **The default is W2/0.5**, the balanced point: +2.4% 8k throughput, +9% accept length, simple_qa
+  −0.8pp. Accuracy first: W2/0.7 (+1.9%, −0.4pp over 8 runs, standard error 0.15pp). Speed first:
+  W2/0.2–0.4 (+3.0..3.7%, −1.2..−2.0pp).
+- The same setting's 8k gain moved by about a point between campaigns (W2/0.7: +2.8%, +1.5%, +1.4%):
+  quote gains as ranges. Full tables, W1–W4 and the three-round sweep: `references/results.md`.
 
 ## Pitfalls
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| FLy on, accept length barely moves | the default window min(6, gamma - 1) = 4 at gamma 5 can defer only the first draft | use W2; W >= 3 buys little |
+| FLy on, accept length barely moves | vLLM's default window min(6, gamma - 1) = 4 at gamma 5 can defer only the first draft | the port defaults to min(2, gamma - 1); when copying vLLM settings, set W <= 2 explicitly |
 | gsm8k unchanged, simple_qa 2–3pp lower | FLy is lossy and recall shows it first | keep simple_qa (or another recall set) in G2; compare with >= 3 baseline runs |
 | a threshold copied from older results behaves differently | before #66593 the entropy was raw nats over the top-k probabilities, not renormalized and not divided by log(k) | use the normalized definition and re-measure |
 | FLy shows nothing at 100k/1k | total tok/s there is ~99% prefill | judge FLy on 8k/1k, TPOT mean and accept length |
@@ -245,7 +247,8 @@ over the three datasets; 8k is the mean change over 3 runs x c32/64/128 (W1 and 
   inside the accept); does it support ragged verify lengths.
 - How the vocabulary is sharded across TP ranks in the accept, and whether each rank can compute the
   full-row entropy.
-- Gamma and the default window it implies (min(6, gamma - 1)); the int32 accept-bit limit (31).
+- Gamma and the default window it implies (min(2, gamma - 1) here, min(6, gamma - 1) in vLLM); the
+  int32 accept-bit limit (31).
 - Graph-captured accept paths: the pre-pass must be graph-safe (no host sync, no data-dependent shapes).
 - The platform gate the PR must keep (here `is_hip()`), and the tests that build verify objects by hand.
 
@@ -273,7 +276,9 @@ Then redo WP 4–5 for the new paths and re-run G0, G1, G2 (with a recall set) a
 - vLLM PR #53987 (FLy), #66593 (normalized entropy, main commit 0f49f3a772); paper arXiv 2511.22972.
 - sglang PR #50238, branch `fangyuan/dspark_fly`: e75f1cd1b7 (FLy for DSPARK), 85eaf523f0 (format),
   62afa01bdf (normalized entropy, argument checks), 6b9b6f2b3a (CI test), 4cc1810cc0 (CI threshold),
-  ed3831842a / b018c58970 / 39a6484176 (merges of main), 6166b83214 (test stubs).
-- Measurements, DeepSeek-V4.1-Flash on gfx950, 2026-11-13 to 2026-11-15: a W/threshold sweep with
+  ed3831842a / b018c58970 / 39a6484176 (merges of main), 6166b83214 (test stubs), 4e85e85498 (defaults
+  W2/0.5).
+- Measurements, DeepSeek-V4.1-Flash on gfx950, 2026-11-13 to 2026-11-16: a W/threshold sweep with
   8k/1k, 100k/1k and accuracy for 11 settings; three rounds of 8k/1k for 12 W2/W3 settings; a second
-  accuracy run for those 12; a W2/0.7 repeat. Tables in `references/results.md`; logs stay with the runs.
+  accuracy run for those 12; a W2/0.7 repeat; three rounds of both 8k/1k and accuracy for the 12 W2/W3
+  settings. Tables in `references/results.md`; logs stay with the runs.
