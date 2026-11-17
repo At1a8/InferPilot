@@ -160,7 +160,9 @@ produced so far.
 - Any other status (`blocked`, `stopped`, `awaiting_design_review`, `triaged`, `not_reproduced`,
   `fixed_on_main`, `diagnosed`, `handed_off`, `dropped`, `queued`): write `RUN_DIR/run_report.md` with what was
   done, the evidence, where and why the run stopped, and the exact next step for a human (what to
-  review, approve, post or hand over).
+  review, approve, post or hand over). For `fixed_on_main`, say on which code it fails and on which it
+  passes, name the fix (`fixed_by`) when Bisect found one, and otherwise give the `bisect_fixed` run
+  that would.
 - Always list hand-offs with their status (`recorded`, `integrated`, `no_gain`, `failed`,
   `integration_failed`) and package paths. For kernel hand-offs that were only recorded, give the
   arguments that would run them later (`kernel_backend=geak` with `kernel_backend_dir`, or

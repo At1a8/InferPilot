@@ -1,7 +1,7 @@
 export const meta = {
   name: 'inferpilot',
   description: 'InferPilot: the framework agent for open-source LLM inference frameworks on AMD GPUs (sglang first). It turns one task (an upstream feature to bring to AMD, an AMD user issue, a red AMD CI job, a system-level performance gap) into a verified, reviewable pull request: correct first (independent unit gates, G0-G4 against a same-pattern baseline, an investigation loop with controls), then fast (equal-budget G5), within the community rules of knowledge/guardrails.md. mode=scan writes the day\'s report on the framework (the AMD CI on main, user issues by priority, upstream changes AMD needs to follow) and ranks the tasks in it, changing no code. InferPilot never pushes and never posts upstream: it prepares the branch, the PR body and the reply drafts for a human; the one thing it posts is the knowledge a run proved, as a pull request to its own repository for a human to merge; a scan\'s daily report is a local file for a human to share.',
-  whenToUse: 'Pass args.inferpilot_dir (absolute path of the InferPilot checkout, required) and the task, either as args.request (the user\'s words, any language; the Intake phase turns it into a task definition) or as the task-definition fields of templates/task_definition.md: args.mode (feature | issue | ci | perf | scan), args.task (the upstream PR or design, issue URL, CI job or tracker cluster, or performance goal), args.framework_dir (the framework checkout; for sglang the image\'s /sgl-workspace/sglang by default), args.model_path (required for feature and perf), args.workload (required for perf: the fixed benchmark every measurement uses), args.server_script (required for feature and perf: a script that starts the baseline server; InferPilot sets PORT, HIP_VISIBLE_DEVICES and PYTHONPATH, and EXTRA_ARGS carries the feature flags) and args.client_script (required for perf, and for a feature with a workload: runs the fixed workload against PORT and writes to OUT_DIR), args.goal (what done means), args.framework (default sglang), args.platform, args.gpu_ids, args.container, args.apply_prs (perf), args.sources, args.since, args.upstream_repos and args.rescan (scan: a report from the last 24 hours makes the run ask before scanning again), args.image (the image a task must run on; by default the newest daily one, and another stops Setup to ask) and args.image_ok, args.stop_after (a phase title), args.resume_from="implement" with args.run_dir (feature: continue after a human approved design.md), args.auto_approve_design (feature, default true: a design the architect flags, or L3 work, goes on to Implement and the report says no human approved it; false makes it wait at Design for a human; stop_after still stops), args.held_out, args.guards and args.sweep (performance checks beyond the workload and goal of the task, each off by default: a held-out operating point the gain must also hold at, guard workloads InferPilot picks, and points beyond those of the workload), args.kernel_backend (none | geak | command) with args.kernel_backend_dir (geak) or args.kernel_backend_command (command), args.kernel_budget. A definition that lacks something its mode needs returns status=needs_input with questions and starts nothing: answer them and run again with the same args plus args.answers ({"<field>": <value>}). Operator settings: args.exp_root, args.review_model (the reviewer\'s model, where the runtime takes one per call), args.max_fix_rounds, args.max_investigate_rounds, args.max_review_rounds, args.max_work_packages, args.agent_retries, args.agent_timeout_ms.',
+  whenToUse: 'Pass args.inferpilot_dir (absolute path of the InferPilot checkout, required) and the task, either as args.request (the user\'s words, any language; the Intake phase turns it into a task definition) or as the task-definition fields of templates/task_definition.md: args.mode (feature | issue | ci | perf | scan), args.task (the upstream PR or design, issue URL, CI job or tracker cluster, or performance goal), args.framework_dir (the framework checkout; for sglang the image\'s /sgl-workspace/sglang by default), args.model_path (required for feature and perf), args.workload (required for perf: the fixed benchmark every measurement uses), args.server_script (required for feature and perf: a script that starts the baseline server; InferPilot sets PORT, HIP_VISIBLE_DEVICES and PYTHONPATH, and EXTRA_ARGS carries the feature flags) and args.client_script (required for perf, and for a feature with a workload: runs the fixed workload against PORT and writes to OUT_DIR), args.goal (what done means), args.framework (default sglang), args.platform, args.gpu_ids, args.container, args.apply_prs (perf), args.sources, args.since, args.upstream_repos and args.rescan (scan: a report from the last 24 hours makes the run ask before scanning again), args.image (the image a task must run on; by default the newest daily one, and another stops Setup to ask) and args.image_ok, args.bisect_fixed (issue: when the reporter\'s code fails and main does not, find the commit that fixed it), args.stop_after (a phase title), args.resume_from="implement" with args.run_dir (feature: continue after a human approved design.md), args.auto_approve_design (feature, default true: a design the architect flags, or L3 work, goes on to Implement and the report says no human approved it; false makes it wait at Design for a human; stop_after still stops), args.held_out, args.guards and args.sweep (performance checks beyond the workload and goal of the task, each off by default: a held-out operating point the gain must also hold at, guard workloads InferPilot picks, and points beyond those of the workload), args.kernel_backend (none | geak | command) with args.kernel_backend_dir (geak) or args.kernel_backend_command (command), args.kernel_budget. A definition that lacks something its mode needs returns status=needs_input with questions and starts nothing: answer them and run again with the same args plus args.answers ({"<field>": <value>}). Operator settings: args.exp_root, args.review_model (the reviewer\'s model, where the runtime takes one per call), args.max_fix_rounds, args.max_investigate_rounds, args.max_review_rounds, args.max_work_packages, args.agent_retries, args.agent_timeout_ms.',
   phases: [
     { title: 'Intake', detail: 'intake: turn a request, or a definition with gaps, into a complete task definition; questions when something is missing' },
     { title: 'Setup', detail: 'director: run dir, the task\'s branch in the framework checkout, the server and client scripts, baseline (not in scan)' },
@@ -12,7 +12,7 @@ export const meta = {
     { title: 'Reproduce', detail: 'issue_triager: reproduce on the reporter configuration [issue]' },
     { title: 'Diagnose', detail: 'investigator: root cause and fix work packages [issue]' },
     { title: 'Classify', detail: 'ci_guardian: code regression / dependency bump / test bug / flaky / infrastructure [ci]' },
-    { title: 'Bisect', detail: 'ci_guardian: culprit commit, confirmation, fix work packages [ci]' },
+    { title: 'Bisect', detail: 'ci_guardian: culprit commit, confirmation, fix work packages [ci]; the commit that fixed it, when the reporter\'s code fails and main does not [issue, bisect_fixed]' },
     { title: 'Profile', detail: 'perf_engineer: trace metrics and the opportunity list [perf]' },
     { title: 'Plan', detail: 'architect: performance work packages, kernel hand-offs, PRs to apply [perf]' },
     { title: 'Implement', detail: 'implementer per work package, independent test_engineer unit + feature-off gate, rollback on failure' },
@@ -93,7 +93,7 @@ const TASK_KEYS = ['mode', 'task', 'goal', 'framework', 'framework_dir', 'model_
   'container', 'workload', 'server_script', 'client_script', 'apply_prs', 'sources', 'since', 'stop_after', 'resume_from', 'run_dir',
   'auto_approve_design', 'held_out', 'guards', 'sweep',
   'kernel_backend', 'kernel_backend_dir', 'kernel_backend_command', 'kernel_budget', 'rescan', 'upstream_repos',
-  'image', 'image_ok'];
+  'image', 'image_ok', 'bisect_fixed'];
 // '' is accepted for the enums so an undecided field costs no schema retry; pick() drops it.
 const TASK_DEF = S({
   mode: { type: 'string', enum: [...MODES, ''] },
@@ -269,6 +269,7 @@ const on = (v) => v === true || String(v).toLowerCase() === 'true';
 const HELD_OUT = on(A.held_out);
 const GUARDS = on(A.guards);
 const SWEEP = on(A.sweep);
+const BISECT_FIXED = on(A.bisect_fixed);
 const RESUME = String(A.resume_from || '').trim().toLowerCase();
 const EXP_ROOT = String(A.exp_root || `${INFERPILOT}/exp`).replace(/\/+$/, '');
 const KERNEL_BACKEND = String(A.kernel_backend || 'none').trim().toLowerCase();
@@ -466,7 +467,9 @@ const TRIAGE = S({
   triage_path: str,
   reply_draft_path: str,
 }, ['priority', 'category', 'action', 'triage_path']);
-const REPRO = S({ reproduced: bool, repro_cmd: str, perf_claim: str, evidence: str },
+// reproduced: on current main, the code a fix would change; reproduced_on_reporter: on the reporter's
+// image or commit, left out when that could not run here.
+const REPRO = S({ reproduced: bool, reproduced_on_reporter: bool, repro_cmd: str, perf_claim: str, evidence: str },
   ['reproduced', 'repro_cmd', 'evidence']);
 const DIAG = S({
   verdict: { type: 'string', enum: ['fix_needed', 'baseline_bug', 'not_amd_side', 'inconclusive'] },
@@ -483,6 +486,7 @@ const CLASSIFY = S({
   triage_path: str,
 }, ['failure_class', 'failing_test_cmd', 'evidence', 'triage_path']);
 const BISECT = S({ culprit: str, confirmed: bool, work_packages: WPS, evidence: str }, ['culprit', 'confirmed']);
+const BISECT_FIX = S({ fix_commit: str, confirmed: bool, evidence: str }, ['fix_commit', 'confirmed']);
 const PROFILE = S({
   analysis_path: str,
   path_ok: bool,
@@ -1156,8 +1160,26 @@ async function runIssue() {
     return finish('blocked', 'Reproduce');
   }
   C.repro_cmd = reproCmd;
-  note('Reproduce', rep.reproduced ? 'reproduced' : 'not_reproduced', rep.evidence);
-  if (!rep.reproduced) return finish(expectFixed ? 'fixed_on_main' : 'not_reproduced', 'Reproduce');
+  // The reporter's code fails where main passes: fixed in between, which "not reproduced" would hide.
+  const onReporterOnly = !rep.reproduced && rep.reproduced_on_reporter === true;
+  note('Reproduce', rep.reproduced ? 'reproduced' : onReporterOnly ? 'reproduced_on_reporter' : 'not_reproduced',
+    rep.evidence);
+  if (!rep.reproduced) {
+    if (!onReporterOnly || !BISECT_FIXED || stopHere('Reproduce')) {
+      return finish(expectFixed || onReporterOnly ? 'fixed_on_main' : 'not_reproduced', 'Reproduce');
+    }
+    enter('Bisect');
+    const bf = reproCmd ? await call('ci_guardian', 'bisect_fix', inputs(), BISECT_FIX) : null;
+    const fix = bf && bf.confirmed === true ? String(bf.fix_commit || '').trim() : '';
+    if (fix) {
+      C.fixed_by = R.fixed_by = fix;
+      note('Bisect', 'pass', `fixed by ${fix}${bf.evidence ? `: ${bf.evidence}` : ''}`);
+    } else {
+      note('Bisect', 'fail', !reproCmd ? 'no repro_cmd to bisect with'
+        : bf ? `fix ${bf.fix_commit || '?'} not confirmed` : 'no bisect result');
+    }
+    return finish('fixed_on_main', 'Bisect');
+  }
   // A performance issue is fixed when the reported number comes back; the reproduction states it.
   const runPerf = tri.category === 'performance';
   const issueClaim = runPerf ? String(rep.perf_claim || '').trim() : '';

@@ -60,6 +60,7 @@ const DEFAULTS = {
   'issue_triager:reproduce': () => ({ reproduced: true, repro_cmd: 'bash repro.sh', evidence: 'segfault 3/3' }),
   'ci_guardian:classify': () => ({ failure_class: 'code_regression', failing_test_cmd: 'pytest test_x.py', window: 'a..b', evidence: 'new regression since 10-21', triage_path: `${RUN}/ci_triage.md` }),
   'ci_guardian:bisect': () => ({ culprit: 'deadbeef', confirmed: true, work_packages: [WP('WP1')], evidence: 'fails at culprit, passes at parent' }),
+  'ci_guardian:bisect_fix': () => ({ fix_commit: 'feedface', confirmed: true, evidence: 'fails at parent, passes at fix' }),
   'scout:collect': () => ({ lock: 'acquired', run_dir: RUN, candidates_path: `${RUN}/candidates.json`, counts: { upstream: 3, issues: 32, ci: 76, hardware: 5 } }),
   'dispatcher:dispatch': () => ({ queue_path: `${RUN}/task_queue.md`, top: [{ rank: 1, task: 'GLM-5.3 DCP crash', type: 'bug', level: 'L1', priority: 'P0', source: 'issues' }], matrix_changes: 2 }),
   'kernel_liaison:package': (ins) => ({ task_dir: `${RUN}/kernel/${ins.handoff.id}/task`, mode: 'optimize', target_language: 'hip',
@@ -448,6 +449,36 @@ const scenarios = [
       'issue_triager:reproduce': (ins) => ({ reproduced: false, repro_cmd: 'bash repro.sh', evidence: `expect_fixed=${ins.expect_fixed}; clean 3/3` }),
     });
     check(r.result.status === 'fixed_on_main', `status ${r.result.status}`);
+  }],
+  ['issue: the reporter\'s code fails and main passes: fixed on main, not "not reproduced"', async () => {
+    const onReporter = { 'issue_triager:reproduce': () => ({ reproduced: false, reproduced_on_reporter: true, repro_cmd: 'bash repro.sh',
+      evidence: 'reporter commit 3/3 crash; main 6/6 pass' }) };
+    const r = await run({ mode: 'issue', task: 'i' }, onReporter);
+    check(r.result.status === 'fixed_on_main' && r.result.stopped_at === 'Reproduce', `status ${r.result.status} at ${r.result.stopped_at}`);
+    check(!r.keys.includes('investigator:diagnose') && !r.keys.includes('ci_guardian:bisect_fix'), 'no diagnosis, no bisect unless asked');
+    const neither = await run({ mode: 'issue', task: 'i' }, {
+      'issue_triager:reproduce': () => ({ reproduced: false, repro_cmd: 'bash repro.sh', evidence: 'main 6/6 pass; reporter image not run' }),
+    });
+    check(neither.result.status === 'not_reproduced', `without a reporter result: ${neither.result.status}`);
+
+    const bis = await run({ mode: 'issue', task: 'i', bisect_fixed: true }, {
+      ...onReporter,
+      'ci_guardian:bisect_fix': (ins) => ({ fix_commit: 'abc1234 (#44302)', confirmed: ins.repro_cmd === 'bash repro.sh',
+        evidence: 'fails at parent 3/3, passes at fix 3/3' }),
+    });
+    check(bis.result.status === 'fixed_on_main' && bis.result.fixed_by === 'abc1234 (#44302)', `bisect: ${bis.result.status} ${bis.result.fixed_by}`);
+    check(bis.phases.indexOf('Bisect') === bis.phases.indexOf('Reproduce') + 1 && !bis.phases.includes('Diagnose')
+      && bis.phases[bis.phases.length - 1] === 'Report', `phases ${bis.phases}`);
+    const rep = bis.calls.find((c) => c.key === 'director:report');
+    check(rep && rep.ins.fixed_by === 'abc1234 (#44302)', 'the report names the fix');
+    const unconfirmed = await run({ mode: 'issue', task: 'i', bisect_fixed: 'true' }, {
+      ...onReporter, 'ci_guardian:bisect_fix': () => ({ fix_commit: 'abc1234', confirmed: false }),
+    });
+    check(unconfirmed.result.status === 'fixed_on_main' && !unconfirmed.result.fixed_by
+      && unconfirmed.result.phases.some((p) => p.phase === 'Bisect' && p.verdict === 'fail'), 'an unconfirmed bisect names nothing');
+    const stopped = await run({ mode: 'issue', task: 'i', bisect_fixed: true, stop_after: 'Reproduce' }, onReporter);
+    check(stopped.result.status === 'fixed_on_main' && !stopped.keys.includes('ci_guardian:bisect_fix'),
+      `stop_after=Reproduce runs no bisect: ${stopped.result.status}`);
   }],
   ['issue: an existing fix PR is reproduced on main first and gated on that reproduction', async () => {
     const r = await run({ mode: 'issue', task: 'i' }, {
