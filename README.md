@@ -295,6 +295,20 @@ nothing and returns `status: needs_input` with one question per field. Answer th
 Claude Code runs `inferpilot.js` again with the same arguments plus `answers={"workload": ...}`.
 [Running it](#running-it) lists all arguments.
 
+**Without a terminal to type in** (an agent's shell, a job scheduler), keep the interactive session and
+run it in tmux. `claude -p "use inferpilot.js ..."` is no way around it: the Workflow tool runs
+`inferpilot.js` in the background, print mode answers within seconds and then ends the process, and the
+run dies with it, leaving its machine lock behind. [`scripts/run_in_tmux.sh`](scripts/run_in_tmux.sh)
+starts Claude Code in a tmux session, waits for its prompt and pastes the task from a file; it stops at a
+first-start question (`claude-config` did not answer it) or a login prompt, and says which:
+
+```bash
+command -v tmux >/dev/null || apt-get install -y tmux
+echo 'use /workspace/inferpilot/inferpilot.js with mode=scan, inferpilot_dir=/workspace/inferpilot' > /workspace/task.txt
+/workspace/inferpilot/scripts/run_in_tmux.sh /workspace/task.txt
+tmux capture-pane -p -t inferpilot | tail -40
+```
+
 ### 5. After a run (in the container)
 
 Every run that got past Setup has its directory in `/workspace/inferpilot/exp` (ignored by git), named
@@ -488,7 +502,7 @@ inferpilot/
 ├── templates/               # task_definition, feature_spec, design, experiment_ledger, validation_report,
 │                            # pr_body, issue_triage, ci_triage, perf_analysis, task_queue, acceptance
 ├── scripts/                 # task collection, audits, run_docker.sh, latest_image.py, run_lock.py,
-│                            # restore_owner.sh
+│                            # restore_owner.sh, run_in_tmux.sh
 ├── inferpilot/bootstrap.py  # setup step 3, in the container; safe to re-run
 ├── setup.py, pyproject.toml # packaging; setup.py runs the bootstrap when pip builds the wheel
 ├── tests/                   # dry run of inferpilot.js, unit tests of the scripts, the bootstrap, Claude Code's
