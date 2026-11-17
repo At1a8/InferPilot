@@ -37,7 +37,7 @@ written: take the current ones from AKLR.
 
 ## When to use
 
-A kernel gain — a GEAK kernel-lane result (`../../kernel_backends.md` §2), a KernelFusion overlay
+A kernel gain — a kernel back end's result (`../../kernel_backends.md` §2), a KernelFusion overlay
 fusion, a hand-written kernel — that could land in AKLR instead of in the framework or in AITER. The
 architect uses §Triage to decide where a kernel-level opportunity lands; the kernel liaison where an
 `improved` result goes; the implementer, verify engineer and PR engineer the rest. The task still

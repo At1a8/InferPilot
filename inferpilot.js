@@ -1,7 +1,7 @@
 export const meta = {
   name: 'inferpilot',
   description: 'InferPilot: the framework agent for open-source LLM inference frameworks on AMD GPUs (sglang first). It turns one task (an upstream feature to bring to AMD, an AMD user issue, a red AMD CI job, a system-level performance gap) into a verified, reviewable pull request: correct first (independent unit gates, G0-G4 against a same-pattern baseline, an investigation loop with controls), then fast (equal-budget G5), within the community rules of knowledge/guardrails.md. mode=scan writes the day\'s report on the framework (the AMD CI on main, user issues by priority, upstream changes AMD needs to follow) and ranks the tasks in it, changing no code. InferPilot never pushes and never posts upstream: it prepares the branch, the PR body and the reply drafts for a human; the one thing it posts is the knowledge a run proved, as a pull request to its own repository for a human to merge; a scan\'s daily report is a local file for a human to share.',
-  whenToUse: 'Pass args.inferpilot_dir (absolute path of the InferPilot checkout, required) and the task, either as args.request (the user\'s words, any language; the Intake phase turns it into a task definition) or as the task-definition fields of templates/task_definition.md: args.mode (feature | issue | ci | perf | scan), args.task (the upstream PR or design, issue URL, CI job or tracker cluster, or performance goal), args.framework_dir (the framework checkout; for sglang the image\'s /sgl-workspace/sglang by default), args.model_path (required for feature and perf), args.workload (required for perf: the fixed benchmark every measurement uses), args.server_script (required for feature and perf: a script that starts the baseline server; InferPilot sets PORT, HIP_VISIBLE_DEVICES and PYTHONPATH, and EXTRA_ARGS carries the feature flags) and args.client_script (required for perf, and for a feature with a workload: runs the fixed workload against PORT and writes to OUT_DIR), args.goal (what done means), args.framework (default sglang), args.platform, args.gpu_ids, args.container, args.apply_prs (perf), args.sources, args.since, args.upstream_repos and args.rescan (scan: a report from the last 24 hours makes the run ask before scanning again), args.image (the image a task must run on; by default the newest daily one, and another stops Setup to ask) and args.image_ok, args.bisect_fixed (issue: when the reporter\'s code fails and main does not, find the commit that fixed it), args.stop_after (a phase title), args.resume_from="implement" with args.run_dir (feature: continue after a human approved design.md), args.auto_approve_design (feature, default true: a design the architect flags, or L3 work, goes on to Implement and the report says no human approved it; false makes it wait at Design for a human; stop_after still stops), args.held_out, args.guards and args.sweep (performance checks beyond the workload and goal of the task, each off by default: a held-out operating point the gain must also hold at, guard workloads InferPilot picks, and points beyond those of the workload), args.kernel_backend (none | geak | command) with args.kernel_backend_dir (geak) or args.kernel_backend_command (command), args.kernel_budget. A definition that lacks something its mode needs returns status=needs_input with questions and starts nothing: answer them and run again with the same args plus args.answers ({"<field>": <value>}). Operator settings: args.exp_root, args.review_model (the reviewer\'s model, where the runtime takes one per call), args.max_fix_rounds, args.max_investigate_rounds, args.max_review_rounds, args.max_work_packages, args.agent_retries, args.agent_timeout_ms.',
+  whenToUse: 'Pass args.inferpilot_dir (absolute path of the InferPilot checkout, required) and the task, either as args.request (the user\'s words, any language; the Intake phase turns it into a task definition) or as the task-definition fields of templates/task_definition.md: args.mode (feature | issue | ci | perf | scan), args.task (the upstream PR or design, issue URL, CI job or tracker cluster, or performance goal), args.framework_dir (the framework checkout; for sglang the image\'s /sgl-workspace/sglang by default), args.model_path (required for feature and perf), args.workload (required for perf: the fixed benchmark every measurement uses), args.server_script (required for feature and perf: a script that starts the baseline server; InferPilot sets PORT, HIP_VISIBLE_DEVICES and PYTHONPATH, and EXTRA_ARGS carries the feature flags) and args.client_script (required for perf, and for a feature with a workload: runs the fixed workload against PORT and writes to OUT_DIR), args.goal (what done means), args.framework (default sglang), args.platform, args.gpu_ids, args.container, args.apply_prs (perf), args.sources, args.since, args.upstream_repos and args.rescan (scan: a report from the last 24 hours makes the run ask before scanning again), args.image (the image a task must run on; by default the newest daily one, and another stops Setup to ask) and args.image_ok, args.bisect_fixed (issue: when the reporter\'s code fails and main does not, find the commit that fixed it), args.stop_after (a phase title), args.resume_from="implement" with args.run_dir (feature: continue after a human approved design.md), args.auto_approve_design (feature, default true: a design the architect flags, or L3 work, goes on to Implement and the report says no human approved it; false makes it wait at Design for a human; stop_after still stops), args.held_out, args.guards and args.sweep (performance checks beyond the workload and goal of the task, each off by default: a held-out operating point the gain must also hold at, guard workloads InferPilot picks, and points beyond those of the workload), args.kernel_backend (none | geak | command) with args.kernel_backend_dir (geak: the GEAK checkout, whose kernel lane runs as an outside program) or args.kernel_backend_command (command; for geak it replaces the default command), args.kernel_budget ({budget} in the command). A definition that lacks something its mode needs returns status=needs_input with questions and starts nothing: answer them and run again with the same args plus args.answers ({"<field>": <value>}). Operator settings: args.exp_root, args.review_model (the reviewer\'s model, where the runtime takes one per call), args.max_fix_rounds, args.max_investigate_rounds, args.max_review_rounds, args.max_work_packages, args.agent_retries, args.agent_timeout_ms.',
   phases: [
     { title: 'Intake', detail: 'intake: turn a request, or a definition with gaps, into a complete task definition; questions when something is missing' },
     { title: 'Setup', detail: 'director: run dir, the task\'s branch in the framework checkout, the server and client scripts, baseline (not in scan)' },
@@ -16,7 +16,7 @@ export const meta = {
     { title: 'Profile', detail: 'perf_engineer: trace metrics and the opportunity list [perf]' },
     { title: 'Plan', detail: 'architect: performance work packages, kernel hand-offs, PRs to apply [perf]' },
     { title: 'Implement', detail: 'implementer per work package, independent test_engineer unit + feature-off gate, rollback on failure' },
-    { title: 'Kernel', detail: 'kernel_liaison: kernel hand-offs to args.kernel_backend (none records; geak runs GEAK kernel_lane; command runs a CLI); gains integrated as work packages' },
+    { title: 'Kernel', detail: 'kernel_liaison: kernel hand-offs to args.kernel_backend (none records them; geak runs the kernel lane of a GEAK checkout as an outside program; command runs a kernel agent CLI); gains integrated as work packages' },
     { title: 'Verify', detail: 'verify_engineer: G0-G4 against the same-pattern baseline plus mode gates; investigator loop on failure' },
     { title: 'Investigate', detail: 'investigator: controls first, hypothesis ledger, fix or baseline bug' },
     { title: 'Performance', detail: 'perf_engineer: G5 equal-budget A/B and guard workloads' },
@@ -38,10 +38,14 @@ const MODES = ['feature', 'issue', 'ci', 'perf', 'scan'];
 // Kernel back ends: where kernel-level work goes (tuning a kernel InferPilot wrote for a feature, or a
 // kernel-level performance opportunity). knowledge/kernel_backends.md describes the contract.
 //   none     record the hand-off package in the report and run nothing (default)
-//   geak     GEAK's single-language kernel lane from the checkout args.kernel_backend_dir, nested once
-//            like GEAK's own e2e_workflow does; the only place InferPilot uses GEAK
-//   command  any other CLI, run by the kernel liaison from args.kernel_backend_command
+//   geak     an interface to GEAK: the kernel lane of the GEAK checkout args.kernel_backend_dir, run by the
+//            kernel liaison as an outside program through GEAK's own workflow CLI; InferPilot ships
+//            nothing of GEAK
+//   command  a kernel agent's CLI, run by the kernel liaison from args.kernel_backend_command
 const KERNEL_BACKENDS = ['none', 'geak', 'command'];
+// The geak back end's command; args.kernel_backend_command replaces it when GEAK's entry points move.
+const GEAK_COMMAND = 'node {kernel_backend_dir}/interface/runtime/engine/run_workflow.mjs '
+  + '{kernel_backend_dir}/kernel_workflow/kernel_lane.js --args-file {task_dir}/lane_args.json --result-file {out_dir}/result.json';
 const INFERPILOT = String(RAW.inferpilot_dir || '').replace(/\/+$/, '');
 if (!INFERPILOT) {
   throw new Error('args.inferpilot_dir is required: absolute path of the InferPilot checkout ' +
@@ -189,7 +193,8 @@ function missingFields(a) {
     ask('kernel_backend', 'Where should kernel hand-offs go?', 'the Kernel phase runs the chosen back end', KERNEL_BACKENDS);
   }
   if (kb === 'geak' && !a.kernel_backend_dir) {
-    ask('kernel_backend_dir', 'Where is the GEAK checkout (absolute path)?', 'the geak back end runs its kernel_workflow/kernel_lane.js');
+    ask('kernel_backend_dir', 'Where is the GEAK checkout (absolute path)?',
+      'the geak back end runs the kernel lane of that checkout as an outside program');
   }
   if (kb === 'command' && !a.kernel_backend_command) {
     ask('kernel_backend_command', 'Which command runs a kernel task (with {task_dir}, {out_dir} and {gpu_ids})?',
@@ -274,7 +279,6 @@ const RESUME = String(A.resume_from || '').trim().toLowerCase();
 const EXP_ROOT = String(A.exp_root || `${INFERPILOT}/exp`).replace(/\/+$/, '');
 const KERNEL_BACKEND = String(A.kernel_backend || 'none').trim().toLowerCase();
 const KERNEL_BACKEND_DIR = String(A.kernel_backend_dir || '').replace(/\/+$/, '');
-
 // Context handed to every agent; artifact paths are added as phases produce them.
 const C = {
   mode: MODE,
@@ -297,7 +301,8 @@ const C = {
   assumptions: START.assumptions || [],
   kernel_backend: KERNEL_BACKEND,
   kernel_backend_dir: KERNEL_BACKEND_DIR,
-  kernel_backend_command: String(A.kernel_backend_command || ''),
+  kernel_backend_command: String(A.kernel_backend_command
+    || (KERNEL_BACKEND === 'geak' ? GEAK_COMMAND.split('{kernel_backend_dir}').join(KERNEL_BACKEND_DIR) : '')),
   kernel_budget: String(Math.max(1, int(A.kernel_budget, 6))),
   lock_idle_hours: String(LOCK_IDLE_HOURS),
   run_dir: '',
@@ -389,7 +394,7 @@ function withTimeout(p, ms) {
 // One agent call; resolves null (never throws) so every caller decides what a missing answer means
 // for its gate. A failed attempt is retried and the retry is told to check what it left behind. A
 // timeout is not retried: the timed-out agent cannot be cancelled and may still be running, so a
-// retry would run the role twice at once (GEAK's agentT makes the same choice).
+// retry would run the role twice at once.
 async function call(role, sub, ins, schema, label, opts) {
   const lbl = label || `${role}:${sub}`;
   const ms = timeoutFor(role);
@@ -936,19 +941,6 @@ async function preparePR(round) {
   return { ok, wps: !pr || ok || pr.content_unchanged !== true ? [] : (pr.work_packages || []) };
 }
 
-// What a back end returned, trimmed to the fields the liaison needs (GEAK lanes also return
-// their agent timelines and large records).
-function backendSummary(r) {
-  if (r == null) return null;
-  if (typeof r !== 'object') return String(r).slice(0, 2000);
-  const keep = ['validation_status', 'final_speedup', 'final_weighted', 'final_geomean', 'final_patch',
-    'eval_dir', 'authored', 'note', 'error'];
-  const out = {};
-  for (const k of keep) if (r[k] != null) out[k] = r[k];
-  if (r.winner) out.winner = typeof r.winner === 'object' ? { source: r.winner.source, language: r.winner.language } : r.winner;
-  return out;
-}
-
 // Kernel hand-offs go to the selected back end. A gain comes back as a work package that the
 // implementer integrates and the test engineer re-verifies; the later Verify and Performance gates
 // judge it with everything else. A back end that fails or finds no gain never blocks the task:
@@ -971,30 +963,8 @@ async function kernelStage() {
       h.reason = 'no task package';
       continue;
     }
-    let result = null;
-    if (KERNEL_BACKEND === 'geak') {
-      const laneArgs = {
-        kernel_path: pkg.task_dir,
-        workflow_dir: `${KERNEL_BACKEND_DIR}/kernel_workflow`,
-        mode: pkg.mode,
-        budget: C.kernel_budget,
-        gpu_ids: C.gpu_ids,
-        task: pkg.task || h.reason || '',
-        exp_root: `${C.run_dir}/kernel`,
-        apply_to_original: 'false',
-        ...(pkg.target_language ? { target_language: pkg.target_language } : {}),
-        ...(pkg.op_spec ? { op_spec: pkg.op_spec } : {}),
-        ...(pkg.workload_spec_path ? { workload_spec_path: pkg.workload_spec_path } : {}),
-      };
-      try {
-        result = backendSummary(await workflow({ scriptPath: `${KERNEL_BACKEND_DIR}/kernel_workflow/kernel_lane.js` }, laneArgs));
-      } catch (e) {
-        result = { error: String(e && e.message ? e.message : e).slice(0, 400) };
-      }
-    } else {
-      result = await call('kernel_liaison', 'run', inputs({ handoff: h, task_dir: pkg.task_dir }), K_RUN,
-        `kernel_liaison:run:${h.id}`) || { error: 'the command back end did not run' };
-    }
+    const result = await call('kernel_liaison', 'run', inputs({ handoff: h, task_dir: pkg.task_dir }), K_RUN,
+      `kernel_liaison:run:${h.id}`) || { error: 'the command back end did not run' };
     const res = await call('kernel_liaison', 'collect', inputs({ handoff: h, task_dir: pkg.task_dir, backend_result: result }),
       K_COLLECT, `kernel_liaison:collect:${h.id}`);
     h.status = res ? res.status : 'failed';

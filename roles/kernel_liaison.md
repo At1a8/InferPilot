@@ -4,9 +4,6 @@ You package, run (for command back ends) and judge. You never edit framework sou
 as a work package for the implementer.
 
 Read: `knowledge/kernel_backends.md`, `knowledge/kernels/aklr/playbook.md`, `knowledge/guardrails.md`.
-For `kernel_backend=geak` also, in the GEAK checkout `kernel_backend_dir`, `kernel_workflow/README.md`
-(modes, task layout, result fields) and `e2e_workflow/roles/kernel_extractor.md` (extracting an op from
-a serving stack).
 
 ## PHASE=package
 
@@ -21,7 +18,9 @@ Inputs: `handoff` (`id`, `source`, the package paths, `reason`, `wp`), `kernel_b
      `unittest.py`, frozen `baseline_src/`), `op_spec` `{op_kind, shapes, dtype, math_contract, regime}`
      and `target_language` (`hip` for device code that must match the framework's JIT build; `triton` or
      `flydsl` when the framework can call them);
-   - `command` back ends: the layout the command documents, the GEAK layout by default.
+   - a command that documents a layout of its own gets that layout instead;
+   - `kernel_backend=geak`: also `task/lane_args.json`, the arguments of GEAK's kernel lane
+     (`knowledge/kernel_backends.md`, "The GEAK interface").
 3. Check the oracle: the unit test passes on the frozen reference inside the task directory.
 4. `task`: one line that steers the back end (the regime and shapes that matter, e.g.
    "decode, M <= 64, graph-captured").
@@ -38,12 +37,14 @@ Return:
  "workload_spec_path": "", "task": "<steer>", "notes": ""}
 ```
 
-## PHASE=run (kernel_backend=command)
+## PHASE=run (kernel_backend=command or geak)
 
-Inputs: `handoff` (its `id` names the output directory), `task_dir`, `kernel_backend_command`.
+Inputs: `handoff` (its `id` names the output directory), `task_dir`, `kernel_backend_command` (for geak,
+GEAK's workflow CLI on the checkout `kernel_backend_dir`, unless the task gave a command).
 
-1. Substitute `{task_dir}`, `{out_dir}` (`RUN_DIR/kernel/<id>/out`) and `{gpu_ids}` in
-   `kernel_backend_command`; run it from `RUN_DIR`, logging to `RUN_DIR/kernel/<id>/run.log`.
+1. Substitute `{task_dir}`, `{out_dir}` (`RUN_DIR/kernel/<id>/out`), `{gpu_ids}` and `{budget}`
+   (`kernel_budget`) in `kernel_backend_command`; run it from `RUN_DIR`, logging to
+   `RUN_DIR/kernel/<id>/run.log`.
 2. Report the exit code and the JSON result the command wrote.
 
 Return:
@@ -54,11 +55,12 @@ Return:
 
 ## PHASE=collect
 
-Inputs: `backend_result` (GEAK: `validation_status`, `final_speedup` / `final_geomean`, `final_patch`,
-`eval_dir`; command: the run record), `task_dir`.
+Inputs: `backend_result` (the run record: exit code and the path of the JSON result the command wrote;
+for geak, the lane's result: `validation_status`, `final_speedup` / `final_geomean`, `final_patch`,
+`eval_dir`), `task_dir`.
 
-1. Read the result and the back end's own verification records (GEAK: the verified per-case numbers in
-   the eval directory), not only its summary.
+1. Read the result and the back end's own verification records (the verified per-case numbers it
+   points to; for geak, those in its eval directory), not only its summary.
 2. `status`: `improved` only when correctness passed against the oracle — on a retry, including every
    counterexample — and the speedup on the shapes in the op spec exceeds the back end's measured noise;
    `no_gain` when correct but not faster; `failed` otherwise (including a back end that did not run).

@@ -9,7 +9,7 @@ typed, estimated, ranked task.
 | Type | Meaning | Typical owner of the hard part |
 |---|---|---|
 | framework-only | the feature needs framework changes; AMD kernels and libraries exist | InferPilot |
-| needs-kernel | an operator has no adequate AMD implementation | the kernel workflow on the selected back end (`kernel_backends.md`; GEAK is one); InferPilot writes the functional kernel or the reference, the hand-off package and the integration |
+| needs-kernel | an operator has no adequate AMD implementation | the kernel workflow on the selected back end (`kernel_backends.md`); InferPilot writes the functional kernel or the reference, the hand-off package and the integration |
 | needs-comm-library | depends on a communication or transfer library without an AMD equivalent | library owners; InferPilot integrates |
 | new-model | a model architecture is missing or broken on AMD | InferPilot |
 | bug | a user-visible failure (`issue_triage.md`) | InferPilot |

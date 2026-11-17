@@ -53,8 +53,8 @@ Verify ([`knowledge/kernel_backends.md`](knowledge/kernel_backends.md)):
 | `kernel_backend` | What happens to a hand-off |
 |---|---|
 | `none` (default) | recorded in the report with its package; nothing runs |
-| `geak` | GEAK's `kernel_workflow/kernel_lane.js` runs it from the GEAK checkout given as `kernel_backend_dir` (nested once, as GEAK's e2e_workflow does) |
-| `command` | any other CLI given as `kernel_backend_command` |
+| `geak` | an interface to GEAK: the kernel lane of the GEAK checkout given as `kernel_backend_dir` runs it, as an outside program; InferPilot ships nothing of GEAK |
+| `command` | a kernel agent's CLI, given as `kernel_backend_command`, runs it |
 
 A gain comes back as a work package: the implementer integrates it and InferPilot's own gates judge it. A
 back end that fails or finds nothing never blocks the task. An integrated kernel that then fails
@@ -101,13 +101,13 @@ the roles:
 
 ## Setup
 
-InferPilot runs inside a ROCm container, as root, the way GEAK does: Claude Code, InferPilot, git and the
+InferPilot runs inside a ROCm container, as root: Claude Code, InferPilot, git and the
 framework's servers and tests all run there, next to the GPUs and the framework's Python environment.
 Each task gets its own container, and everything it works on lives in that container: InferPilot's
 checkout and its run directories in `/workspace`, and the image's own sglang in `/sgl-workspace/sglang`,
 which the task changes on its own branch. Containers do not share them, so they stay out of each
 other's way, and they last as long as their container. Claude Code is installed in each container too,
-its first-start questions answered ahead, as GEAK's CI and Hyperloom do. From your home on the host a
+its first-start questions answered ahead. From your home on the host a
 container takes one file, your keys in `~/.inferpilot_env`, mounted read-only; the rest of your home stays
 out, since the agents run as root with permissions auto-approved and a home holds credentials they do
 not need.
@@ -236,7 +236,7 @@ claude --version    # installed in this container
 |---|---|
 | keys | root's `~/.inferpilot_env`, which run_docker.sh mounts from your home, or the file `INFERPILOT_KEYS` names. In a container that mounts `/home`, the one in your home there: `INFERPILOT_HOST_HOME`, else, with a warning, the home of the user the container is named after (`<you>`, `<you>-0116`). Without a keys file the rest is still set up, and the next steps say where a key goes |
 | `claude` | installed in the container with Claude Code's native installer (`~/.local/bin/claude`, put on `PATH`): the newest version, a large download (minutes without output on a slow link are the download). It stays at that version for the container's life (`DISABLE_AUTOUPDATER=1`); a new container gets the newest |
-| Claude Code config | root's `~/.claude.json` answers the first start's questions ahead, as GEAK's CI and Hyperloom do: the onboarding, trust in `/workspace/inferpilot`, bypass permissions mode and, for an `ANTHROPIC_API_KEY`, using it. The rest of the file is kept; like everything of root's, it goes with the container |
+| Claude Code config | root's `~/.claude.json` answers the first start's questions ahead: the onboarding, trust in `/workspace/inferpilot`, bypass permissions mode and, for an `ANTHROPIC_API_KEY`, using it. The rest of the file is kept; like everything of root's, it goes with the container |
 | git | trusts checkouts on host mounts, which belong to you, not root (`safe.directory '*'`) |
 | git identity | root commits as `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` from the keys file (or the environment), so no commit reads `root@<this host>`; with neither it says so and sets nothing |
 | shell | root's `~/.bashrc` gets `PYTHONDONTWRITEBYTECODE=1` (no root-owned `__pycache__` in checkouts on host mounts) and `DISABLE_AUTOUPDATER=1`, and loads the keys file, also one put in place later; with `LLM_GATEWAY_KEY` and no `ANTHROPIC_BASE_URL`, it points Claude Code at the AMD LLM gateway |
@@ -360,7 +360,7 @@ Each step of `inferpilot.bootstrap` reports `kept`, `installed`, `updated`, `add
 when a step failed. In a new container it installs Claude Code and evalscope, a minute or two each, and
 writes Claude Code's config and the git and shell settings. `--claude-only` runs only the keys and Claude Code steps,
 `--check` only the checks. Inside a container, `cd /workspace && pip install -v git+https://github.com/At1a8/inferpilot` runs
-step 3 the GEAK way, cloning InferPilot to `/workspace/inferpilot` (pip shows the output only with `-v`; a cached wheel skips it).
+step 3 too, cloning InferPilot to `/workspace/inferpilot` (pip shows the output only with `-v`; a cached wheel skips it).
 
 | Variable | Used by | Default |
 |---|---|---|
@@ -384,16 +384,21 @@ step 3 the GEAK way, cloning InferPilot to `/workspace/inferpilot` (pip shows th
 
 ## Running it
 
-InferPilot is a GEAK-style workflow: `inferpilot.js` holds the control flow, `roles/` the agent instructions,
+InferPilot is a workflow: `inferpilot.js` holds the control flow, `roles/` the agent instructions,
 `knowledge/` the method, `templates/` the artifacts. In Claude Code, name `inferpilot.js` and its arguments
-in one sentence, as in [step 4](#4-start-claude-code-and-give-it-a-task-inside-the-container). GEAK is needed in two cases
-only: the `geak` kernel back end (`kernel_backend_dir`), and running `inferpilot.js` outside Claude Code,
-which uses GEAK's workflow runtime (Node 20+; also what the dry run uses):
+in one sentence, as in [step 4](#4-start-claude-code-and-give-it-a-task-inside-the-container): its Workflow tool runs it.
+Anywhere else InferPilot's own runner, `runtime/run.mjs` (Node 20+), runs it with each role on a
+command-line agent: `--backend claude` runs `claude -p`, and `--backend cursor` runs the Cursor CLI
+(`agent -p`) on the account it was logged in with (`agent login`) or on `CURSOR_API_KEY`. The dry run
+uses the same runner.
 
 ```bash
-node /path/to/GEAK/interface/runtime/engine/run_workflow.mjs inferpilot.js --agent codex \
+node runtime/run.mjs inferpilot.js --backend cursor \
   --args '{"mode":"scan","inferpilot_dir":"'"$PWD"'","framework_dir":"/path/to/sglang"}'
 ```
+
+`--model`, `--args-file`, `--result-file`, `--concurrency`, `--agent-timeout-ms` and `--schema-retries` are
+described at the top of `runtime/run.mjs`.
 
 | Argument | Meaning |
 |---|---|
@@ -412,9 +417,9 @@ node /path/to/GEAK/interface/runtime/engine/run_workflow.mjs inferpilot.js --age
 | `container` | only when InferPilot runs on the host: the framework's container, reached with `docker exec` |
 | `exp_root` | where run directories go (default `<inferpilot_dir>/exp`, which git ignores) |
 | `kernel_backend` | `none` (default) \| `geak` \| `command`: where kernel hand-offs go |
-| `kernel_backend_dir` | `geak` back end: the GEAK checkout providing `kernel_workflow/kernel_lane.js` |
-| `kernel_backend_command` | `command` back end: shell command with `{task_dir}`, `{out_dir}`, `{gpu_ids}` |
-| `kernel_budget` | optimization rounds for the kernel back end (default 6) |
+| `kernel_backend_dir` | `geak` back end: the GEAK checkout whose kernel lane runs as an outside program |
+| `kernel_backend_command` | `command` back end: shell command with `{task_dir}`, `{out_dir}`, `{gpu_ids}`, `{budget}`; for `geak` it replaces the default command |
+| `kernel_budget` | optimization rounds for the kernel back end (default 6), its `{budget}` |
 | `apply_prs` | `perf`: candidate PRs to apply and A/B |
 | `sources`, `since` | `scan`: any of `ci`, `issues`, `upstream` (the default) and `hardware`, `perf`; the start of the window (default: the previous report) |
 | `image`, `image_ok` | the image a task must run on (default: the newest daily one of the container's ROCm and GPU; another one stops Setup to ask); `true` runs on the container's image anyway |
@@ -424,7 +429,7 @@ node /path/to/GEAK/interface/runtime/engine/run_workflow.mjs inferpilot.js --age
 | `resume_from`, `run_dir` | `feature`: `implement` continues a run that stopped at Design once a human approved `design.md` |
 | `auto_approve_design` | `feature`, default `true`: a design the architect flags, or L3 work, goes on to Implement, and the report says no human approved the design. `false` makes such a design wait at Design for a human (`awaiting_design_review`). `stop_after` still stops |
 | `held_out`, `guards`, `sweep` | performance checks beyond the task's own workload and goal, each off by default: `held_out` measures the gain again at a held-out operating point (half the concurrency) and requires it to hold there; `guards` adds guard workloads of InferPilot's choosing to the ones the goal names; `sweep` measures points beyond the workload's own (more concurrencies or lengths) |
-| `review_model` | the reviewer's model, passed with its agent call (GEAK's runtime takes a model per call; elsewhere it depends on the runtime) |
+| `review_model` | the reviewer's model, passed with its agent call (InferPilot's runner gives it to the CLI as `--model`; in Claude Code it depends on the Workflow tool) |
 | `max_fix_rounds`, `max_investigate_rounds`, `max_review_rounds`, `max_work_packages` | budgets |
 | `agent_retries`, `agent_timeout_ms` | an agent call is retried after an error (the retry checks what the failed attempt left), never after a timeout: the timed-out agent may still be running, so it goes on the report's attention list, and its work package gets no further round and no rollback. Default timeout 3 h, 6 h for the verify and performance engineers and the investigator |
 
@@ -490,7 +495,8 @@ restores `knowledge/` in the checkout, so later runs read only merged knowledge.
 ## Tests
 
 ```bash
-GEAK_HOME=/path/to/GEAK node tests/dry_run.mjs   # every control path of inferpilot.js on GEAK's runtime, no GPU
+node tests/dry_run.mjs                            # every control path of inferpilot.js on InferPilot's runner, no GPU
+node tests/runtime_selftest.mjs                   # the runner itself: schema checks, globals, CLI backends; offline
 python3 -m unittest discover -s tests             # the scripts' parsers and rules, the bootstrap, Claude Code's workflow rules, the two READMEs in step; offline
 ```
 
@@ -499,6 +505,7 @@ python3 -m unittest discover -s tests             # the scripts' parsers and rul
 ```
 inferpilot/
 ├── inferpilot.js            # orchestration: five modes, gates, budgets, rollback, kernel back ends
+├── runtime/                 # InferPilot's runner for inferpilot.js outside Claude Code: engine, CLI backends
 ├── roles/                   # intake, director, scout, dispatcher, analyst, architect, implementer,
 │                            # test_engineer, verify_engineer, investigator, perf_engineer, issue_triager,
 │                            # ci_guardian, kernel_liaison, reviewer, pr_engineer, curator
@@ -519,23 +526,24 @@ inferpilot/
 │                            # restore_owner.sh, run_in_tmux.sh
 ├── inferpilot/bootstrap.py  # setup step 3, in the container; safe to re-run
 ├── setup.py, pyproject.toml # packaging; setup.py runs the bootstrap when pip builds the wheel
-├── tests/                   # dry run of inferpilot.js, unit tests of the scripts, the bootstrap, Claude Code's
-│                            # workflow rules and the READMEs
+├── tests/                   # dry run of inferpilot.js, the runner's self-test, unit tests of the scripts, the
+│                            # bootstrap, Claude Code's workflow rules and the READMEs
 ├── README.md, README.zh-CN.md
 └── docs/design.md
 ```
 
-## Relationship to GEAK and Hyperloom
+## Relationship to kernel workflows and Hyperloom
 
-- A kernel's speed is the kernel workflow's job, on whichever back end is selected (GEAK's kernel lane
-  is one): InferPilot writes a functional kernel with a unit test, hands over the op spec with the reference
-  as the oracle, and integrates a verified gain.
-- Flag and backend searches for a workload belong to Hyperloom and GEAK `e2e_workflow`; their upstream
-  candidates are InferPilot inputs, and features InferPilot lands become their options.
+- A kernel's speed is the kernel workflow's job, on whichever back end is selected: InferPilot writes a
+  functional kernel with a unit test, hands over the op spec with the reference as the oracle, and
+  integrates a verified gain.
+- Flag and backend searches for a workload belong to Hyperloom; its upstream candidates are InferPilot
+  inputs, and features InferPilot lands become its options.
 
 ## Origin
 
 The method, validation doctrine, known-issue register, templates and the HiSparse V2 feature skill come
 from GEAK's `framework_workflow` (branch `fangyuan/framework_agent_init`, commit `fc857c9`), which was at
 its knowledge-first phase. InferPilot adds the orchestration that was planned there, the roles, the issue /
-CI / performance / scan entry points from the design, and the task-collection scripts.
+CI / performance / scan entry points from the design, and the task-collection scripts. It runs without
+GEAK: Claude Code's Workflow tool or InferPilot's own runner (`runtime/`) executes it.

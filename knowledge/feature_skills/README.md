@@ -6,13 +6,11 @@
 > a skill still runs every gate, and when the target code or a measurement disagrees with the skill, the
 > code and the measurement win and the skill is marked `stale`.
 
-## How it differs from the other knowledge tiers
+## How it differs from other knowledge
 
-| Tier | Unit | Judged by |
-|---|---|---|
-| GEAK `perf_knowledge/expert_skills/` | an optimization recipe for `operator × scenario` | isolated / e2e speed A/B |
-| GEAK `*/knowledge/learned/` cards | one distilled principle | the A/B that produced it |
-| **`feature_skills/` (here)** | a development plan for a feature on a stack | InferPilot's gates (G0–G5) |
+A feature skill is a development plan for a feature on a stack, judged by InferPilot's gates (G0–G5):
+not an optimization recipe for one operator in one scenario, judged by a speed A/B, and not a single
+distilled principle.
 
 ## Layout
 

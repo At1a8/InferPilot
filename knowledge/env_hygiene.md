@@ -79,7 +79,7 @@ belongs to a host user, and the rules below are about those.
   own process group) and kill from that record: the PID and its descendants (`setsid` workers keep
   VRAM otherwise), the whole group only when the launch proved the group is the server's. Never look
   the group up at kill time: a recycled PID belongs to a stranger, and a teardown that did this once
-  TERMed a container's PID 1 (GEAK's `server_teardown.sh` contract).
+  TERMed a container's PID 1.
 - Every server, test and benchmark runs with `HIP_VISIBLE_DEVICES=<gpu_ids>`, the set Setup pinned;
   without it, tensor-parallel ranks land on GPUs 0..N-1 whoever is using them.
 - Keep one server per GPU set; a previous server still holding the GPUs looks like an out-of-memory bug.
