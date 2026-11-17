@@ -46,3 +46,34 @@ Return:
  "work_packages": [{"id": "WP1", "goal": "...", "kind": "framework", "files": [], "test": "<failing_test_cmd>", "depends_on": []}],
  "evidence": "<fails at culprit, passes at parent: logs>"}
 ```
+
+## PHASE=bisect_fix (issue, `bisect_fixed`)
+
+Inputs: the triage record (`triage_path`) with the reporter's commit, and `repro_cmd`, which exits
+non-zero while the bug is present and takes the tree to test from `TREE`. The reporter's code fails
+it; current main passes.
+
+1. In a throwaway worktree, `git bisect start --term-old=broken --term-new=fixed`, mark the reporter's
+   commit `broken` and main `fixed`, and `git bisect run` a step script, `RUN_DIR/bisect_fix.sh`.
+   `bisect run` reads exit 0 as the old term, the reverse of `repro_cmd`, and 125 as a skip. A commit
+   that fails some other way (it does not build, does not match the image's compiled packages, the
+   server does not start for another reason) is skipped, not taken for the bug:
+   ```bash
+   TREE=$PWD bash /abs/RUN_DIR/repro.sh > /abs/RUN_DIR/bisect_step.log 2>&1 && exit 1   # passes: fixed
+   grep -q '<the reported signature>' /abs/RUN_DIR/bisect_step.log && exit 0          # the bug: broken
+   exit 125
+   ```
+   Then `git bisect reset`.
+2. A timing-dependent failure gets its repeat count from Reproduce (e.g. 3 runs, broken if any fails
+   with the signature), the same at every step.
+3. Confirm: the reproduction fails with the signature at the parent of the fix and passes at the fix,
+   on this image.
+4. Read the fix's diff against the report: name what it changed, and whether it covers every point of
+   the issue.
+
+Return:
+
+```json
+{"fix_commit": "<sha> (#<pr>)", "confirmed": true,
+ "evidence": "<fails at parent, passes at fix: logs; what the fix changed>"}
+```

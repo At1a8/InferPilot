@@ -22,6 +22,7 @@ of it.
 | `apply_prs` | candidate PRs to apply and A/B | | | | optional | |
 | `sources`, `since` | what to scan, from when | | | | | optional |
 | `stop_after` | stop after this phase | optional | optional | optional | optional | optional |
+| `bisect_fixed` | when the reporter's code fails and main passes, find the commit that fixed it | | optional | | | |
 | `resume_from`, `run_dir` | `implement`: continue after a human approved the design | optional | | | | |
 | `auto_approve_design` | default `true`: a design the architect flags goes on to Implement and the report says so; `false`: it waits for a human review | optional | | | | |
 | `held_out`, `guards`, `sweep` | performance checks beyond the task's workload and goal, each off by default: a held-out operating point the gain must also hold at, guard workloads of InferPilot's choosing, points beyond the workload's own | optional | optional | | optional | |

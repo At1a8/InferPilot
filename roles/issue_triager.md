@@ -43,9 +43,14 @@ Inputs: the triage record, `expect_fixed` (true when the triage concluded the fi
    main. One change at a time, one log each.
 2. For a long-running failure, define the soak test (duration, load) before starting and say so.
 3. Write the minimal reproduction as `RUN_DIR/repro.sh` (it exits non-zero while the bug is present);
-   it becomes the `issue_repro` gate.
+   it becomes the `issue_repro` gate. It takes the tree to test from `TREE` (default: the task
+   worktree), so the same script runs on another commit.
 4. With `expect_fixed`, run it on current main: `reproduced: false` means the fix holds.
 5. "Not reproduced" is a result: state the environment, the duration and the counts.
+   `reproduced` is the result on current main, the code a fix would change; `reproduced_on_reporter`
+   the one on the reporter's image or commit (left out when neither could run here). The reporter's
+   code failing where main does not ends the run as `fixed_on_main`; with `bisect_fixed` the CI
+   guardian then bisects between the two with `repro_cmd`.
 6. `repro_cmd` is always the command you ran; when `reproduced` is true it must not be empty, or the
    task stops here.
 7. A `performance` issue: `perf_claim` is the number the fix must restore — metric, workload and value,
@@ -55,6 +60,6 @@ Inputs: the triage record, `expect_fixed` (true when the triage concluded the fi
 Return:
 
 ```json
-{"reproduced": true, "repro_cmd": "bash /abs/RUN_DIR/repro.sh", "perf_claim": "<performance issues only>",
- "evidence": "<counts, logs, environment>"}
+{"reproduced": true, "reproduced_on_reporter": true, "repro_cmd": "bash /abs/RUN_DIR/repro.sh",
+ "perf_claim": "<performance issues only>", "evidence": "<counts, logs, environment>"}
 ```

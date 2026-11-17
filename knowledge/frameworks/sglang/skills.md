@@ -37,7 +37,7 @@ this index names.
 | verify_engineer | verify | `kl-consistency-test`, `sglang-multi-graph-check` | consistency gates; graph capture and replay correctness for the configurations under test |
 | investigator | investigate, diagnose | `debug-cuda-crash`, `debug-distributed-hang`, `sglang-multi-graph-check`, `sglang-runtime-context`, `clean-startup-log` | a crash; a hang across ranks; wrong results only under graph replay; configuration state; anomalies in the startup log |
 | issue_triager | reproduce | `sglang-prod-incident-triage` | save the failing request and replay it on a clean server before any deeper tool |
-| ci_guardian | classify, bisect | `sglang-bisect-ci-regression`, `ci-workflow-guide`, `write-sglang-test` | the bisect method (signature, window, bisect, confirmation); CI tiers, stages and suites |
+| ci_guardian | classify, bisect, bisect_fix | `sglang-bisect-ci-regression`, `ci-workflow-guide`, `write-sglang-test` | the bisect method (signature, window, bisect, confirmation); CI tiers, stages and suites |
 | perf_engineer | profile, perf_eval | `generate-profile`, `llm-torch-profiler-analysis`, `compute-mamba-ratio` | capturing the trace; the kernel, overlap and fuse-pattern tables; memory settings of hybrid models |
 | reviewer | review | `.claude/rules/*`, `write-sglang-test`, `env-var-conventions`, `kernel-organization`, `large-class-style`, `speculative-naming`, `ci-test-audit` | the conventions the diff must follow |
 | pr_engineer | pr | `.claude/rules/*`, `ci-workflow-guide`, `cookbook-review-pr` | lint and the CI a PR goes through; cookbook pages a model PR updates |
