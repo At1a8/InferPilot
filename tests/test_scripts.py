@@ -669,5 +669,84 @@ class AuditHostSyncsTest(unittest.TestCase):
         self.assertEqual((by_line[19]["call"], by_line[19]["temperature"]), (".synchronize()", "warm"))
 
 
+
+FAKE_TMUX = """#!/bin/sh
+echo "$*" >> "$FAKE/log"
+case "$1" in
+  has-session) [ -n "$FAKE_HAS" ]; exit $? ;;
+  capture-pane) n=$(cat "$FAKE/n" 2>/dev/null || echo 0)
+                if [ -f "$FAKE/screen$n" ]; then cat "$FAKE/screen$n"; else cat "$FAKE/last"; fi
+                echo $((n + 1)) > "$FAKE/n" ;;
+  load-buffer) cat > "$FAKE/buffer" ;;
+esac
+exit 0
+"""
+
+
+class RunInTmuxTest(unittest.TestCase):
+    """scripts/run_in_tmux.sh against a fake tmux whose pane shows the screens a test scripts."""
+
+    READY = "❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.d = Path(tmp.name)
+        (self.d / "bin").mkdir()
+        tmux = self.d / "bin" / "tmux"
+        tmux.write_text(FAKE_TMUX)
+        tmux.chmod(0o755)
+        self.task = self.d / "task.txt"
+        self.task.write_text("use /workspace/inferpilot/inferpilot.js with mode=scan, inferpilot_dir=/workspace/inferpilot\n")
+
+    def run_script(self, screens, has=""):
+        (self.d / "n").unlink(missing_ok=True)
+        for i, s in enumerate(screens):
+            (self.d / ("screen%d" % i)).write_text(s)
+        (self.d / "last").write_text(screens[-1])
+        env = {"PATH": "%s:/usr/bin:/bin" % (self.d / "bin"), "FAKE": str(self.d), "FAKE_HAS": has,
+               "POLL_S": "0", "TRIES": "8", "INFERPILOT_HOME": "/workspace/inferpilot"}
+        r = subprocess.run(["bash", str(SCRIPTS / "run_in_tmux.sh"), str(self.task)], env=env,
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        log = (self.d / "log").read_text().splitlines()
+        return r.returncode, log, r.stderr
+
+    def test_starts_claude_code_and_hands_over_the_task_once(self):
+        rc, log, err = self.run_script(["", self.READY])
+        self.assertEqual(rc, 0, err)
+        self.assertIn("new-session -d -s inferpilot -x 200 -y 50 bash -i", log)
+        self.assertIn("send-keys -t inferpilot cd /workspace/inferpilot && IS_SANDBOX=1 claude --dangerously-skip-permissions Enter", log)
+        self.assertEqual(log[-3:], ["load-buffer -b inferpilot-task -", "paste-buffer -p -d -b inferpilot-task -t inferpilot",
+                                    "send-keys -t inferpilot Enter"])
+        self.assertEqual((self.d / "buffer").read_text(),
+                         "use /workspace/inferpilot/inferpilot.js with mode=scan, inferpilot_dir=/workspace/inferpilot")
+
+    def test_an_existing_session_is_reused(self):
+        rc, log, _ = self.run_script([self.READY], has="1")
+        self.assertEqual(rc, 0)
+        self.assertFalse([c for c in log if c.startswith("new-session")])
+
+    def test_a_first_start_question_stops_it_unanswered(self):
+        for screen in ("Quick safety check: Is this a project you trust?\n ❯ No, exit\n   Yes, I trust this folder\n",
+                       "WARNING: Claude Code running in Bypass Permissions mode\n ❯ No, exit\n   Yes, I accept\n",
+                       "Do you want to use this API key?\n"):
+            (self.d / "log").unlink(missing_ok=True)
+            rc, log, err = self.run_script([screen])
+            self.assertEqual(rc, 3, screen)
+            self.assertIn("claude-config", err)
+            self.assertFalse([c for c in log if c.startswith(("send-keys -t inferpilot Down", "paste-buffer"))], screen)
+
+    def test_a_login_prompt_means_no_key(self):
+        for screen in ("Select a login method:\n", "Paste code here if prompted >"):
+            rc, _, err = self.run_script([screen])
+            self.assertEqual(rc, 4, screen)
+            self.assertIn("no key", err)
+
+    def test_gives_up_without_a_prompt(self):
+        rc, log, _ = self.run_script(["loading"])
+        self.assertEqual(rc, 5)
+        self.assertFalse([c for c in log if c.startswith("paste-buffer")])
+
+
 if __name__ == "__main__":
     unittest.main()

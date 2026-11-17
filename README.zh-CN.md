@@ -169,6 +169,15 @@ decode 太慢，帮我优化"
 
 如果缺了什么（这里缺的是每次测量都用的固定负载），这次运行什么都不启动，返回 `status: needs_input`，每个字段一个问题。在对话里回答后，Claude Code 会用同样的参数加上 `answers={"workload": ...}` 再次运行 `inferpilot.js`。[运行](#运行)一节列出了全部参数。
 
+**没有可以输入的终端时**（agent 的 shell、作业调度器），仍然要用交互式会话，把它放进 tmux 里跑。`claude -p "use inferpilot.js ..."` 不能代替它：Workflow 工具在后台运行 `inferpilot.js`，print 模式几秒内就给出回答，随后结束进程，这次运行也随之终止，还会留下这台机器的锁。[`scripts/run_in_tmux.sh`](scripts/run_in_tmux.sh) 在 tmux 会话里启动 Claude Code，等到输入框出现后，把文件里的任务粘贴进去；遇到首次启动的问题（`claude-config` 没有回答它）或登录提示时会停下，并说明是哪一种：
+
+```bash
+command -v tmux >/dev/null || apt-get install -y tmux
+echo 'use /workspace/inferpilot/inferpilot.js with mode=scan, inferpilot_dir=/workspace/inferpilot' > /workspace/task.txt
+/workspace/inferpilot/scripts/run_in_tmux.sh /workspace/task.txt
+tmux capture-pane -p -t inferpilot | tail -40
+```
+
 ### 5. 运行结束后（容器内）
 
 每次过了 Setup 的运行，都在 `/workspace/inferpilot/exp`（git 会忽略它）里有自己的目录，名字是 `<mode>_<slug>_<time>`：模式、任务的简短名字和 UTC 开始时间，例如 `issue_41299-glm-dcp_20261106-071502Z` 或 `scan_20261106-064327Z`。`exp/index.md` 列出这个容器里的每次运行和它的结局。一个运行目录里有：
@@ -313,7 +322,7 @@ inferpilot/
 ├── templates/               # task_definition, feature_spec, design, experiment_ledger, validation_report,
 │                            # pr_body, issue_triage, ci_triage, perf_analysis, task_queue, acceptance
 ├── scripts/                 # 任务收集、审计、run_docker.sh、latest_image.py、run_lock.py、
-│                            # restore_owner.sh
+│                            # restore_owner.sh、run_in_tmux.sh
 ├── inferpilot/bootstrap.py  # 第 3 步的配置脚本，在容器内运行；可以重复执行
 ├── setup.py, pyproject.toml # 打包；pip 构建 wheel 时 setup.py 会运行 bootstrap
 ├── tests/                   # inferpilot.js 的 dry run，脚本、bootstrap、Claude Code workflow 规则和 README 的单元测试
