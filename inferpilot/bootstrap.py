@@ -34,16 +34,20 @@ state warns and leaves it alone.
   evalscope     (root in a container) evalscope for scripts/eval_accuracy.sh, in a venv of its own
                 (/opt/evalscope, linked as /usr/local/bin/evalscope): installed into the image's Python it
                 would downgrade packages sglang ships with. One already on PATH is kept
-  node, cursor  (--cursor) Node.js 20+ for runtime/run.mjs, the newest LTS unless INFERPILOT_NODE_VERSION
-                names one, checked against nodejs.org's SHASUMS256.txt and unpacked into
-                /opt/node/<version> (~/.local/node as a user), linked into /usr/local/bin (~/.local/bin);
-                and the Cursor CLI (agent) from cursor.com/install. A Node.js 20+ or an agent already
-                there is kept. Logging the CLI in is yours: NO_OPEN_BROWSER=1 agent login, or CURSOR_API_KEY
+  node          (--runner or --cursor) Node.js 20+ for runtime/run.mjs, InferPilot's own runner: the newest
+                LTS unless INFERPILOT_NODE_VERSION names one, checked against nodejs.org's SHASUMS256.txt and
+                unpacked into /opt/node/<version> (~/.local/node as a user), linked into /usr/local/bin
+                (~/.local/bin). A Node.js 20+ already there is kept
+  cursor        (--cursor) the Cursor CLI (agent) from cursor.com/install, for runtime/run.mjs --backend
+                cursor; one already there is kept. Logging it in is yours: NO_OPEN_BROWSER=1 agent login,
+                or CURSOR_API_KEY. --no-claude leaves the claude, path and claude-config steps out
   checks        git, docker (host only), ROCm, sglang, evalscope, Node.js, API access, GitHub token, and
                 with --cursor the Cursor CLI (detect only)
 
   python3 -B -m inferpilot.bootstrap [--framework-dir DIR]
+  python3 -B -m inferpilot.bootstrap --runner        # also Node.js, for runtime/run.mjs --backend claude
   python3 -B -m inferpilot.bootstrap --cursor        # also Node.js and the Cursor CLI (--backend cursor)
+  python3 -B -m inferpilot.bootstrap --cursor --no-claude   # the Cursor CLI instead of Claude Code
   python3 -B -m inferpilot.bootstrap --claude-only   # the keys, claude, path and claude-config steps
   python3 -B -m inferpilot.bootstrap --check         # the checks
 
@@ -61,6 +65,7 @@ Environment (a flag wins over its variable):
                                 (container) the evalscope version to install (latest), its venv
                                 (/opt/evalscope)
   INFERPILOT_CURSOR             set to run the node and cursor steps, as --cursor does
+  INFERPILOT_RUNNER             set to run the node step, as --runner does
   INFERPILOT_NODE_VERSION       (--cursor) the Node.js to install: 22 for the newest 22.x, or v22.11.0
                                 (default: the newest LTS)
   INFERPILOT_FRAMEWORK_DIR, INFERPILOT_FRAMEWORK_REPO
@@ -240,6 +245,8 @@ def settings(env=None, opts=None) -> dict:
         "evalscope_venv": _expand(env.get("EVALSCOPE_VENV") or EVALSCOPE_VENV, env),
         "evalscope_link": EVALSCOPE_LINK,
         "cursor": bool(opts.get("cursor") or env.get("INFERPILOT_CURSOR")),
+        "runner": bool(opts.get("runner") or env.get("INFERPILOT_RUNNER") or opts.get("cursor") or env.get("INFERPILOT_CURSOR")),
+        "claude": not opts.get("no_claude"),
         "node_version": env.get("INFERPILOT_NODE_VERSION") or "",
         "node_dir": _expand("/opt/node" if is_root() else "~/.local/node", env),
         "link_dir": "/usr/local/bin" if is_root() else _expand(env.get("CLAUDE_BIN_DIR") or "~/.local/bin", env),
@@ -933,9 +940,9 @@ def keys_defined(path: str) -> set:
     return names
 
 
-def check_environment(env=None, keys_path: str = "", cursor: bool = False) -> dict:
+def check_environment(env=None, keys_path: str = "", cursor: bool = False, claude: bool = True) -> dict:
     """keys_path: ~/.inferpilot_env, which new shells load; what it sets counts before this shell has it.
-    cursor: also check the Cursor CLI (--cursor)."""
+    cursor: also check the Cursor CLI (--cursor); claude: check Claude Code's API access (not with --no-claude)."""
     env = dict(os.environ if env is None else env)
     for name in keys_defined(keys_path):
         env.setdefault(name, "set in %s" % keys_path)
@@ -955,6 +962,8 @@ def check_environment(env=None, keys_path: str = "", cursor: bool = False) -> di
          "no INFERPILOT_REPO_TOKEN (optional): the curator's knowledge changes stay in this checkout instead of a "
          "pull request to InferPilot's repository (README step 1)"),
     ]
+    if not claude:
+        checks = [c for c in checks if c[0] != "api"]
     if cursor:
         checks.append(("cursor_cli", _has("agent"),
                        "Cursor CLI (agent) not on PATH: runtime/run.mjs --backend cursor runs it; bootstrap --cursor installs it"))
@@ -993,7 +1002,7 @@ def next_steps(s: dict, statuses: dict, found: dict | None = None, path_env: str
     if api is None:
         env = dict(os.environ, **{name: "set in %s" % keys for name in keys_defined(keys)})
         api = api_configured(env, s["user_home"])
-    if not api:
+    if not api and s.get("claude", True):
         if keys:
             where = "in %s, which new shells load:" % keys
         elif container:
@@ -1012,7 +1021,7 @@ def next_steps(s: dict, statuses: dict, found: dict | None = None, path_env: str
             + "   (from " + hl("claude setup-token") + " where a browser is)",
             "e. interactive login:   " + hl("claude") + "   then /login" + ("  (again in every new container)" if container else ""),
         ])
-    if not claude_only:
+    if not claude_only and s.get("claude", True):
         if s["framework_dir"]:
             fw = ", framework_dir=%s" % s["framework_dir"]
         else:
@@ -1038,9 +1047,15 @@ def next_steps(s: dict, statuses: dict, found: dict | None = None, path_env: str
                           + "   then open the URL it prints where a browser is (q shows a QR code)",
                           "b. API key:    " + hl("export CURSOR_API_KEY=<key>") + "   in %s (Cursor Dashboard, API Keys)"
                           % (keys or os.path.join(s["user_home"], KEYS_FILE))])
-        steps.append(["Run a task with every role on the Cursor CLI:",
-                      hl("cd %s && node runtime/run.mjs inferpilot.js --backend cursor --args '{\"mode\": \"scan\", "
-                         "\"inferpilot_dir\": \"%s\"}'" % (s["home"], s["home"]))])
+    runner = [b for b, ok in (("cursor", statuses.get("cursor") in ("kept", "installed")),
+                              ("claude", statuses.get("node") in ("kept", "installed", "added") and s.get("claude", True)))
+              if ok]
+    if runner:
+        lead = "Or run" if not claude_only and s.get("claude", True) else "Run"
+        steps.append(["%s a task on InferPilot's own runner, every role on %s (README, Ways to run it):"
+                      % (lead, " or ".join({"cursor": "the Cursor CLI", "claude": "claude -p"}[b] for b in runner))]
+                     + [hl("cd %s && node runtime/run.mjs inferpilot.js --backend %s --args '{\"mode\": \"scan\", "
+                           "\"inferpilot_dir\": \"%s\"}'" % (s["home"], b, s["home"])) for b in runner])
     lines = ["Next steps:"]
     for i, (head, *body) in enumerate(steps, 1):
         lines.append("%d) %s" % (i, head))
@@ -1057,38 +1072,48 @@ def main(argv=None) -> int:
     g.add_argument("--check", action="store_true", help="only the environment checks")
     ap.add_argument("--framework-dir", help="framework checkout for tasks; cloned only if missing (INFERPILOT_FRAMEWORK_DIR)")
     ap.add_argument("--framework-repo", help="repository to clone it from (default: sglang; INFERPILOT_FRAMEWORK_REPO)")
+    ap.add_argument("--runner", action="store_true",
+                    help="also install Node.js, for runtime/run.mjs, InferPilot's own runner (INFERPILOT_RUNNER)")
     ap.add_argument("--cursor", action="store_true",
                     help="also install Node.js and the Cursor CLI, for runtime/run.mjs --backend cursor (INFERPILOT_CURSOR)")
+    ap.add_argument("--no-claude", action="store_true",
+                    help="leave Claude Code out (the claude, path and claude-config steps), e.g. with --cursor")
     a = ap.parse_args([] if argv is None else argv)
+    if a.claude_only and a.no_claude:
+        ap.error("--claude-only and --no-claude contradict each other")
 
     if os.environ.get("INFERPILOT_SKIP_BOOTSTRAP"):
         log("INFERPILOT_SKIP_BOOTSTRAP set; skipping")
         return 0
-    s = settings(opts={"framework_dir": a.framework_dir, "framework_repo": a.framework_repo, "cursor": a.cursor})
+    s = settings(opts={"framework_dir": a.framework_dir, "framework_repo": a.framework_repo, "cursor": a.cursor,
+                       "runner": a.runner, "no_claude": a.no_claude})
     container = in_container()
     if a.check:
         if container and is_root() and not keys_file(s):
             find_host_home(s)
-        check_environment(keys_path=keys_file(s) if container else "", cursor=s["cursor"])
+        check_environment(keys_path=keys_file(s) if container else "", cursor=s["cursor"], claude=s["claude"])
         return 0
     steps = [] if a.claude_only else [("checkout", ensure_checkout)]
     if container and is_root():
         steps.append(("keys", ensure_keys))
-    steps += [("claude", ensure_claude_code), ("path", ensure_path)]
-    if container and is_root():
-        steps.append(("claude-config", ensure_claude_config))
+    if s["claude"]:
+        steps += [("claude", ensure_claude_code), ("path", ensure_path)]
+        if container and is_root():
+            steps.append(("claude-config", ensure_claude_config))
     if not a.claude_only:
         if container and is_root():
             steps += [("git", ensure_git_trust), ("git-identity", ensure_git_identity), ("shell", ensure_shell_env)]
         steps.append(("framework", ensure_framework))
         if container and is_root():
             steps.append(("evalscope", ensure_evalscope))
+        if s["runner"]:
+            steps.append(("node", ensure_node))
         if s["cursor"]:
-            steps += [("node", ensure_node), ("cursor", ensure_cursor_cli)]
+            steps.append(("cursor", ensure_cursor_cli))
     results = [(name,) + step(s) for name, step in steps]
     statuses = {step: status for step, status, _ in results}
     keys = keys_file(s) if container else ""
-    found = None if a.claude_only else check_environment(keys_path=keys, cursor=s["cursor"])
+    found = None if a.claude_only else check_environment(keys_path=keys, cursor=s["cursor"], claude=s["claude"])
     print("\n[inferpilot-bootstrap] %s\n\n%s" % (summary(results), next_steps(s, statuses, found, claude_only=a.claude_only)),
           flush=True)
     return 1 if "failed" in statuses.values() else 0

@@ -187,6 +187,29 @@ echo 'use /workspace/inferpilot/inferpilot.js with mode=scan, inferpilot_dir=/wo
 tmux capture-pane -p -t inferpilot | tail -40
 ```
 
+### 运行方式
+
+第 3–4 步配置并使用的是默认方式。其他方式的区别在于：由谁运行 `inferpilot.js`，每个角色跑在什么上，以及第 3 步的 bootstrap 要多加哪个选项：
+
+| 方式 | `inferpilot.js` 由谁运行 | 每个角色跑在 | 第 3 步多加 | 登录方式 | 怎样开始一个任务 |
+|---|---|---|---|---|---|
+| Claude Code（第 4 步） | Claude Code 的 Workflow 工具 | Claude Code 的 agent | 不加 | key 文件里的 key（第 1 步） | 在 Claude Code 里用一句话说出任务 |
+| runner，角色用 Claude | `runtime/run.mjs` | `claude -p` | `--runner` | key 文件里的 key（第 1 步） | `node runtime/run.mjs inferpilot.js --backend claude ...` |
+| runner，角色用 Cursor | `runtime/run.mjs` | Cursor CLI，`agent -p` | `--cursor`；加 `--no-claude` 时不装 Claude Code | 每个容器 `agent login` 一次，或在 key 文件里设置 `CURSOR_API_KEY` | `node runtime/run.mjs inferpilot.js --backend cursor ...` |
+| Cursor app，或 Cursor CLI 的对话界面 | 由那个 agent 启动的 runner | 上面两种 runner backend 之一 | 同所用的 backend | 同所用的 backend | 对 agent 用一句话说出任务 |
+
+一个所有角色都跑在 Cursor 上的容器，以及用来试一下的 scan 任务：
+
+```bash
+cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap --cursor --no-claude
+NO_OPEN_BROWSER=1 agent login   # 在别处的浏览器里打开它打印出的链接并登录（按 q 显示二维码）
+agent status
+mkdir -p exp && echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
+nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.json --result-file exp/scan.result.json > exp/scan.log 2>&1 &
+```
+
+**从 Cursor app 使用。** Cursor 没有类似 Claude Code Workflow 工具的东西，所以它的 agent 不会自己运行 `inferpilot.js`，而是把任务写进文件、在后台启动 runner，并随时读取运行进展，具体做法写在本仓库根目录的 [`AGENTS.md`](AGENTS.md) 里（Cursor 会把这个文件当作规则加载）。在 app 里通过 Remote-SSH 打开 GPU 机器（agent 会通过 `docker exec` 在你的容器里执行每条命令），或者直接打开容器，然后像在 Claude Code 里一样用一句话说出任务。Cursor CLI 自己的对话界面（容器里的 `agent`）也读取同一个文件。app 的登录不会带进容器：容器里的 CLI 要用 `agent login` 登录一次，或者使用 `CURSOR_API_KEY`。角色跑在 Cursor 上时，代码和提示词会发到 Cursor 的服务，而不是 AMD 的 LLM 网关，并计入账户的用量。
+
 ### 5. 运行结束后（容器内）
 
 每次过了 Setup 的运行，都在 `/workspace/inferpilot/exp`（git 会忽略它）里有自己的目录，名字是 `<mode>_<slug>_<time>`：模式、任务的简短名字和 UTC 开始时间，例如 `issue_41299-glm-dcp_20261106-071502Z` 或 `scan_20261106-064327Z`。`exp/index.md` 列出这个容器里的每次运行和它的结局。一个运行目录里有：
@@ -323,6 +346,7 @@ python3 -m unittest discover -s tests             # 脚本的解析与规则、b
 inferpilot/
 ├── inferpilot.js            # 编排：五种模式、门禁、预算、回滚、kernel 后端
 ├── runtime/                 # 在 Claude Code 之外执行 inferpilot.js 的 runner：引擎和命令行 backend
+├── AGENTS.md                # Claude Code 之外的 agent（Cursor app 或 CLI）怎样启动和查看一次运行
 ├── roles/                   # intake, director, scout, dispatcher, analyst, architect, implementer,
 │                            # test_engineer, verify_engineer, investigator, perf_engineer, issue_triager,
 │                            # ci_guardian, kernel_liaison, reviewer, pr_engineer, curator

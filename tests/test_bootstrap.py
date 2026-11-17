@@ -1105,6 +1105,25 @@ class CursorNextStepsTest(unittest.TestCase):
             self.assertIn("--backend cursor", ready)
             self.assertNotIn("--backend cursor", plain)
 
+    def test_without_claude_code_the_next_steps_say_nothing_of_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            co = make_checkout(Path(d) / "workspace" / "inferpilot")
+            env = {"PWD": "/", "HOME": d, "INFERPILOT_HOME": str(co)}
+            cursor_only = bs.settings(env, {"cursor": True, "no_claude": True})
+            both = bs.settings(env, {"runner": True})
+            with mock.patch.object(bs, "in_container", return_value=True), \
+                    mock.patch.object(bs, "find_cursor_cli", return_value="/x/agent"), \
+                    mock.patch.object(bs, "cursor_logged_in", return_value=False):
+                alone = bs.next_steps(cursor_only, {"node": "installed", "cursor": "installed"}, {"api": False}, path_env="/usr/bin")
+                runner = bs.next_steps(both, {"node": "installed"}, {"api": True}, path_env="/usr/bin")
+            self.assertNotIn("Claude Code", alone)
+            self.assertIn("1) Log the Cursor CLI in", alone)
+            self.assertIn("Run a task on InferPilot's own runner, every role on the Cursor CLI", alone)
+            self.assertNotIn("--backend claude", alone)
+            self.assertIn("Start Claude Code", runner)
+            self.assertIn("--backend claude", runner)
+            self.assertNotIn("--backend cursor", runner)
+
 
 class MainTest(unittest.TestCase):
     STEPS = ["ensure_checkout", "ensure_keys", "ensure_claude_code", "ensure_path", "ensure_claude_config",
@@ -1157,6 +1176,17 @@ class MainTest(unittest.TestCase):
             self.assertTrue(m["check_environment"].call_args[1].get("cursor"))
         rc, m = self.run_main(["--cursor", "--claude-only"], container=True, root=True)
         self.assertFalse(m["ensure_node"].called, "--claude-only stays the Claude Code steps")
+        rc, m = self.run_main(["--runner"], container=True, root=True)
+        self.assertTrue(m["ensure_node"].called and not m["ensure_cursor_cli"].called, "--runner is Node.js alone")
+
+    def test_no_claude_leaves_claude_code_out(self):
+        rc, m = self.run_main(["--cursor", "--no-claude"], container=True, root=True)
+        self.assertEqual(rc, 0)
+        self.assertFalse(any(m[n].called for n in ("ensure_claude_code", "ensure_path", "ensure_claude_config")))
+        self.assertTrue(m["ensure_node"].called and m["ensure_cursor_cli"].called and m["ensure_framework"].called)
+        self.assertFalse(m["check_environment"].call_args[1].get("claude"))
+        with self.assertRaises(SystemExit), Quiet():
+            bs.main(["--claude-only", "--no-claude"])
 
     def test_a_failed_step_sets_the_exit_code(self):
         self.assertEqual(self.run_main([], failing="ensure_framework")[0], 1)
