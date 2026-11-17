@@ -667,15 +667,30 @@ class FrameworkTest(unittest.TestCase):
             with mock.patch.object(bs, "IMAGE_SGLANG", os.path.join(d, "no-image-checkout")), Quiet():
                 self.assertEqual(bs.ensure_framework(S(d))[0], "skipped")
 
-    def image_framework(self, d, branch="", changed="", built="f3532057e1"):
+    IMAGE_MAIN_CHANGED = "\n".join(bs.IMAGE_MAIN_PACKAGING)
+    # The blobs at HEAD the image build copied, and the worktree files it left as those copies.
+    HEAD_BLOBS = {"python/pyproject_other.toml": "a1", "python/sglang/kernels/aot/pyproject_rocm.toml": "b2"}
+    IMAGE_BLOBS = {"python/pyproject.toml": "a1", "python/sglang/kernels/aot/pyproject.toml": "b2"}
+
+    def image_framework(self, d, branch="", changed="", built="f3532057e1", blobs=None):
         """ensure_framework on a fake image checkout; returns (result, the git commands it ran)."""
         image = Path(d) / "sgl-workspace" / "sglang"
         (image / ".git").mkdir(parents=True, exist_ok=True)
+        blobs = self.IMAGE_BLOBS if blobs is None else blobs
         answers = {"log": (0, "f3532057e1 2026-11-05", ""), "rev-parse": (0, "false", ""),
                    "remote": (0, "https://github.com/sgl-project/sglang.git", ""),
                    "symbolic-ref": (0, branch, "") if branch else (1, "", ""), "diff": (0, changed, "")}
+
+        def out(cmd):
+            if cmd[3] == "hash-object":
+                return (0, blobs[cmd[-1]], "") if cmd[-1] in blobs else (128, "", "fatal: could not open")
+            if cmd[3] == "rev-parse" and cmd[-1].startswith("HEAD:"):
+                src = cmd[-1][len("HEAD:"):]
+                return (0, self.HEAD_BLOBS[src], "") if src in self.HEAD_BLOBS else (1, "", "")
+            return answers[cmd[3]]
+
         with mock.patch.object(bs, "IMAGE_SGLANG", str(image)), mock.patch.object(bs, "installed_commit", return_value=built), \
-                mock.patch.object(bs, "_out", side_effect=lambda cmd: answers[cmd[3]]), \
+                mock.patch.object(bs, "_out", side_effect=out), \
                 mock.patch.object(bs, "_run", return_value=OK) as run, Quiet():
             res = bs.ensure_framework(S(d))
             self.assertNotIn("framework_dir=", bs.next_steps(bs.settings({"PWD": d, "HOME": d}), {}, {"api": True},
@@ -689,13 +704,7 @@ class FrameworkTest(unittest.TestCase):
 
     def test_the_image_checkout_on_main_is_normalized_when_it_is_still_the_image_state(self):
         with tempfile.TemporaryDirectory() as d:
-            changed = "\n".join(
-                [
-                    "python/pyproject.toml",
-                    "python/sglang/kernels/aot/pyproject.toml",
-                    "python/sglang/kernels/aot/pyproject_rocm.toml",
-                ]
-            )
+            changed = self.IMAGE_MAIN_CHANGED
             for built in ("f3532057e1", "0123456789"):
                 with self.subTest(installed_commit=built):
                     res, ran, image = self.image_framework(d, branch="main", changed=changed, built=built)
@@ -709,10 +718,31 @@ class FrameworkTest(unittest.TestCase):
                     )
                     self.assertIn(image, res[1])
 
+    def test_a_clean_main_is_kept_without_a_pull(self):
+        with tempfile.TemporaryDirectory() as d:
+            res, ran, image = self.image_framework(d, branch="main")
+            self.assertEqual((res, ran), (("kept", "%s on main (f3532057e1 2026-11-05)" % image), []))
+
     def test_main_is_kept_when_it_has_an_unknown_packaging_edit(self):
         with tempfile.TemporaryDirectory() as d:
             res, ran, _ = self.image_framework(d, branch="main", changed="docs/pyproject.toml")
             self.assertEqual((res[0], ran), ("skipped", []))
+
+    def test_main_keeps_a_users_edit_to_a_file_the_image_build_also_changes(self):
+        with tempfile.TemporaryDirectory() as d:
+            mine = dict(self.IMAGE_BLOBS, **{"python/pyproject.toml": "c3"})
+            res, ran, _ = self.image_framework(d, branch="main", changed=self.IMAGE_MAIN_CHANGED, blobs=mine)
+            self.assertEqual((res, ran), (("skipped", "changed: python/pyproject.toml"), []))
+            res, ran, _ = self.image_framework(d, branch="main", changed="python/pyproject.toml", blobs={})
+            self.assertEqual((res, ran), (("skipped", "changed: python/pyproject.toml"), []))
+
+    def test_main_keeps_the_rocm_aot_pyproject_when_it_is_still_there(self):
+        with tempfile.TemporaryDirectory() as d:
+            rocm = Path(d) / "sgl-workspace" / "sglang" / "python" / "sglang" / "kernels" / "aot" / "pyproject_rocm.toml"
+            rocm.parent.mkdir(parents=True)
+            rocm.write_text("[project]\n")
+            res, ran, _ = self.image_framework(d, branch="main", changed=self.IMAGE_MAIN_CHANGED)
+            self.assertEqual((res, ran), (("skipped", "changed: python/sglang/kernels/aot/pyproject_rocm.toml"), []))
 
     def test_the_image_checkout_as_the_image_left_it_goes_on_main(self):
         with tempfile.TemporaryDirectory() as d:

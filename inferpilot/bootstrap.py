@@ -98,15 +98,15 @@ AMD_GATEWAY_URL = "https://llm-api.amd.com/Unified"
 # the same build state on main.
 IMAGE_SGLANG = "/sgl-workspace/sglang"
 PACKAGING = re.compile(r"(^|/)pyproject[^/]*\.toml$")
-# Some daily images leave that checkout on main instead of detached. Only these known build-time edits
-# may be discarded from main; a different pyproject edit may be a user's work and must stop Setup.
-IMAGE_MAIN_PACKAGING = frozenset(
-    {
-        "python/pyproject.toml",
-        "python/sglang/kernels/aot/pyproject.toml",
-        "python/sglang/kernels/aot/pyproject_rocm.toml",
-    }
-)
+# Some daily images leave that checkout on main instead of detached. On main only the build's own edits
+# are discarded, recognised by content: docker/rocm.Dockerfile copies pyproject_other.toml over
+# python/pyproject.toml and moves the aot pyproject_rocm.toml over pyproject.toml. A path maps to the file
+# at HEAD it must equal, or to None when it must be gone; any other edit may be a user's and stops Setup.
+IMAGE_MAIN_PACKAGING = {
+    "python/pyproject.toml": "python/pyproject_other.toml",
+    "python/sglang/kernels/aot/pyproject.toml": "python/sglang/kernels/aot/pyproject_rocm.toml",
+    "python/sglang/kernels/aot/pyproject_rocm.toml": None,
+}
 # scripts/eval_accuracy.sh reaches the server over HTTP, so evalscope needs nothing of sglang's Python, and
 # installed into it, it would change it: evalscope 1.15 downgrades datasets and fsspec below the image's.
 EVALSCOPE_VENV = "/opt/evalscope"
@@ -660,11 +660,24 @@ def installed_commit() -> str:
     return m.group(1) if m else ""
 
 
+def _is_image_main_edit(d: str, f: str) -> bool:
+    """Whether f's change on main is the image build's own (IMAGE_MAIN_PACKAGING), judged by content."""
+    if f not in IMAGE_MAIN_PACKAGING:
+        return False
+    src = IMAGE_MAIN_PACKAGING[f]
+    if src is None:
+        return not os.path.lexists(os.path.join(d, f))
+    rc, have, _ = _out(["git", "-C", d, "hash-object", "--", f])
+    rc_src, want, _ = _out(["git", "-C", d, "rev-parse", "--verify", "-q", "HEAD:" + src])
+    return rc == 0 and rc_src == 0 and bool(have) and have == want
+
+
 def follow_main(d: str) -> tuple[str, str]:
     """Put the image's checkout on main once: discard the build's packaging changes, check out main, pull.
     Only a checkout as the image left it is touched: a detached checkout must be at the installed commit
-    and have only packaging changes; main may discard only the exact known build-time packaging paths.
-    A task branch is already past this and is left alone (Setup takes it from there)."""
+    and have only packaging changes; main may discard only the build's own edits, checked by content,
+    and a clean main is kept. A task branch is already past this and is left alone (Setup takes it from
+    there)."""
     rc, branch, _ = _out(["git", "-C", d, "symbolic-ref", "-q", "--short", "HEAD"])
     _, head, _ = _out(["git", "-C", d, "log", "-1", "--format=%h %cs"])
     on_branch = rc == 0 and bool(branch)
@@ -679,13 +692,16 @@ def follow_main(d: str) -> tuple[str, str]:
         return "skipped", "detached at %s" % head
     _, changed, _ = _out(["git", "-C", d, "diff", "--name-only", "HEAD"])
     files = [f for f in changed.splitlines() if f]
+    if on_branch and not files:
+        log("framework: kept %s on main (%s); Setup fetches before every task" % (d, head))
+        return "kept", "%s on main (%s)" % (d, head)
     other = (
-        [f for f in files if f not in IMAGE_MAIN_PACKAGING]
+        [f for f in files if not _is_image_main_edit(d, f)]
         if on_branch
         else [f for f in files if not PACKAGING.search(f)]
     )
     if other:
-        warn("framework: %s has changes beyond the image's packaging files (%s); left as it is, and Setup "
+        warn("framework: %s has changes the image build did not make (%s); left as it is, and Setup "
              "stops on it" % (d, ", ".join(other[:5])))
         return "skipped", "changed: %s" % ", ".join(other[:5])
     if files and _run(["git", "-C", d, "checkout", "HEAD", "--"] + files).returncode != 0:
