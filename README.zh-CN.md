@@ -67,7 +67,7 @@ kernel 级的工作——调优 InferPilot 为某个特性写的 kernel，或者
 
 InferPilot 以 root 身份运行在 ROCm 容器里：Claude Code、InferPilot、git 以及框架的服务和测试都在容器里运行，紧挨着 GPU 和框架的 Python 环境。每个任务用一个自己的容器，任务用到的一切都在这个容器里：`/workspace` 里的 InferPilot checkout 和它的运行目录，以及镜像自带的 sglang `/sgl-workspace/sglang`，任务在它上面开自己的分支修改。容器之间不共享这些，所以互不干扰；它们随所在的容器保留，容器删除时一起删除。Claude Code 也装在每个容器里，并预先回答好首次启动的问题。容器只从你宿主机的 home 里拿一个文件：保存 key 的 `~/.inferpilot_env`，以只读方式挂载；home 的其余部分不挂进来，因为 agent 以 root 身份、自动批准权限运行，而 home 里有它们用不着的凭据。
 
-每一步都可以重复执行：先检查，保留已有的，只补缺的；再次运行 run_docker.sh 会回到原来的容器。命令里的 `检查 || 动作` 表示只有检查不通过时才执行动作：在新机器上每个动作都会执行，再运行一次则全部跳过。除了第 3 步丢弃镜像构建对 `/sgl-workspace/sglang` 打包文件的改动，不会删除、覆盖或重新克隆任何东西。
+每一步都可以重复执行：先检查，保留已有的，只补缺的；再次运行 run_docker.sh 会回到原来的容器。命令里的 `检查 || 动作` 表示只有检查不通过时才执行动作：在新机器上每个动作都会执行，再运行一次则全部跳过。除了第 2 步在用每日镜像新建的容器里丢弃镜像构建对 `/sgl-workspace/sglang` 打包文件的改动，不会删除、覆盖或重新克隆任何东西。
 
 ### 宿主机需要什么
 
@@ -100,10 +100,17 @@ bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/script
 
 这一行下载 [`scripts/run_docker.sh`](scripts/run_docker.sh) 并运行它，所以宿主机上不需要 InferPilot 的代码；在 InferPilot 的 checkout 里直接运行 `scripts/run_docker.sh` 效果相同。它就是常见的 ROCm `run_docker.sh`：一个带 GPU 的特权容器，以相同路径挂载 `/home` 和存在的数据目录（`/data`、`/mnt` 等，`EXTRA_MOUNTS` 可以再加），并在容器的 `/workspace` 里打开一个 root shell。InferPilot 的 agent 以 root 身份、自动批准权限运行，因此能读到这台机器上所有人的 home，包括里面的凭据（git、ssh）：需要时用 `MOUNT_HOME=0` 不挂 `/home`，适合不能看到那些内容的任务（比如独立重新实现）。你的 key 另外以只读方式挂成 root 的 `~/.inferpilot_env`。和很多同类脚本不同，它不挂载宿主机的 Docker socket（`DOCKER_SOCKET=1` 才挂）：挂上它，agent 就能操作宿主机上的所有容器。
 
-- **镜像。** 任务要在最新的 sglang 上测试，所以启动脚本会检测宿主机 GPU，并选择匹配的最新每日 ROCm 10 `rocm/sgl-dev` 镜像：gfx942（MI300/MI308/MI325）使用 `rocm10-mi30x`，gfx950（MI350/MI355）使用 `rocm10-mi35x`；这个 GPU 没有 ROCm 10 镜像时（Docker Hub 上没有，或 Docker Hub 连不上时本机没有），依次改用 ROCm 7.2.4、7.2.0。检测不了时会警告并回退到 MI35x（[`scripts/latest_image.py`](scripts/latest_image.py)，例如 `v0.5.23-rocm10-mi35x-20261103`；同一页面上的 `miles` 镜像用于强化学习，会被跳过）。每天的新镜像在第一次使用时拉取，约 43 GB。`IMAGE_VARIANT` 可以覆盖自动检测和回退，例如 `IMAGE_VARIANT=rocm724-mi30x`；要固定镜像，设置 `IMAGE=rocm/sgl-dev:<tag>`，第 3 步会让这个镜像的 `/sgl-workspace/sglang` 保持镜像原样。容器一直使用它启动时的镜像：回到一个镜像已经不是最新每日镜像的容器时，run_docker.sh 会提醒；在里面跑任务，会在 Setup 阶段、创建任何东西之前停下来，问你是否仍在这个镜像上运行（`image_ok`），除非任务指定的就是这个镜像（`image`）。scan 会照常进行，并在日报里写明所用的镜像。
-- **测的是哪份代码。** 镜像提供 PyTorch、aiter、sgl-kernel，以及它自带的 sglang checkout `/sgl-workspace/sglang`（带完整历史），sglang 就是以 editable 方式从这里安装的：这里检出的是什么，运行的就是什么，所以不需要另外克隆或指定 sglang。第 3 步把它切到当前的 main；之后每个任务都在它上面、从最新的 main 开自己的分支，Setup 会先 fetch。在基础 commit 上跑的 baseline 和 scan 读的当前 main，用的是同一个仓库在运行目录下的 worktree（每个约 0.2 GB）。运行记录会写下镜像、镜像里 sglang 的版本和任务的基础 commit。
-- **一个任务一个容器。** 用同一个 `NAME` 再次运行时，run_docker.sh 会回到那个容器（已停止的会先启动），`/workspace` 保持你离开时的样子：它从不删除容器。下一个任务换个名字开新容器（`NAME=<name>`），用的是最新的镜像；不再需要的容器用 `docker rm -f <name>` 删除，它的 `/workspace` 也随之删除。不管有多少个容器，一台机器同时只跑一个 InferPilot 任务（[运行](#运行)）。你自己的 run_docker.sh 也可以用：把 key 文件挂成 root 的 `~/.inferpilot_env`（`-v $HOME/.inferpilot_env:/root/.inferpilot_env:ro`），或者用 `INFERPILOT_KEYS` 指定这个文件；在挂载了 `/home` 的容器里，bootstrap 也会到你的 home 里去找（第 3 步）。
-- **没有终端时。** 在作业调度器（`srun`）、CI 或 agent 的 shell 里没有终端，`docker run -it` 用不了：这时 run_docker.sh 在后台启动容器，并打印进入它的 `docker exec` 命令（`DETACH=0` 或 `1` 可以覆盖它的判断）。Docker daemon 拒绝 `--privileged` 时，用 `PRIVILEGED=0` 去掉它；GPU 仍然通过 `/dev/kfd` 和 `/dev/dri` 进入容器，但容器写不了 `/proc/sys`。Docker daemon 拒绝挂载整个 `/home` 时，用 `MOUNT_HOME=0` 不挂它，再用 `EXTRA_MOUNTS=$HOME` 只挂你自己的 home。在后台启动时被拒，run_docker.sh 会说出该设哪个变量。
+它做什么，取决于名为 `NAME` 的容器是否已存在、以及是否指定了 `IMAGE`：
+
+| | 不指定 `IMAGE` | 指定了 `IMAGE` |
+|---|---|---|
+| 没有名为 `NAME` 的容器 | 用最新的每日镜像新建容器；在它的 `/sgl-workspace/sglang` 里执行 `git checkout -- .`、`git checkout main`、`git pull` | 用 `IMAGE` 新建容器；代码保持镜像原样 |
+| 已有名为 `NAME` 的容器 | 进入这个容器，代码保持离开时的样子，并警告它不是新建的容器 | 进入这个容器，代码保持离开时的样子；它的镜像不是 `IMAGE` 时给出警告 |
+
+- **镜像。** 任务要在最新的 sglang 上测试，所以启动脚本会检测宿主机 GPU，并选择匹配的最新每日 ROCm 10 `rocm/sgl-dev` 镜像：gfx942（MI300/MI308/MI325）使用 `rocm10-mi30x`，gfx950（MI350/MI355）使用 `rocm10-mi35x`；这个 GPU 没有 ROCm 10 镜像时（Docker Hub 上没有，或 Docker Hub 连不上时本机没有），依次改用 ROCm 7.2.4、7.2.0。检测不了时会警告并回退到 MI35x（[`scripts/latest_image.py`](scripts/latest_image.py)，例如 `v0.5.23-rocm10-mi35x-20261103`；同一页面上的 `miles` 镜像用于强化学习，会被跳过）。每天的新镜像在第一次使用时拉取，约 43 GB。`IMAGE_VARIANT` 可以覆盖自动检测和回退，例如 `IMAGE_VARIANT=rocm724-mi30x`；要固定镜像，设置 `IMAGE=rocm/sgl-dev:<tag>`，这时 `/sgl-workspace/sglang` 保持镜像原样。容器一直使用它启动时的镜像：回到一个镜像已经不是最新每日镜像的容器时，run_docker.sh 会提醒；在里面跑任务，会在 Setup 阶段、创建任何东西之前停下来，问你是否仍在这个镜像上运行（`image_ok`），除非任务指定的就是这个镜像（`image`）。scan 会照常进行，并在日报里写明所用的镜像。
+- **测的是哪份代码。** 镜像提供 PyTorch、aiter、sgl-kernel，以及它自带的 sglang checkout `/sgl-workspace/sglang`（带完整历史），sglang 就是以 editable 方式从这里安装的：这里检出的是什么，运行的就是什么，所以不需要另外克隆或指定 sglang。用每日镜像新建的容器一开始就在当前的 main 上：run_docker.sh 会丢弃镜像构建在这里的改动、切到 main 并拉取。之后不要在这里 `pip install -e`：这时它的 `pyproject.toml` 是上游默认的版本，会装进 CUDA 的包。用指定的 `IMAGE` 新建的容器、以及再次进入的容器，代码都保持原样。每个任务都在它上面、从最新的 main 开自己的分支，Setup 会先 fetch。在基础 commit 上跑的 baseline 和 scan 读的当前 main，用的是同一个仓库在运行目录下的 worktree（每个约 0.2 GB）。运行记录会写下镜像、镜像里 sglang 的版本和任务的基础 commit。
+- **一个任务一个容器。** 用同一个 `NAME` 再次运行时，run_docker.sh 会回到那个容器（已停止的会先启动），`/workspace` 保持你离开时的样子：它从不删除容器，也不改容器里的代码。打开的 shell 是进入容器的 `docker exec`，所以退出 shell 后容器继续运行（`docker stop <name>` 可以停掉它）。下一个任务换个名字开新容器（`NAME=<name>`），用的是最新的镜像；不再需要的容器用 `docker rm -f <name>` 删除，它的 `/workspace` 也随之删除。不管有多少个容器，一台机器同时只跑一个 InferPilot 任务（[运行](#运行)）。你自己的 run_docker.sh 也可以用：把 key 文件挂成 root 的 `~/.inferpilot_env`（`-v $HOME/.inferpilot_env:/root/.inferpilot_env:ro`），或者用 `INFERPILOT_KEYS` 指定这个文件；在挂载了 `/home` 的容器里，bootstrap 也会到你的 home 里去找（第 3 步）。
+- **没有终端时。** 在作业调度器（`srun`）、CI 或 agent 的 shell 里没有终端，打不开交互 shell：这时 run_docker.sh 让容器在后台运行，并打印进入它的 `docker exec` 命令（`DETACH=0` 或 `1` 可以覆盖它的判断）。Docker daemon 拒绝 `--privileged` 时，用 `PRIVILEGED=0` 去掉它；GPU 仍然通过 `/dev/kfd` 和 `/dev/dri` 进入容器，但容器写不了 `/proc/sys`。Docker daemon 拒绝挂载整个 `/home` 时，用 `MOUNT_HOME=0` 不挂它，再用 `EXTRA_MOUNTS=$HOME` 只挂你自己的 home。启动被拒时，run_docker.sh 会说出该设哪个变量。
 
 此时容器里还没有 `claude`（`claude: command not found`）：第 3 步会安装它。
 
@@ -126,7 +133,7 @@ claude --version    # 装在这个容器里的 Claude Code
 | git | 信任宿主机挂载目录里的 checkout，它们属于你而不是 root（`safe.directory '*'`） |
 | git 身份 | root 以 key 文件（或环境变量）里的 `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` 提交，所以不会出现作者为 `root@<本机主机名>` 的提交；两者都没有时，它会提示，不会自己编一个 |
 | shell | 在 root 的 `~/.bashrc` 里设置 `PYTHONDONTWRITEBYTECODE=1`（宿主机挂载目录里的 checkout 不会出现 root 所有的 `__pycache__`）和 `DISABLE_AUTOUPDATER=1`，并加载 key 文件，之后才放进去的也会加载；设置了 `LLM_GATEWAY_KEY` 且没有 `ANTHROPIC_BASE_URL` 时，让 Claude Code 走 AMD LLM 网关 |
-| 框架 | 镜像里的 `/sgl-workspace/sglang` 如果还是镜像留下的样子（detached 在构建时的 commit 上，打包文件被改成了 ROCm 版），就把它切到 main：丢弃这些打包改动，然后 `git checkout main`、`git pull`。之后不要在这里 `pip install -e`：这时它的 `pyproject.toml` 是上游默认的版本，会装进 CUDA 的包。已经在某个分支上、或者有其他改动的 checkout 原样保留，用指定的 `IMAGE` 启动的容器里的 checkout 也原样保留（任务的 Setup 会因为它的打包改动停下，直到你自己处理）；用 `--framework-dir` 可以改用宿主机上的 checkout（已有的原样使用，缺失时带完整历史克隆） |
+| 框架 | 镜像里的 `/sgl-workspace/sglang`，原样保留：用每日镜像新建的容器里，run_docker.sh 已经把它切到当前的 main（第 2 步）；用指定的 `IMAGE` 新建的容器、以及再次进入的容器，代码保持原样。这里有未提交的改动时会提示，因为任务的 Setup 会因此停下，直到你自己处理（用指定 `IMAGE` 新建的容器里，就是镜像构建对打包文件的改动）；用 `--framework-dir` 可以改用宿主机上的 checkout（已有的原样使用，缺失时带完整历史克隆） |
 | evalscope | 供 `scripts/eval_accuracy.sh` 使用：装在单独的 venv `/opt/evalscope` 里（约一分钟、1.2 GB），并链接为 `/usr/local/bin/evalscope`。不装进镜像的 Python，否则会把 `datasets` 和 `fsspec` 降到比 sglang 自带的更低的版本；`PATH` 上已经有 `evalscope` 时保留原样 |
 | 检查 | GPU、sglang、evalscope、API 访问、`GITHUB_TOKEN`，key 文件里设置的也算（只检测） |
 

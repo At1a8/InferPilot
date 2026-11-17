@@ -14,13 +14,21 @@
 #
 # Each container keeps its own /workspace, where InferPilot and its runs live, and its own copy of the image's
 # /sgl-workspace/sglang, the code tasks change: apart from every other container's, for as long as the
-# container exists. A new container starts from the newest daily image, pulled at its first use; with
-# IMAGE given, from that image, whose /sgl-workspace/sglang README step 3 then leaves as it is
-# (INFERPILOT_IMAGE_PINNED=1). A container named NAME is never removed: run again, this starts it if it was stopped and opens a shell in
-# it, /workspace as it was left, and says so when its image is no longer the newest daily one (tasks there
-# stop at Setup to ask). A new task gets a new container under another NAME; `docker rm -f <name>`
-# removes one you are done with, and its /workspace with it. Run README step 3 once in every new
-# container: it installs Claude Code there.
+# container exists. Only a new container from the daily image has that code changed, and only once:
+#
+#                      no IMAGE                                   IMAGE given
+#   no container NAME  new, from the newest daily image, pulled   new, from IMAGE (INFERPILOT_IMAGE_PINNED=1);
+#                      at its first use; then in its sglang:      its sglang as the image has it
+#                      git checkout -- . && git checkout main
+#                      && git pull
+#   container NAME     entered, its code as it was left; warns    entered, its code as it was left; warns when
+#                      that it is not a new container             it runs another image than IMAGE
+#
+# A container named NAME is never removed: run again, this starts it if it was stopped and opens a shell in it,
+# /workspace as it was left, and says so when its image is no longer the newest daily one (tasks there stop at
+# Setup to ask). The shell is a `docker exec` into the container's own bash, so leaving it leaves the container
+# running. A new task gets a new container under another NAME; `docker rm -f <name>` removes one you are done
+# with, and its /workspace with it. Run README step 3 once in every new container: it installs Claude Code there.
 #
 # /home and the data directories that exist (/data, /mnt, ...) are mounted at the same paths. InferPilot's
 # agents run as root with permissions auto-approved, so they can read every home on the machine and the
@@ -45,6 +53,26 @@ fi
 entered() {  # what to run when this script opened no shell
   echo "run_docker.sh: container $NAME is running; enter it with:" \
     "${SUDO:+sudo }docker exec -it -w /workspace -e INFERPILOT_CONTAINER=$NAME $NAME bash" >&2
+}
+
+warn() {  # in bold yellow on a terminal
+  if [ -t 2 ]; then
+    printf '\033[1;33mrun_docker.sh: WARNING: %s\033[0m\n' "$*" >&2
+  else
+    echo "run_docker.sh: WARNING: $*" >&2
+  fi
+}
+
+follow_main() {  # a new container from the daily image: its sglang on the newest main
+  local out
+  echo "run_docker.sh: in /sgl-workspace/sglang: git checkout -- . && git checkout main && git pull" >&2
+  if out=$($SUDO docker exec -w /sgl-workspace/sglang "$NAME" bash -c \
+      'git checkout -- . && git checkout -q main && git pull -q && git log -1 --format="%h %cs"' 2>&1); then
+    echo "run_docker.sh: /sgl-workspace/sglang is on main at ${out##*$'\n'}; never \`pip install -e\` from it:" \
+      "its pyproject.toml is upstream's" >&2
+  else
+    warn "could not put /sgl-workspace/sglang on the newest main: ${out##*$'\n'}"
+  fi
 }
 
 latest_image() {  # scripts/latest_image.py next to this script, else the one on GitHub
@@ -74,10 +102,14 @@ newest_local() {  # the newest local daily image of a variant
 }
 
 if OLD=$($SUDO docker inspect -f '{{.Config.Image}}' "$NAME" 2>/dev/null); then
-  if [ -n "$IMAGE" ] && [ "$IMAGE" != "$OLD" ]; then
-    echo "run_docker.sh: container $NAME runs $OLD, not $IMAGE. Pick another NAME, or remove it first" \
-      "(\`${SUDO:+sudo }docker rm -f $NAME\`, which deletes its /workspace)" >&2
-    exit 1
+  if [ -z "$IMAGE" ]; then
+    warn "container $NAME already exists ($OLD): you enter it, not a new container, so its" \
+      "/sgl-workspace/sglang is as it was left, not put on the newest main. For a new one: NAME=<another name>" \
+      "$0 (or remove this one first: \`${SUDO:+sudo }docker rm -f $NAME\`, which deletes its /workspace)"
+  elif [ "$IMAGE" != "$OLD" ]; then
+    warn "container $NAME runs $OLD, not $IMAGE: you enter a container of another image version than the" \
+      "one you asked for, its code as it was left. For $IMAGE: IMAGE=$IMAGE NAME=<another name> $0 (or" \
+      "remove this one first: \`${SUDO:+sudo }docker rm -f $NAME\`, which deletes its /workspace)"
   fi
   echo "run_docker.sh: back into container $NAME ($OLD), /workspace as it was left" >&2
   CMP=$(latest_image --compare "$OLD" 2>/dev/null)
@@ -139,8 +171,10 @@ OPTS=("${PRIV[@]}" --ipc=host --network=host --device=/dev/kfd --device=/dev/dri
   --shm-size=512G --ulimit memlock=-1 --ulimit stack=67108864
   --entrypoint /bin/bash --name "$NAME" "$IMAGE")
 
-[ "$DETACH" = 1 ] || exec $SUDO docker run -it "${OPTS[@]}"
-# -dit: the same bash as an interactive run, kept alive by its open stdin, so `docker start` works the same
+# Pulled here, in sight: `docker run -dit` below keeps its output, and a new day's image is about 43 GB.
+$SUDO docker image inspect "$IMAGE" >/dev/null 2>&1 || $SUDO docker pull "$IMAGE" || exit 1
+# -dit: the same bash as an interactive run, kept alive by its open stdin, so `docker start` works the same; the
+# shell you get is a `docker exec` into it, as when you come back, after the daily image's sglang is on main.
 if ! OUT=$($SUDO docker run -dit "${OPTS[@]}" 2>&1); then
   echo "$OUT" >&2
   case "$OUT" in
@@ -150,4 +184,6 @@ if ! OUT=$($SUDO docker run -dit "${OPTS[@]}" 2>&1); then
   esac
   exit 1
 fi
-entered
+[ "$PINNED" = 1 ] || follow_main
+[ "$DETACH" = 1 ] && { entered; exit 0; }
+exec $SUDO docker exec -it -w /workspace -e INFERPILOT_CONTAINER="$NAME" "$NAME" bash

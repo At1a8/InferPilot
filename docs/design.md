@@ -127,8 +127,9 @@ started; the host's Docker socket is not mounted by default. Tasks test the newe
 image, a task runs on the newest daily `rocm/sgl-dev` image for its ROCm and GPU (`scripts/latest_image.py`),
 which a new container starts from; a container on an older one stops Setup, before it creates
 anything, to ask (`image_ok`). The image installs sglang in editable mode from its own full-history
-checkout, `/sgl-workspace/sglang`, so what runs is what is checked out there: setup puts it on main
-once per container (discarding only the image build's packaging changes), and each task works in it
+checkout, `/sgl-workspace/sglang`, so what runs is what is checked out there: `scripts/run_docker.sh`
+puts it on main when it creates a container from the daily image (discarding the image build's packaging
+changes), a container from a given image or entered again keeps its code, and each task works in it
 on its own branch from the current main, which Setup fetches first; a dirty checkout stops Setup. A
 baseline at the base commit, and a scan of the current main, read worktrees of the same repository
 under the run directory. Run directories live in the container's `<inferpilot_dir>/exp`, with an `index.md`

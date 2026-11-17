@@ -83,8 +83,6 @@ class VersionAndSettingsTest(unittest.TestCase):
             self.assertEqual((s["evalscope_venv"], s["evalscope_version"]), (bs.EVALSCOPE_VENV, ""))
             s = bs.settings({"PWD": str(work), "HOME": d, "EVALSCOPE_VENV": "~/es", "EVALSCOPE_VERSION": "1.15.0"})
             self.assertEqual((s["evalscope_venv"], s["evalscope_version"]), (os.path.join(d, "es"), "1.15.0"))
-            self.assertEqual([S(work, HOME=d, INFERPILOT_IMAGE_PINNED=v)["image_pinned"] for v in ("1", "0", "")],
-                             [True, False, False])
 
 
 class KeysTest(unittest.TestCase):
@@ -262,7 +260,10 @@ class RunDockerTest(unittest.TestCase):
         make_exe(fake / "docker").write_text(
             '#!/bin/sh\necho "$*" >> "$DOCKER_LOG"\n'
             'if [ "$1" = inspect ]; then [ -n "$FAKE_IMAGE" ] || exit 1; echo "$FAKE_IMAGE"; fi\n'
+            'if [ "$1 $2" = "image inspect" ] && [ -n "$FAKE_MISSING" ]; then exit 1; fi\n'
             'if [ "$1" = run ] && [ -n "$FAKE_DENY" ]; then echo "$FAKE_DENY" >&2; exit 125; fi\n'
+            'if [ "$1 $2" = "exec -w" ]; then [ -z "$FAKE_PULL_FAIL" ] || { echo "$FAKE_PULL_FAIL" >&2; exit 1; }; '
+            'echo "b2cc023f23 2026-11-17"; fi\n'
             'if [ "$1" = images ]; then printf "%s\\n" $FAKE_LOCAL; fi\n')
         make_exe(fake / "sudo").write_text('#!/bin/sh\nexec "$@"\n')
         make_exe(fake / "rocm-smi").write_text(
@@ -281,16 +282,60 @@ class RunDockerTest(unittest.TestCase):
         self.log.unlink(missing_ok=True)
         return r.returncode, calls
 
+    @staticmethod
+    def created(calls):
+        """The `docker run` that created the container."""
+        return next(c for c in calls if c.startswith("run "))
+
+    def daily(self):
+        """PATH with a python3 that answers latest_image.py: the newest daily image is ...-20261117."""
+        fake_py = self.tmp / "py"
+        make_exe(fake_py / "python3").write_text('#!/bin/sh\necho "rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261117"\n')
+        return "%s:%s" % (fake_py, self.path)
+
     def test_parses(self):
         self.assertEqual(subprocess.run(["bash", "-n", str(ROOT / "scripts" / "run_docker.sh")]).returncode, 0)
 
-    def test_an_existing_container_is_entered_again(self):
+    def test_an_existing_container_is_entered_again_its_code_as_it_was_left(self):
         """With your home, also in a container this script did not start."""
         inspect = "inspect -f {{.Config.Image}} tester"
         enter = [inspect, "start tester", "exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash"]
-        self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old"), (0, enter))
-        self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", image="rocm/sgl-dev:old"), (0, enter))
-        self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", image="rocm/sgl-dev:new"), (1, [inspect]))
+        self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", PATH=self.daily()), (0, enter))
+        self.assertIn("WARNING: container tester already exists (rocm/sgl-dev:old): you enter it, not a new container",
+                      self.stderr)
+        self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", image="rocm/sgl-dev:old", PATH=self.daily()),
+                         (0, enter))
+        self.assertNotIn("WARNING", self.stderr)
+        self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", image="rocm/sgl-dev:new", PATH=self.daily()),
+                         (0, enter))
+        self.assertIn("WARNING: container tester runs rocm/sgl-dev:old, not rocm/sgl-dev:new: you enter a container of "
+                      "another image version", self.stderr)
+
+    def test_a_new_container_from_the_daily_image_starts_on_the_newest_main(self):
+        main = ("exec -w /sgl-workspace/sglang tester bash -c git checkout -- . && git checkout -q main && git pull -q"
+                ' && git log -1 --format="%h %cs"')
+        rc, calls = self.run_docker(PATH=self.daily())
+        self.assertEqual((rc, [c.split()[0] for c in calls[-3:]]), (0, ["run", "exec", "exec"]), self.stderr)
+        self.assertIn("-e INFERPILOT_IMAGE_PINNED=0", calls[-3])
+        self.assertEqual(calls[-2:], [main, "exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash"])
+        self.assertIn("/sgl-workspace/sglang is on main at b2cc023f23 2026-11-17", self.stderr)
+        rc, calls = self.run_docker(image="rocm/sgl-dev:new")
+        self.assertEqual((rc, [c.split()[0] for c in calls]), (0, ["inspect", "image", "run", "exec"]),
+                         "a given image's code stays")
+        rc, calls = self.run_docker(PATH=self.daily(), DETACH="1")
+        self.assertEqual((rc, calls[-1]), (0, main), "without a terminal too")
+
+    def test_a_missing_image_is_pulled_in_sight_first(self):
+        rc, calls = self.run_docker(image="rocm/sgl-dev:new", FAKE_MISSING="1")
+        self.assertEqual((rc, calls[1:3]), (0, ["image inspect rocm/sgl-dev:new", "pull rocm/sgl-dev:new"]))
+        self.assertTrue(calls[3].startswith("run -dit "), calls)
+        rc, calls = self.run_docker(image="rocm/sgl-dev:new")
+        self.assertNotIn("pull rocm/sgl-dev:new", calls)
+
+    def test_a_failed_pull_is_said_and_the_shell_still_opens(self):
+        rc, calls = self.run_docker(PATH=self.daily(), FAKE_PULL_FAIL="fatal: unable to access 'https://github.com/'")
+        self.assertEqual((rc, calls[-1]), (0, "exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash"))
+        self.assertIn("WARNING: could not put /sgl-workspace/sglang on the newest main: fatal: unable to access", self.stderr)
 
     def test_entering_a_container_on_an_older_image_says_so(self):
         fake_py = self.tmp / "py"
@@ -307,8 +352,9 @@ class RunDockerTest(unittest.TestCase):
 
     def test_a_new_container_starts_in_workspace(self):
         rc, calls = self.run_docker(image="rocm/sgl-dev:new")
-        self.assertEqual((rc, len(calls), calls[-1].split()[:2]), (0, 2, ["run", "-it"]))
-        run = calls[-1]
+        self.assertEqual((rc, len(calls), calls[2].split()[:2]), (0, 4, ["run", "-dit"]))
+        self.assertEqual(calls[3], "exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash")
+        run = calls[2]
         self.assertIn("-w /workspace", run)
         self.assertTrue(run.endswith("--name tester rocm/sgl-dev:new"), run)
         self.assertIn("-e INFERPILOT_IMAGE=rocm/sgl-dev:new -e INFERPILOT_IMAGE_PINNED=1", run, "IMAGE was given")
@@ -337,8 +383,8 @@ class RunDockerTest(unittest.TestCase):
                     self.assertEqual((rc, calls[-1].split()[0]), (1, "images"), "IMAGE_VARIANT is not widened")
                     continue
                 self.assertEqual(rc, 0, self.stderr)
-                self.assertTrue(calls[-1].endswith("rocm/sgl-dev:" + want), calls[-1])
-                self.assertIn("-e INFERPILOT_IMAGE_PINNED=0", calls[-1], "the image was chosen for you")
+                self.assertTrue(self.created(calls).endswith("rocm/sgl-dev:" + want), calls)
+                self.assertIn("-e INFERPILOT_IMAGE_PINNED=0", self.created(calls), "the image was chosen for you")
 
     def test_without_a_terminal_it_starts_detached_and_says_how_to_enter(self):
         enter = "docker exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash"
@@ -354,8 +400,8 @@ class RunDockerTest(unittest.TestCase):
     def test_privileged_0_leaves_it_out_and_keeps_the_gpus(self):
         rc, calls = self.run_docker(image="rocm/sgl-dev:new", PRIVILEGED="0")
         self.assertEqual(rc, 0)
-        self.assertNotIn("--privileged", calls[-1])
-        self.assertIn("--device=/dev/kfd --device=/dev/dri --group-add video", calls[-1])
+        self.assertNotIn("--privileged", self.created(calls))
+        self.assertIn("--device=/dev/kfd --device=/dev/dri --group-add video", self.created(calls))
 
     def test_a_refused_run_names_the_way_out(self):
         # the two refusals a docker-authz plugin gave on a real cluster, --privileged first
@@ -373,16 +419,16 @@ class RunDockerTest(unittest.TestCase):
         """For a task that must not see the homes on the machine, such as a clean-room re-implementation."""
         rc, calls = self.run_docker(image="rocm/sgl-dev:new", MOUNT_HOME="0")
         self.assertEqual(rc, 0)
-        self.assertNotIn("-v /home:/home", calls[-1])
-        self.assertNotIn("INFERPILOT_HOST_HOME", calls[-1])
-        self.assertIn("-w /workspace", calls[-1])
+        self.assertNotIn("-v /home:/home", self.created(calls))
+        self.assertNotIn("INFERPILOT_HOST_HOME", self.created(calls))
+        self.assertIn("-w /workspace", self.created(calls))
 
     def test_the_keys_file_is_mounted_read_only(self):
         home = self.tmp / "home"
         home.mkdir()
         (home / ".inferpilot_env").write_text("export LLM_GATEWAY_KEY=k\n")
         rc, calls = self.run_docker(image="rocm/sgl-dev:new")
-        self.assertIn("-v %s:/root/.inferpilot_env:ro" % (home / ".inferpilot_env"), calls[-1])
+        self.assertIn("-v %s:/root/.inferpilot_env:ro" % (home / ".inferpilot_env"), self.created(calls))
 
 
 class ClaudeCodeTest(unittest.TestCase):
@@ -670,45 +716,34 @@ class FrameworkTest(unittest.TestCase):
             with mock.patch.object(bs, "IMAGE_SGLANG", os.path.join(d, "no-image-checkout")), Quiet():
                 self.assertEqual(bs.ensure_framework(S(d))[0], "skipped")
 
-    def image_framework(self, d, branch="", changed="", built="f3532057e1", **env):
-        """ensure_framework on a fake image checkout; returns (result, the git commands it ran)."""
+    def image_framework(self, d, status="", **env):
+        """ensure_framework on a fake image checkout; returns (result, the git commands it ran, what it warned)."""
         image = Path(d) / "sgl-workspace" / "sglang"
         (image / ".git").mkdir(parents=True, exist_ok=True)
         answers = {"log": (0, "f3532057e1 2026-11-05", ""), "rev-parse": (0, "false", ""),
-                   "remote": (0, "https://github.com/sgl-project/sglang.git", ""),
-                   "symbolic-ref": (0, branch, "") if branch else (1, "", ""), "diff": (0, changed, "")}
-        with mock.patch.object(bs, "IMAGE_SGLANG", str(image)), mock.patch.object(bs, "installed_commit", return_value=built), \
+                   "remote": (0, "https://github.com/sgl-project/sglang.git", ""), "status": (0, status, "")}
+        with mock.patch.object(bs, "IMAGE_SGLANG", str(image)), \
                 mock.patch.object(bs, "_out", side_effect=lambda cmd: answers[cmd[3]]), \
-                mock.patch.object(bs, "_run", return_value=OK) as run, Quiet():
+                mock.patch.object(bs, "_run", return_value=OK) as run, Quiet() as q:
             res = bs.ensure_framework(S(d, **env))
             self.assertNotIn("framework_dir=", bs.next_steps(bs.settings({"PWD": d, "HOME": d}), {}, {"api": True},
                                                              path_env="/usr/bin"))
-        return res, [c.args[0][3:] for c in run.call_args_list], str(image)
+        self.assertEqual(res, ("kept", str(image)))
+        return res, run.call_args_list, q.err.getvalue()
 
-    def test_the_image_checkout_on_a_branch_is_kept(self):
+    def test_the_image_checkout_is_never_changed(self):
+        """run_docker.sh puts it on main in a new container from the daily image; nothing else changes it."""
         with tempfile.TemporaryDirectory() as d:
-            res, ran, image = self.image_framework(d, branch="main")
-            self.assertEqual((res, ran), (("kept", "%s on main" % image), []))
-
-    def test_the_image_checkout_as_the_image_left_it_goes_on_main(self):
-        with tempfile.TemporaryDirectory() as d:
-            res, ran, image = self.image_framework(d, changed="python/pyproject.toml\npython/sglang/kernels/aot/pyproject_rocm.toml")
-            self.assertEqual(res[0], "updated")
-            self.assertEqual(ran, [["checkout", "HEAD", "--", "python/pyproject.toml", "python/sglang/kernels/aot/pyproject_rocm.toml"],
-                                   ["checkout", "main"], ["pull", "--ff-only"]])
-
-    def test_the_checkout_of_a_given_image_is_kept_as_the_image_has_it(self):
-        with tempfile.TemporaryDirectory() as d:
-            res, ran, image = self.image_framework(d, changed="python/pyproject.toml\npython/sglang/kernels/aot/pyproject_rocm.toml",
-                                                   INFERPILOT_IMAGE_PINNED="1")
-            self.assertEqual((res, ran), (("kept", image), []))
-
-    def test_the_image_checkout_is_left_alone_unless_as_the_image_left_it(self):
-        with tempfile.TemporaryDirectory() as d:
-            res, ran, _ = self.image_framework(d, changed="python/pyproject.toml\npython/sglang/srt/server_args.py")
-            self.assertEqual((res[0], ran), ("skipped", []))
-            res, ran, _ = self.image_framework(d, built="0123456789")
-            self.assertEqual((res[0], ran), ("skipped", []))
+            for status, env in (("", {}), ("", {"INFERPILOT_IMAGE_PINNED": "1"}),
+                                (" M python/pyproject.toml\n D python/sglang/kernels/aot/pyproject_rocm.toml", {}),
+                                (" M python/sglang/srt/server_args.py", {"INFERPILOT_IMAGE_PINNED": "1"})):
+                with self.subTest(status=status, **env):
+                    _, ran, err = self.image_framework(d, status, **env)
+                    self.assertEqual(ran, [])
+                    self.assertEqual("uncommitted changes" in err, bool(status), err)
+            _, _, err = self.image_framework(d, " M python/pyproject.toml\n D python/sglang/kernels/aot/pyproject_rocm.toml")
+            self.assertIn("(python/pyproject.toml, python/sglang/kernels/aot/pyproject_rocm.toml)", err)
+            self.assertIn("a task's Setup stops on them", err)
 
     def test_existing_checkout_is_kept_as_it_is(self):
         with tempfile.TemporaryDirectory() as d:
