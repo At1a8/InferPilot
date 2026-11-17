@@ -259,14 +259,18 @@ class RunDockerTest(unittest.TestCase):
         fake = self.tmp / "bin"
         make_exe(fake / "docker").write_text(
             '#!/bin/sh\necho "$*" >> "$DOCKER_LOG"\n'
-            'if [ "$1" = inspect ]; then [ -n "$FAKE_IMAGE" ] || exit 1; echo "$FAKE_IMAGE"; fi\n')
+            'if [ "$1" = inspect ]; then [ -n "$FAKE_IMAGE" ] || exit 1; echo "$FAKE_IMAGE"; fi\n'
+            'if [ "$1" = run ] && [ -n "$FAKE_DENY" ]; then echo "$FAKE_DENY" >&2; exit 125; fi\n')
         make_exe(fake / "sudo").write_text('#!/bin/sh\nexec "$@"\n')
         self.path = "%s:%s" % (fake, os.environ.get("PATH", "/usr/bin:/bin"))
 
     def run_docker(self, existing="", image="", **extra):
+        # stdin is never a terminal here; DETACH=0 stands for the interactive case
         env = {"PATH": self.path, "HOME": str(self.tmp / "home"), "USER": "tester", "DOCKER_LOG": str(self.log),
-               "FAKE_IMAGE": existing, "IMAGE": image, **extra}
-        r = subprocess.run(["bash", str(ROOT / "scripts" / "run_docker.sh")], env=env, capture_output=True, text=True)
+               "FAKE_IMAGE": existing, "IMAGE": image, "DETACH": "0", **extra}
+        r = subprocess.run(["bash", str(ROOT / "scripts" / "run_docker.sh")], env=env, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL)
+        self.stderr = r.stderr
         calls = self.log.read_text().splitlines() if self.log.exists() else []
         self.log.unlink(missing_ok=True)
         return r.returncode, calls
@@ -286,8 +290,10 @@ class RunDockerTest(unittest.TestCase):
         fake_py = self.tmp / "py"
         make_exe(fake_py / "python3").write_text('#!/bin/sh\necho "older rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261109"\n')
         env = {"PATH": "%s:%s" % (fake_py, self.path), "HOME": str(self.tmp / "home"), "USER": "tester",
-               "DOCKER_LOG": str(self.log), "FAKE_IMAGE": "rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261105", "IMAGE": ""}
-        r = subprocess.run(["bash", str(ROOT / "scripts" / "run_docker.sh")], env=env, capture_output=True, text=True)
+               "DOCKER_LOG": str(self.log), "FAKE_IMAGE": "rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261105", "IMAGE": "",
+               "DETACH": "0"}
+        r = subprocess.run(["bash", str(ROOT / "scripts" / "run_docker.sh")], env=env, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("not the newest daily image any more; that is rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261109", r.stderr)
         self.assertIn("NAME=tester-", r.stderr)
@@ -301,7 +307,37 @@ class RunDockerTest(unittest.TestCase):
         self.assertTrue(run.endswith("--name tester rocm/sgl-dev:new"), run)
         self.assertIn("-v /home:/home", run)
         self.assertIn("-e INFERPILOT_HOST_HOME=%s" % (self.tmp / "home"), run)
+        self.assertIn("--privileged", run)
         self.assertNotIn(".inferpilot_env", run, "no keys file to mount")
+
+    def test_without_a_terminal_it_starts_detached_and_says_how_to_enter(self):
+        enter = "docker exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash"
+        rc, calls = self.run_docker(image="rocm/sgl-dev:new", DETACH="")
+        self.assertEqual((rc, calls[-1].split()[:2]), (0, ["run", "-dit"]), self.stderr)
+        self.assertTrue(calls[-1].endswith("--name tester rocm/sgl-dev:new"), calls[-1])
+        self.assertIn(enter, self.stderr)
+
+        rc, calls = self.run_docker(existing="rocm/sgl-dev:new", DETACH="")
+        self.assertEqual((rc, calls), (0, ["inspect -f {{.Config.Image}} tester", "start tester"]))
+        self.assertIn(enter, self.stderr)
+
+    def test_privileged_0_leaves_it_out_and_keeps_the_gpus(self):
+        rc, calls = self.run_docker(image="rocm/sgl-dev:new", PRIVILEGED="0")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("--privileged", calls[-1])
+        self.assertIn("--device=/dev/kfd --device=/dev/dri --group-add video", calls[-1])
+
+    def test_a_refused_run_names_the_way_out(self):
+        # the two refusals a docker-authz plugin gave on a real cluster, --privileged first
+        for deny, hint in (("denied [P1]: --privileged -- request specific adds as necessary for your workload",
+                            "run again with PRIVILEGED=0"),
+                           ("denied [BH]: /home:/home -- mount your own directory instead, e.g. -v $HOME:$HOME",
+                            "run again with MOUNT_HOME=0")):
+            msg = "docker: Error response from daemon: authorization denied by plugin docker-authz: docker-authz: " + deny
+            rc, _ = self.run_docker(image="rocm/sgl-dev:new", DETACH="1", FAKE_DENY=msg)
+            self.assertEqual(rc, 1)
+            self.assertIn(deny, self.stderr)
+            self.assertIn(hint, self.stderr)
 
     def test_mount_home_0_leaves_home_out(self):
         """For a task that must not see the homes on the machine, such as a clean-room re-implementation."""

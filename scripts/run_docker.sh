@@ -8,6 +8,8 @@
 #   EXTRA_MOUNTS="/home/<you>/models" scripts/run_docker.sh   # more host directories, at the same paths
 #   DOCKER_SOCKET=1 scripts/run_docker.sh                # also mount the host's Docker socket
 #   MOUNT_HOME=0 scripts/run_docker.sh                   # leave /home out (a clean-room task)
+#   DETACH=1 scripts/run_docker.sh                       # start it in the background, open no shell
+#   PRIVILEGED=0 scripts/run_docker.sh                   # where the Docker daemon refuses --privileged
 #   bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts/run_docker.sh)   # no checkout
 #
 # Each container keeps its own /workspace, where InferPilot and its runs live, and its own copy of the image's
@@ -25,12 +27,23 @@
 # (a clean-room re-implementation). Your keys also come in as root's ~/.inferpilot_env, mounted read-only.
 # The host's Docker socket is not mounted by default: it would let the agents stop or start any container
 # on the host, and InferPilot inside the container does not need it.
+#
+# `docker run -it` needs a terminal. Without one (srun, CI, an agent's shell) the container starts in the
+# background and the script prints the `docker exec` that enters it; DETACH=0 or 1 overrides the guess.
 VARIANT=${IMAGE_VARIANT:-rocm10-mi35x}
 NAME=${NAME:-${SUDO_USER:-$USER}}
 HOST_HOME=$HOME
 [ -n "$SUDO_USER" ] && HOST_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 SUDO=$([ -w /var/run/docker.sock ] || echo sudo)
 RAW=https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts
+if [ -z "$DETACH" ]; then
+  if [ -t 0 ]; then DETACH=0; else DETACH=1; fi
+fi
+
+entered() {  # what to run when this script opened no shell
+  echo "run_docker.sh: container $NAME is running; enter it with:" \
+    "${SUDO:+sudo }docker exec -it -w /workspace -e INFERPILOT_CONTAINER=$NAME $NAME bash" >&2
+}
 
 latest_image() {  # scripts/latest_image.py next to this script, else the one on GitHub
   if [ -f "$(dirname "$0")/latest_image.py" ]; then
@@ -55,6 +68,7 @@ if OLD=$($SUDO docker inspect -f '{{.Config.Image}}' "$NAME" 2>/dev/null); then
                 "which deletes its /workspace)" >&2 ;;
   esac
   $SUDO docker start "$NAME" >/dev/null || exit 1
+  [ "$DETACH" = 1 ] && { entered; exit 0; }
   exec $SUDO docker exec -it -w /workspace -e INFERPILOT_CONTAINER="$NAME" "$NAME" bash
 fi
 
@@ -88,11 +102,27 @@ else
 fi
 [ "$DOCKER_SOCKET" = 1 ] && MOUNTS+=(-v /var/run/docker.sock:/var/run/docker.sock -v /usr/bin/docker:/usr/bin/docker:ro)
 
-exec $SUDO docker run -it \
-  --privileged --ipc=host --network=host --device=/dev/kfd --device=/dev/dri --group-add video \
-  --cap-add=SYS_PTRACE --security-opt seccomp=unconfined -w /workspace \
-  "${MOUNTS[@]}" \
-  -e PYTHONDONTWRITEBYTECODE=1 -e DISABLE_AUTOUPDATER=1 -e INFERPILOT_IMAGE="$IMAGE" -e INFERPILOT_CONTAINER="$NAME" \
-  "${HOME_ENV[@]}" \
-  --shm-size=512G --ulimit memlock=-1 --ulimit stack=67108864 \
-  --entrypoint /bin/bash --name "$NAME" "$IMAGE"
+# Without --privileged the GPUs still come through the devices below, but the container cannot write
+# /proc/sys (kernel.numa_balancing has to be set on the host).
+PRIV=(--privileged)
+[ "$PRIVILEGED" = 0 ] && PRIV=()
+OPTS=("${PRIV[@]}" --ipc=host --network=host --device=/dev/kfd --device=/dev/dri --group-add video
+  --cap-add=SYS_PTRACE --security-opt seccomp=unconfined -w /workspace
+  "${MOUNTS[@]}"
+  -e PYTHONDONTWRITEBYTECODE=1 -e DISABLE_AUTOUPDATER=1 -e INFERPILOT_IMAGE="$IMAGE" -e INFERPILOT_CONTAINER="$NAME"
+  "${HOME_ENV[@]}"
+  --shm-size=512G --ulimit memlock=-1 --ulimit stack=67108864
+  --entrypoint /bin/bash --name "$NAME" "$IMAGE")
+
+[ "$DETACH" = 1 ] || exec $SUDO docker run -it "${OPTS[@]}"
+# -dit: the same bash as an interactive run, kept alive by its open stdin, so `docker start` works the same
+if ! OUT=$($SUDO docker run -dit "${OPTS[@]}" 2>&1); then
+  echo "$OUT" >&2
+  case "$OUT" in
+    *authorization*--privileged*) echo "run_docker.sh: this Docker daemon refuses --privileged; run again with PRIVILEGED=0" >&2 ;;
+    *authorization*/home:/home*) echo "run_docker.sh: this Docker daemon refuses a mount of all of /home; run again with" \
+                                   "MOUNT_HOME=0 (EXTRA_MOUNTS=$HOST_HOME brings back only your home)" >&2 ;;
+  esac
+  exit 1
+fi
+entered
