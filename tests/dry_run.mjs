@@ -270,6 +270,25 @@ const scenarios = [
     check(r.result.attention.some((a) => String(a.call).startsWith('verify_engineer') && a.issue.includes('may still be running')),
       `attention: ${JSON.stringify(r.result.attention)}`);
   }],
+  ['agents: a timed-out implement or unit call starts no further round and no rollback', async () => {
+    const slow = (ans) => async (ins) => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return ans(ins);
+    };
+    for (const role of ['implementer:implement', 'test_engineer:unit']) {
+      const r = await run({ mode: 'feature', task: 't', agent_timeout_ms: 100 }, {
+        [role]: slow(role === 'implementer:implement'
+          ? (ins) => ({ wp: ins.work_package.id, status: 'done', commit: `c_${ins.work_package.id}`, unit_test_cmd: 'pytest -q t.py' })
+          : () => ({ unit_pass: true, feature_off_unchanged: true, fails_without_change: 'parent' })),
+      });
+      check(r.result.status === 'blocked' && r.result.stopped_at === 'Implement', `${role}: status ${r.result.status}`);
+      check(r.keys.filter((k) => k === 'implementer:implement').length === 1, `${role}: the work package gets no second round`);
+      check(!r.keys.includes('implementer:rollback'), `${role}: no rollback while the timed-out agent may still run`);
+      check(r.result.phases.some((p) => p.phase === 'Implement' && p.summary.includes('timed out')), `${role}: the stop says why`);
+      check(r.result.attention.some((a) => String(a.call).startsWith(role.split(':')[0]) && a.issue.includes('may still be running')),
+        `${role}: attention ${JSON.stringify(r.result.attention)}`);
+    }
+  }],
   ['agents: a failed call is retried, and the retry checks what the first one left', async () => {
     const r = await run({ mode: 'feature', task: 't', agent_retries: 2 }, {
       'verify_engineer:verify': (ins, n) => (n === 1 ? { verdict: 'not the schema' } : { all_pass: true, failures: [] }),

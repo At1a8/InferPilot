@@ -64,6 +64,7 @@ const MAX_CALL_MS = TIMEOUT_GIVEN ? AGENT_TIMEOUT_MS : 2 * AGENT_TIMEOUT_MS;
 const LOCK_IDLE_HOURS = MAX_CALL_MS > 0 ? Math.ceil((2 * MAX_CALL_MS) / 3600000) : 24;
 const ATTENTION = []; // state a human must clean up before anything else runs there (R.attention)
 const TIMED_OUT = { timedOut: true };
+const TIMED_OUT_CALLS = new Set(); // labels of calls that timed out: their agents may still be running
 let PHASE = '';
 const cfg = (o) => Object.entries(o)
   .filter(([, v]) => v !== '' && v != null && !(Array.isArray(v) && v.length === 0))
@@ -390,6 +391,7 @@ async function call(role, sub, ins, schema, label, opts) {
       if (r === TIMED_OUT) {
         const min = Math.round(ms / 60000);
         log(`  [inferpilot] ${lbl} timed out after ${min} min; not retried`);
+        TIMED_OUT_CALLS.add(lbl);
         ATTENTION.push({ call: lbl, issue: `timed out after ${min} min and may still be running: check its servers and GPUs before reusing them` });
         return null;
       }
@@ -691,6 +693,13 @@ async function setup(requireBaseline) {
 // One work package at a time: implement, then an independent unit + feature-off
 // gate; failed rounds feed the test engineer's findings back; after the last round
 // the package is rolled back to the last verified commit and the task stops.
+// A call that timed out may still be running in the worktree and on the GPUs: no other agent starts on
+// its work package, not another round and not a rollback; it is on the attention list for a human.
+function stalled(wp, label) {
+  note('Implement', 'fail', `${wp.id}: ${label} timed out; no further round or rollback, since it may still be running`);
+  return { ok: false, failed_wp: wp.id, reason: `${label} timed out` };
+}
+
 async function implementAll(wps) {
   enter('Implement');
   const list = Array.isArray(wps) ? wps : [];
@@ -709,8 +718,9 @@ async function implementAll(wps) {
     let feedback = '';
     let passed = false;
     for (let round = 0; round <= MAX_FIX_ROUNDS && !passed; round++) {
-      const im = await call('implementer', 'implement',
-        inputs({ work_package: wp, round, feedback }), IMPL, `implementer:${wp.id}#${round}`);
+      const imLabel = `implementer:${wp.id}#${round}`;
+      const im = await call('implementer', 'implement', inputs({ work_package: wp, round, feedback }), IMPL, imLabel);
+      if (!im && TIMED_OUT_CALLS.has(imLabel)) return stalled(wp, imLabel);
       if (!im) {
         feedback = 'the implementer returned nothing';
         continue;
@@ -726,9 +736,10 @@ async function implementAll(wps) {
       if (im.kernel_handoff && !R.handoffs.some((h) => h.id === `K-${wp.id}`)) {
         R.handoffs.push({ id: `K-${wp.id}`, wp: wp.id, owner: 'kernel_workflow', source: 'implement', ...im.kernel_handoff });
       }
+      const utLabel = `test_engineer:${wp.id}#${round}`;
       const ut = await call('test_engineer', 'unit',
-        inputs({ work_package: wp, commit: im.commit, unit_test_cmd: im.unit_test_cmd || wp.test }),
-        UNIT, `test_engineer:${wp.id}#${round}`);
+        inputs({ work_package: wp, commit: im.commit, unit_test_cmd: im.unit_test_cmd || wp.test }), UNIT, utLabel);
+      if (!ut && TIMED_OUT_CALLS.has(utLabel)) return stalled(wp, utLabel);
       // A unit test proves something only if it can fail: on the parent commit when the package changes
       // behaviour, on a copy of the change broken in one way when it keeps behaviour (a performance
       // change, a kernel swap, a refactor). Only a docs package has nothing to fail.

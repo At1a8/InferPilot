@@ -400,7 +400,7 @@ node /path/to/GEAK/interface/runtime/engine/run_workflow.mjs inferpilot.js --age
 | `auto_approve_design` | `feature`, default `true`: a design the architect flags, or L3 work, goes on to Implement, and the report says no human approved the design. `false` makes such a design wait at Design for a human (`awaiting_design_review`). `stop_after` still stops |
 | `review_model` | the reviewer's model, passed with its agent call (GEAK's runtime takes a model per call; elsewhere it depends on the runtime) |
 | `max_fix_rounds`, `max_investigate_rounds`, `max_review_rounds`, `max_work_packages` | budgets |
-| `agent_retries`, `agent_timeout_ms` | an agent call is retried after an error (the retry checks what the failed attempt left), never after a timeout: the timed-out agent may still be running, so it goes on the report's attention list. Default timeout 3 h, 6 h for the verify and performance engineers and the investigator |
+| `agent_retries`, `agent_timeout_ms` | an agent call is retried after an error (the retry checks what the failed attempt left), never after a timeout: the timed-out agent may still be running, so it goes on the report's attention list, and its work package gets no further round and no rollback. Default timeout 3 h, 6 h for the verify and performance engineers and the investigator |
 
 Everything but `inferpilot_dir`, `request`, `answers`, `exp_root`, `review_model` and the budgets is the task
 definition; the result of every run that started records the definition it used (`task_def`), where
