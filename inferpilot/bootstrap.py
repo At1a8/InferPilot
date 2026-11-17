@@ -9,7 +9,8 @@ and your keys come in as one file: scripts/run_docker.sh mounts your ~/.inferpil
 Every step checks first, keeps what is already there and installs or creates only what is missing.
 Nothing is deleted, overwritten or re-cloned: a step that could only proceed by changing existing
 state warns and leaves it alone. The one exception is the image's own sglang checkout, which the
-framework step puts on main once, discarding only the image build's changes to its packaging files.
+framework step puts on main once, discarding only the image build's changes to its packaging files;
+not in a container run_docker.sh started from a given IMAGE, where it stays as the image has it.
 
   checkout      clone InferPilot to $INFERPILOT_HOME, unless run inside a checkout or one is already there
   keys          (root in a container) find your keys file: INFERPILOT_KEYS, else ~/.inferpilot_env, where
@@ -28,8 +29,9 @@ framework step puts on main once, discarding only the image build's changes to i
                 gateway
   framework     the image's /sgl-workspace/sglang by default, which the image installs sglang from in
                 editable mode: still as the image left it, it is put on main and pulled, so the current
-                main is what runs and what tasks branch from; --framework-dir names a host checkout
-                instead, cloned with its whole history if missing
+                main is what runs and what tasks branch from; in a container started from a given IMAGE
+                (INFERPILOT_IMAGE_PINNED=1) it is left as the image has it; --framework-dir names a host
+                checkout instead, cloned with its whole history if missing
   evalscope     (root in a container) evalscope for scripts/eval_accuracy.sh, in a venv of its own
                 (/opt/evalscope, linked as /usr/local/bin/evalscope): installed into the image's Python it
                 would downgrade packages sglang ships with. One already on PATH is kept
@@ -225,6 +227,8 @@ def settings(env=None, opts=None) -> dict:
         "host_home": _expand(env["INFERPILOT_HOST_HOME"], env) if env.get("INFERPILOT_HOST_HOME") else "",
         "shell": env.get("SHELL") or "",
         "framework_dir": _expand(framework_dir, env) if framework_dir else "",
+        "image": env.get("INFERPILOT_IMAGE") or "",
+        "image_pinned": env.get("INFERPILOT_IMAGE_PINNED") == "1",
         "framework_repo": opts.get("framework_repo") or env.get("INFERPILOT_FRAMEWORK_REPO") or DEFAULT_FRAMEWORK_REPO,
         "evalscope_version": env.get("EVALSCOPE_VERSION") or "",
         "evalscope_venv": _expand(env.get("EVALSCOPE_VENV") or EVALSCOPE_VENV, env),
@@ -718,6 +722,19 @@ def follow_main(d: str) -> tuple[str, str]:
     return "updated", "%s on main (%s)" % (d, head)
 
 
+def keep_pinned_image(d: str, head: str, image: str) -> tuple[str, str]:
+    """run_docker.sh started this container from a given IMAGE: its sglang is what is to run, so the
+    checkout is left exactly as the image has it, its packaging changes included."""
+    log("framework: kept %s as %s left it (%s): the container was started from that IMAGE, so it is not "
+        "put on main" % (d, image or "the image", head))
+    _, changed, _ = _out(["git", "-C", d, "diff", "--name-only", "HEAD"])
+    files = [f for f in changed.splitlines() if f]
+    if files:
+        warn("framework: %s has changes (%s), which stop a task's Setup; to run one here, decide what to do with "
+             "them yourself, e.g. `git -C %s stash push -- %s`" % (d, ", ".join(files[:5]), d, " ".join(files)))
+    return "kept", "%s as the image left it (IMAGE given)" % d
+
+
 def ensure_framework(s: dict) -> tuple[str, str]:
     d = s["framework_dir"] or image_checkout()
     if not d:
@@ -732,7 +749,7 @@ def ensure_framework(s: dict) -> tuple[str, str]:
         if origin and _repo_key(origin) != _repo_key(s["framework_repo"]):
             warn("framework: %s tracks %s, not %s; kept as it is" % (d, origin, s["framework_repo"]))
         if d == IMAGE_SGLANG:
-            return follow_main(d)
+            return keep_pinned_image(d, head, s["image"]) if s["image_pinned"] else follow_main(d)
         log("framework: kept %s (%s)" % (d, head or "no commits"))
         return "kept", d
     if os.path.isdir(d) and os.listdir(d):

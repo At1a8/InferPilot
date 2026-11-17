@@ -116,7 +116,8 @@ Every step can be run again: it checks first, keeps what is already there and ad
 missing, and run_docker.sh, run again, takes you back into the container. In the commands,
 `check || action` runs the action only when the check fails: on a new machine every action runs, and
 a second run skips them. Nothing is deleted, overwritten or re-cloned, apart from the image build's
-packaging changes in `/sgl-workspace/sglang` (step 3).
+packaging changes in `/sgl-workspace/sglang` (step 3), and not even those in a container started from a
+given `IMAGE`.
 
 ### What the host needs
 
@@ -192,7 +193,8 @@ every container on the host within the agents' reach.
   ([`scripts/latest_image.py`](scripts/latest_image.py), e.g. `v0.5.23-rocm10-mi35x-20261103`; the
   `miles` images on the same page are for reinforcement learning and are skipped). A new day's image is
   pulled at its first use, about 43 GB. `IMAGE_VARIANT` overrides detection, for example
-  `IMAGE_VARIANT=rocm724-mi30x`; for a fixed image, use `IMAGE=rocm/sgl-dev:<tag>`. A container keeps the
+  `IMAGE_VARIANT=rocm724-mi30x`; for a fixed image, use `IMAGE=rocm/sgl-dev:<tag>`, whose
+  `/sgl-workspace/sglang` step 3 then leaves exactly as the image has it. A container keeps the
   image it started from: run_docker.sh says so when you come back to one whose image is no longer the
   newest daily one, and a task there stops at Setup, before it creates anything, to ask whether to run
   on it anyway (`image_ok`), unless the task names that image (`image`). A scan goes on and names its
@@ -200,7 +202,7 @@ every container on the host within the agents' reach.
 - **What is tested.** The image provides PyTorch, aiter, sgl-kernel and its own sglang checkout,
   `/sgl-workspace/sglang`, with the whole history, which it installs sglang from in editable mode: what
   runs is what is checked out there, so there is no sglang to clone or name. Step 3 puts it on the
-  current main; each task then works in it on its own branch from the newest main, which Setup fetches
+  current main (with `IMAGE` given it leaves it as the image has it); each task then works in it on its own branch from the newest main, which Setup fetches
   first. A baseline at the base commit and a scan of the current main read worktrees of the same
   repository under the run directory (about 0.2 GB each). The run records the image, the image's sglang
   version and the task's base commit.
@@ -242,7 +244,7 @@ claude --version    # installed in this container
 | git | trusts checkouts on host mounts, which belong to you, not root (`safe.directory '*'`) |
 | git identity | root commits as `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` from the keys file (or the environment), so no commit reads `root@<this host>`; with neither it says so and sets nothing |
 | shell | root's `~/.bashrc` gets `PYTHONDONTWRITEBYTECODE=1` (no root-owned `__pycache__` in checkouts on host mounts) and `DISABLE_AUTOUPDATER=1`, and loads the keys file, also one put in place later; with `LLM_GATEWAY_KEY` and no `ANTHROPIC_BASE_URL`, it points Claude Code at the AMD LLM gateway |
-| framework | the image's `/sgl-workspace/sglang`, still as the image left it (detached at the commit it built, its packaging files rewritten for ROCm), is put on main: the packaging changes discarded, then `git checkout main` and `git pull`. Never `pip install -e` from it afterwards: its `pyproject.toml` is then upstream's, which would pull CUDA packages. A checkout already on a branch, or with other changes, is left as it is; `--framework-dir` names a host checkout instead (used as it is, or cloned with its whole history when missing) |
+| framework | the image's `/sgl-workspace/sglang`, still as the image left it (detached at the commit it built, or on main, with its packaging files rewritten for ROCm and nothing else changed), is put on main: the packaging changes discarded, then `git checkout main` and `git pull`. Never `pip install -e` from it afterwards: its `pyproject.toml` is then upstream's, which would pull CUDA packages. A clean main, a checkout on another branch, or one with other changes is left as it is, and so is the checkout in a container run_docker.sh started from a given `IMAGE`: that image's sglang is what runs, and a task's Setup stops on its packaging changes until you deal with them; `--framework-dir` names a host checkout instead (used as it is, or cloned with its whole history when missing) |
 | evalscope | for `scripts/eval_accuracy.sh`: installed in a venv of its own, `/opt/evalscope` (about a minute and 1.2 GB), and linked as `/usr/local/bin/evalscope`. Not in the image's Python, where it would downgrade `datasets` and `fsspec` below what sglang ships with; an `evalscope` already on `PATH` is kept |
 | checks | GPUs, sglang, evalscope, API access, `GITHUB_TOKEN`, counting what the keys file sets (detect only) |
 

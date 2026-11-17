@@ -4,7 +4,7 @@
 #
 #   scripts/run_docker.sh                                # newest ROCm 10 daily for the detected gfx942/gfx950 GPU
 #   IMAGE_VARIANT=rocm724-mi30x scripts/run_docker.sh    # override the detected GPU or ROCm version
-#   IMAGE=rocm/sgl-dev:<tag> NAME=<name> scripts/run_docker.sh
+#   IMAGE=rocm/sgl-dev:<tag> NAME=<name> scripts/run_docker.sh   # that image; step 3 keeps its sglang as is
 #   EXTRA_MOUNTS="/home/<you>/models" scripts/run_docker.sh   # more host directories, at the same paths
 #   DOCKER_SOCKET=1 scripts/run_docker.sh                # also mount the host's Docker socket
 #   MOUNT_HOME=0 scripts/run_docker.sh                   # leave /home out (a clean-room task)
@@ -14,7 +14,9 @@
 #
 # Each container keeps its own /workspace, where InferPilot and its runs live, and its own copy of the image's
 # /sgl-workspace/sglang, the code tasks change: apart from every other container's, for as long as the
-# container exists. A new container starts from the newest daily image, pulled at its first use. A
+# container exists. A new container starts from the newest daily image, pulled at its first use; with
+# IMAGE given, from that image, and README step 3 then leaves its /sgl-workspace/sglang exactly as the
+# image has it (INFERPILOT_IMAGE_PINNED=1 in the container) instead of putting it on main. A
 # container named NAME is never removed: run again, this starts it if it was stopped and opens a shell in
 # it, /workspace as it was left, and says so when its image is no longer the newest daily one (tasks there
 # stop at Setup to ask). A new task gets a new container under another NAME; `docker rm -f <name>`
@@ -31,6 +33,7 @@
 # `docker run -it` needs a terminal. Without one (srun, CI, an agent's shell) the container starts in the
 # background and the script prints the `docker exec` that enters it; DETACH=0 or 1 overrides the guess.
 VARIANT=${IMAGE_VARIANT:-}
+PINNED=$([ -n "$IMAGE" ] && echo 1 || echo 0)
 NAME=${NAME:-${SUDO_USER:-$USER}}
 HOST_HOME=$HOME
 [ -n "$SUDO_USER" ] && HOST_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
@@ -131,7 +134,8 @@ PRIV=(--privileged)
 OPTS=("${PRIV[@]}" --ipc=host --network=host --device=/dev/kfd --device=/dev/dri --group-add video
   --cap-add=SYS_PTRACE --security-opt seccomp=unconfined -w /workspace
   "${MOUNTS[@]}"
-  -e PYTHONDONTWRITEBYTECODE=1 -e DISABLE_AUTOUPDATER=1 -e INFERPILOT_IMAGE="$IMAGE" -e INFERPILOT_CONTAINER="$NAME"
+  -e PYTHONDONTWRITEBYTECODE=1 -e DISABLE_AUTOUPDATER=1 -e INFERPILOT_IMAGE="$IMAGE"
+  -e INFERPILOT_IMAGE_PINNED="$PINNED" -e INFERPILOT_CONTAINER="$NAME"
   "${HOME_ENV[@]}"
   --shm-size=512G --ulimit memlock=-1 --ulimit stack=67108864
   --entrypoint /bin/bash --name "$NAME" "$IMAGE")
