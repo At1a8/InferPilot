@@ -188,10 +188,11 @@ every container on the host within the agents' reach.
 
 - **Image.** Tasks test the newest sglang, so the launcher detects the host GPU and starts from the newest
   matching daily ROCm 10 `rocm/sgl-dev` build: `rocm10-mi30x` for gfx942 (MI300/MI308/MI325) and
-  `rocm10-mi35x` for gfx950 (MI350/MI355). If detection is unavailable it warns and falls back to MI35x
-  ([`scripts/latest_image.py`](scripts/latest_image.py), e.g. `v0.5.23-rocm10-mi35x-20261103`; the
+  `rocm10-mi35x` for gfx950 (MI350/MI355); a GPU with no ROCm 10 image (on Docker Hub, or here when
+  Docker Hub cannot be reached) takes ROCm 7.2.4, then 7.2.0. If detection is unavailable it warns and
+  falls back to MI35x ([`scripts/latest_image.py`](scripts/latest_image.py), e.g. `v0.5.23-rocm10-mi35x-20261103`; the
   `miles` images on the same page are for reinforcement learning and are skipped). A new day's image is
-  pulled at its first use, about 43 GB. `IMAGE_VARIANT` overrides detection, for example
+  pulled at its first use, about 43 GB. `IMAGE_VARIANT` overrides detection and fallback, for example
   `IMAGE_VARIANT=rocm724-mi30x`; for a fixed image, use `IMAGE=rocm/sgl-dev:<tag>`, whose
   `/sgl-workspace/sglang` step 3 then leaves exactly as the image has it. A container keeps the
   image it started from: run_docker.sh says so when you come back to one whose image is no longer the
@@ -368,7 +369,7 @@ step 3 too, cloning InferPilot to `/workspace/inferpilot` (pip shows the output 
 | Variable | Used by | Default |
 |---|---|---|
 | `IMAGE` | `scripts/run_docker.sh` | the newest daily `rocm/sgl-dev` image of `IMAGE_VARIANT` (the newest local one when Docker Hub cannot be reached) |
-| `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS`, `MOUNT_HOME` | `scripts/run_docker.sh` | detected from gfx942/gfx950 (fallback `rocm10-mi35x`); your user name; more directories to mount, space-separated; `0` leaves `/home` out |
+| `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS`, `MOUNT_HOME` | `scripts/run_docker.sh` | detected from gfx942/gfx950 (fallback MI35x), ROCm 10, else 7.2.4, else 7.2.0; your user name; more directories to mount, space-separated; `0` leaves `/home` out |
 | `DOCKER_SOCKET` | `scripts/run_docker.sh` | unset; `1` also mounts the host's Docker socket and `docker` |
 | `DETACH`, `PRIVILEGED` | `scripts/run_docker.sh` | unset: in the background when there is no terminal, else an interactive shell; `PRIVILEGED=0` leaves out `--privileged` |
 | `INFERPILOT_LOCK_FILE` | `scripts/run_lock.py` | `/dev/shm/inferpilot-run.lock`, the machine's one-task lock |

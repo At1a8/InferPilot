@@ -262,7 +262,8 @@ class RunDockerTest(unittest.TestCase):
         make_exe(fake / "docker").write_text(
             '#!/bin/sh\necho "$*" >> "$DOCKER_LOG"\n'
             'if [ "$1" = inspect ]; then [ -n "$FAKE_IMAGE" ] || exit 1; echo "$FAKE_IMAGE"; fi\n'
-            'if [ "$1" = run ] && [ -n "$FAKE_DENY" ]; then echo "$FAKE_DENY" >&2; exit 125; fi\n')
+            'if [ "$1" = run ] && [ -n "$FAKE_DENY" ]; then echo "$FAKE_DENY" >&2; exit 125; fi\n'
+            'if [ "$1" = images ]; then printf "%s\\n" $FAKE_LOCAL; fi\n')
         make_exe(fake / "sudo").write_text('#!/bin/sh\nexec "$@"\n')
         make_exe(fake / "rocm-smi").write_text(
             '#!/bin/sh\n[ -n "$FAKE_GFX" ] && echo "GPU[0] : GFX Version: $FAKE_GFX"\n')
@@ -318,19 +319,26 @@ class RunDockerTest(unittest.TestCase):
 
     def test_a_new_container_selects_the_image_variant_for_the_gpu(self):
         fake_py = self.tmp / "py"
-        # run_docker.sh calls `python3 <latest_image.py> --variant <variant>`
-        make_exe(fake_py / "python3").write_text('#!/bin/sh\necho "rocm/sgl-dev:v0.5.23-$3-20261117"\n')
-        path = "%s:%s" % (fake_py, self.path)
-        for gfx, variant in (("gfx942", "rocm10-mi30x"), ("gfx950", "rocm10-mi35x")):
-            with self.subTest(gfx=gfx):
-                rc, calls = self.run_docker(PATH=path, FAKE_GFX=gfx)
+        # run_docker.sh calls `python3 <latest_image.py> --variant <variant>`; Docker Hub has FAKE_HUB's variants
+        make_exe(fake_py / "python3").write_text(
+            '#!/bin/sh\ncase " $FAKE_HUB " in *" $3 "*) echo "rocm/sgl-dev:v0.5.23-$3-20261117" ;; *) exit 1 ;; esac\n')
+        hub = "rocm10-mi30x rocm10-mi35x rocm724-mi30x"
+        local = "rocm/sgl-dev:v0.5.13.post1-rocm720-mi30x-20260625 rocm/sgl-dev:v0.5.23-rocm724-mi30x-20261116"
+        for env, want in (
+                (dict(FAKE_GFX="gfx942", FAKE_HUB=hub), "v0.5.23-rocm10-mi30x-20261117"),
+                (dict(FAKE_GFX="gfx950", FAKE_HUB=hub), "v0.5.23-rocm10-mi35x-20261117"),
+                (dict(FAKE_GFX="gfx942", FAKE_HUB="rocm724-mi30x"), "v0.5.23-rocm724-mi30x-20261117"),
+                (dict(FAKE_GFX="gfx942", FAKE_LOCAL=local), "v0.5.23-rocm724-mi30x-20261116"),
+                (dict(FAKE_GFX="gfx942", FAKE_HUB=hub, IMAGE_VARIANT="rocm724-mi30x"), "v0.5.23-rocm724-mi30x-20261117"),
+                (dict(FAKE_GFX="gfx942", FAKE_LOCAL=local, IMAGE_VARIANT="rocm10-mi30x"), "")):
+            with self.subTest(**env):
+                rc, calls = self.run_docker(PATH="%s:%s" % (fake_py, self.path), **env)
+                if not want:
+                    self.assertEqual((rc, calls[-1].split()[0]), (1, "images"), "IMAGE_VARIANT is not widened")
+                    continue
                 self.assertEqual(rc, 0, self.stderr)
-                self.assertTrue(calls[-1].endswith("rocm/sgl-dev:v0.5.23-%s-20261117" % variant), calls[-1])
+                self.assertTrue(calls[-1].endswith("rocm/sgl-dev:" + want), calls[-1])
                 self.assertIn("-e INFERPILOT_IMAGE_PINNED=0", calls[-1], "the image was chosen for you")
-
-        rc, calls = self.run_docker(PATH=path, FAKE_GFX="gfx942", IMAGE_VARIANT="rocm724-mi30x")
-        self.assertEqual(rc, 0, self.stderr)
-        self.assertTrue(calls[-1].endswith("rocm/sgl-dev:v0.5.23-rocm724-mi30x-20261117"), calls[-1])
 
     def test_without_a_terminal_it_starts_detached_and_says_how_to_enter(self):
         enter = "docker exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash"
