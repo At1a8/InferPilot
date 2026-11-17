@@ -42,8 +42,8 @@ belongs to a host user, and the rules below are about those.
   editable mode from the image's checkout (`/sgl-workspace/sglang` in `rocm/sgl-dev`): a plain
   `python -m sglang.launch_server` runs whatever is checked out there.
 - That checkout has the whole history and is InferPilot's default `framework_dir`, and each task works in it
-  on its own branch. The image leaves it detached at the commit it built, or on main, with the build's
-  changes to the packaging files (`python/pyproject.toml` becomes the ROCm one). README step 3 puts it on
+  on its own branch. The image leaves it detached at the commit it built, with the build's changes to
+  the packaging files (`python/pyproject.toml` becomes the ROCm one). README step 3 puts it on
   the current main every time it runs: uncommitted changes, those included, are saved as a patch beside
   the checkout and discarded, then main is checked out and pulled; not while a run in the container is
   going, and never in a container started from a given image. Never `pip install -e` from it afterwards:

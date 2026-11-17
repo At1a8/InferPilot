@@ -102,7 +102,7 @@ APPROVED_KEY_CHARS = 20
 AMD_GATEWAY_URL = "https://llm-api.amd.com/Unified"
 # sglang images ship a full-history checkout of sglang and install sglang from it in editable mode; tasks
 # work in it, each on its own branch. The image's build rewrites its packaging files (python/pyproject.toml
-# becomes the ROCm one) and leaves it detached at the commit it built, or on main.
+# becomes the ROCm one) and leaves it detached at the commit it built.
 IMAGE_SGLANG = "/sgl-workspace/sglang"
 # The machine's one-task lock (scripts/run_lock.py): a run that holds it and lives in this container works
 # in the image's checkout, which the framework step then leaves alone.
