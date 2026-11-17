@@ -24,11 +24,13 @@ Notes per gate:
 - **G2 does not prove a long-context feature works.** Short prompts may never engage it (HiSparse V2
   only admits requests longer than its 5120-token reservation; GSM8K prompts are ~1k tokens). G2 is a
   regression check for the non-feature path; G3 must exercise the feature path.
-- **A lossy feature needs a recall set in G2.** Relaxed speculative verification (FLy) left gsm8k within
-  ±0.4pp at every setting while simple_qa lost up to 3pp (`feature_skills/fly-dspark`). Add a
-  knowledge-recall set, record the feature's own engagement number per dataset (accept length), and
-  compare with ≥3 baseline runs: one simple_qa run is good to about ±0.5pp, and a 0.6pp loss took 5
-  runs against 8 baselines to separate from the noise (two runs had called it noise).
+- **GSM8K may not show a lossy feature's loss; say so, and add a set only when the task asks.** Relaxed
+  speculative verification (FLy) left gsm8k within ±0.4pp at every setting while simple_qa lost up to
+  3pp (`feature_skills/fly-dspark`). G2 is still the task's accuracy check (GSM8K 1319 once per arm by
+  default): the spec's risks and the report name the gap, and the report proposes a knowledge-recall set
+  for the user to add. When the task asks for one, record the feature's own engagement number per dataset
+  (accept length) and compare with ≥3 baseline runs: one simple_qa run is good to about ±0.5pp, and a
+  0.6pp loss took 5 runs against 8 baselines to separate from the noise (two runs had called it noise).
 - **G3/G4 must be sized so the feature engages.** For a memory-tier feature that means total context
   well above the device pool (force eviction/demotion), and concurrency high enough that several engaged
   requests decode in the same batch. Log the engagement (e.g. demotion counters) and attach it.

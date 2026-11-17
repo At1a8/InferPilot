@@ -119,6 +119,9 @@ Return:
 4. `perf_claim`: the measurable performance benefit the feature promises (workload, budget, metric,
    size), or empty when it claims none; guard workloads are always run. A claim also names its held-out
    operating point (`perf_evaluation.md` §3), fixed here with the workload.
+5. Accuracy is the task's: GSM8K 1319 once per arm unless the task asks for more. A lossy feature adds
+   no set of its own; its risks say that GSM8K may not show the loss (`validation_doctrine.md`, G2).
+   Defaults the task leaves to be measured follow `perf_evaluation.md` §3 ("Choose a feature's defaults").
 
 Return:
 

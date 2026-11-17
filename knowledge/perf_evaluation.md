@@ -51,6 +51,13 @@ outputs never triggered it.
   held-out point was measured. It is fixed with the workload at Setup and measured like the claim; the
   change must still win beyond the noise band there, if not by as much. A gain that vanishes is fitted
   to the benchmark (`reward_hacks.md` P7), not evidence.
+- **Choose a feature's defaults on throughput, at one point.** When the task leaves a feature's knobs
+  to be measured, run each candidate once against the baseline at one concurrency of the task's
+  workload (the lowest, unless the task names one), with the baseline on the other lane when there are
+  two, and rank by total tok/s. No accuracy set is added to rank them: the task's accuracy check (GSM8K
+  1319 by default, `validation_doctrine.md` G2) runs on the chosen candidate, then on the next-fastest
+  if it fails, before the defaults are frozen. Tuning runs are not evidence for the claim, and the
+  held-out point stays out of them.
 - Check the measurement entries of [`reward_hacks.md`](reward_hacks.md) (P) on both arms before
   reporting any number.
 - Fresh server per configuration; same container, commit family, GPU set and launch flags apart from
