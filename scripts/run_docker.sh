@@ -4,7 +4,7 @@
 #
 #   scripts/run_docker.sh                                # newest ROCm 10 daily for the detected gfx942/gfx950 GPU
 #   IMAGE_VARIANT=rocm724-mi30x scripts/run_docker.sh    # override the detected GPU or ROCm version
-#   IMAGE=rocm/sgl-dev:<tag> NAME=<name> scripts/run_docker.sh   # that image; step 3 keeps its sglang as is
+#   IMAGE=rocm/sgl-dev:<tag> NAME=<name> scripts/run_docker.sh
 #   EXTRA_MOUNTS="/home/<you>/models" scripts/run_docker.sh   # more host directories, at the same paths
 #   DOCKER_SOCKET=1 scripts/run_docker.sh                # also mount the host's Docker socket
 #   MOUNT_HOME=0 scripts/run_docker.sh                   # leave /home out (a clean-room task)
@@ -15,9 +15,8 @@
 # Each container keeps its own /workspace, where InferPilot and its runs live, and its own copy of the image's
 # /sgl-workspace/sglang, the code tasks change: apart from every other container's, for as long as the
 # container exists. A new container starts from the newest daily image, pulled at its first use; with
-# IMAGE given, from that image, and README step 3 then leaves its /sgl-workspace/sglang exactly as the
-# image has it (INFERPILOT_IMAGE_PINNED=1 in the container) instead of putting it on main. A
-# container named NAME is never removed: run again, this starts it if it was stopped and opens a shell in
+# IMAGE given, from that image, whose /sgl-workspace/sglang README step 3 then leaves as it is
+# (INFERPILOT_IMAGE_PINNED=1). A container named NAME is never removed: run again, this starts it if it was stopped and opens a shell in
 # it, /workspace as it was left, and says so when its image is no longer the newest daily one (tasks there
 # stop at Setup to ask). A new task gets a new container under another NAME; `docker rm -f <name>`
 # removes one you are done with, and its /workspace with it. Run README step 3 once in every new
@@ -56,23 +55,15 @@ latest_image() {  # scripts/latest_image.py next to this script, else the one on
   fi
 }
 
-detect_variant() {
-  local info="" gfx=""
-  if command -v rocm-smi >/dev/null 2>&1; then
-    info=$(rocm-smi --showproductname 2>/dev/null || true)
-    gfx=$(printf '%s\n' "$info" | awk '/GFX Version:/ { print $NF; exit }')
-  fi
-  if [ -z "$gfx" ] && command -v rocminfo >/dev/null 2>&1; then
-    info=$(rocminfo 2>/dev/null || true)
-    gfx=$(printf '%s\n' "$info" | awk '$1 == "Name:" && $2 ~ /^gfx[0-9]+$/ { print $2; exit }')
-  fi
+detect_variant() {  # the host GPU's image variant: gfx942 MI30x, else MI35x
+  local gfx
+  gfx=$(rocm-smi --showproductname 2>/dev/null | awk '/GFX Version:/ { print $NF; exit }')
+  [ -n "$gfx" ] || gfx=$(rocminfo 2>/dev/null | awk '$1 == "Name:" && $2 ~ /^gfx[0-9]+$/ { print $2; exit }')
   if [ "$gfx" = gfx942 ]; then
     echo rocm10-mi30x
-  elif [ "$gfx" = gfx950 ]; then
-    echo rocm10-mi35x
   else
-    echo "run_docker.sh: cannot map GPU architecture ${gfx:-unknown} to an image variant;" \
-      "defaulting to rocm10-mi35x. Set IMAGE_VARIANT or IMAGE to override." >&2
+    [ "$gfx" = gfx950 ] || echo "run_docker.sh: cannot map GPU architecture ${gfx:-unknown} to an image" \
+      "variant; defaulting to rocm10-mi35x. Set IMAGE_VARIANT or IMAGE to override." >&2
     echo rocm10-mi35x
   fi
 }

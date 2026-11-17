@@ -83,10 +83,8 @@ class VersionAndSettingsTest(unittest.TestCase):
             self.assertEqual((s["evalscope_venv"], s["evalscope_version"]), (bs.EVALSCOPE_VENV, ""))
             s = bs.settings({"PWD": str(work), "HOME": d, "EVALSCOPE_VENV": "~/es", "EVALSCOPE_VERSION": "1.15.0"})
             self.assertEqual((s["evalscope_venv"], s["evalscope_version"]), (os.path.join(d, "es"), "1.15.0"))
-            self.assertEqual((s["image"], s["image_pinned"]), ("", False))
-            for pinned, want in (("1", True), ("0", False)):
-                s = S(work, HOME=d, INFERPILOT_IMAGE="rocm/sgl-dev:x", INFERPILOT_IMAGE_PINNED=pinned)
-                self.assertEqual((s["image"], s["image_pinned"]), ("rocm/sgl-dev:x", want))
+            self.assertEqual([S(work, HOME=d, INFERPILOT_IMAGE_PINNED=v)["image_pinned"] for v in ("1", "0", "")],
+                             [True, False, False])
 
 
 class KeysTest(unittest.TestCase):
@@ -320,17 +318,8 @@ class RunDockerTest(unittest.TestCase):
 
     def test_a_new_container_selects_the_image_variant_for_the_gpu(self):
         fake_py = self.tmp / "py"
-        make_exe(fake_py / "python3").write_text(
-            """#!/bin/sh
-variant=
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = --variant ]; then shift; variant=$1; break; fi
-  shift
-done
-[ -n "$variant" ] || exit 1
-echo "rocm/sgl-dev:v0.5.23-$variant-20261117"
-"""
-        )
+        # run_docker.sh calls `python3 <latest_image.py> --variant <variant>`
+        make_exe(fake_py / "python3").write_text('#!/bin/sh\necho "rocm/sgl-dev:v0.5.23-$3-20261117"\n')
         path = "%s:%s" % (fake_py, self.path)
         for gfx, variant in (("gfx942", "rocm10-mi30x"), ("gfx950", "rocm10-mi35x")):
             with self.subTest(gfx=gfx):
@@ -697,59 +686,40 @@ class FrameworkTest(unittest.TestCase):
 
         with mock.patch.object(bs, "IMAGE_SGLANG", str(image)), mock.patch.object(bs, "installed_commit", return_value=built), \
                 mock.patch.object(bs, "_out", side_effect=out), \
-                mock.patch.object(bs, "_run", return_value=OK) as run, Quiet() as q:
+                mock.patch.object(bs, "_run", return_value=OK) as run, Quiet():
             res = bs.ensure_framework(S(d, **env))
             self.assertNotIn("framework_dir=", bs.next_steps(bs.settings({"PWD": d, "HOME": d}), {}, {"api": True},
                                                              path_env="/usr/bin"))
-        self.err = q.err.getvalue()
         return res, [c.args[0][3:] for c in run.call_args_list], str(image)
 
-    def test_the_image_checkout_on_a_task_branch_is_kept(self):
+    def test_the_image_checkout_on_a_branch_is_kept(self):
         with tempfile.TemporaryDirectory() as d:
-            res, ran, image = self.image_framework(d, branch="inferpilot/work")
-            self.assertEqual((res, ran), (("kept", "%s on inferpilot/work" % image), []))
+            for branch in ("main", "inferpilot/work"):
+                res, ran, image = self.image_framework(d, branch=branch)
+                self.assertEqual((res, ran), (("kept", "%s on %s" % (image, branch)), []))
 
-    def test_the_image_checkout_on_main_is_normalized_when_it_is_still_the_image_state(self):
+    def test_main_with_only_the_image_builds_edits_goes_on_main(self):
         with tempfile.TemporaryDirectory() as d:
-            changed = self.IMAGE_MAIN_CHANGED
-            for built in ("f3532057e1", "0123456789"):
-                with self.subTest(installed_commit=built):
-                    res, ran, image = self.image_framework(d, branch="main", changed=changed, built=built)
-                    self.assertEqual(res[0], "updated")
-                    self.assertEqual(
-                        ran,
-                        [
-                            ["checkout", "HEAD", "--"] + changed.splitlines(),
-                            ["pull", "--ff-only"],
-                        ],
-                    )
-                    self.assertIn(image, res[1])
+            for built in ("f3532057e1", "0123456789"):  # main need not be at the installed commit
+                res, ran, image = self.image_framework(d, branch="main", changed=self.IMAGE_MAIN_CHANGED, built=built)
+                self.assertEqual(res, ("updated", "%s on main (f3532057e1 2026-11-05)" % image))
+                self.assertEqual(ran, [["checkout", "HEAD", "--"] + list(bs.IMAGE_MAIN_PACKAGING), ["pull", "--ff-only"]])
 
-    def test_a_clean_main_is_kept_without_a_pull(self):
-        with tempfile.TemporaryDirectory() as d:
-            res, ran, image = self.image_framework(d, branch="main")
-            self.assertEqual((res, ran), (("kept", "%s on main (f3532057e1 2026-11-05)" % image), []))
-
-    def test_main_is_kept_when_it_has_an_unknown_packaging_edit(self):
-        with tempfile.TemporaryDirectory() as d:
-            res, ran, _ = self.image_framework(d, branch="main", changed="docs/pyproject.toml")
-            self.assertEqual((res[0], ran), ("skipped", []))
-
-    def test_main_keeps_a_users_edit_to_a_file_the_image_build_also_changes(self):
-        with tempfile.TemporaryDirectory() as d:
-            mine = dict(self.IMAGE_BLOBS, **{"python/pyproject.toml": "c3"})
-            res, ran, _ = self.image_framework(d, branch="main", changed=self.IMAGE_MAIN_CHANGED, blobs=mine)
-            self.assertEqual((res, ran), (("skipped", "changed: python/pyproject.toml"), []))
-            res, ran, _ = self.image_framework(d, branch="main", changed="python/pyproject.toml", blobs={})
-            self.assertEqual((res, ran), (("skipped", "changed: python/pyproject.toml"), []))
-
-    def test_main_keeps_the_rocm_aot_pyproject_when_it_is_still_there(self):
-        with tempfile.TemporaryDirectory() as d:
-            rocm = Path(d) / "sgl-workspace" / "sglang" / "python" / "sglang" / "kernels" / "aot" / "pyproject_rocm.toml"
-            rocm.parent.mkdir(parents=True)
-            rocm.write_text("[project]\n")
-            res, ran, _ = self.image_framework(d, branch="main", changed=self.IMAGE_MAIN_CHANGED)
-            self.assertEqual((res, ran), (("skipped", "changed: python/sglang/kernels/aot/pyproject_rocm.toml"), []))
+    def test_main_with_an_edit_the_image_build_did_not_make_is_left_as_it_is(self):
+        aot_rocm = "python/sglang/kernels/aot/pyproject_rocm.toml"
+        mine = dict(self.IMAGE_BLOBS, **{"python/pyproject.toml": "c3"})
+        for changed, blobs, still_there, edit in (  # the files changed, their blobs, one not moved away
+                ("docs/pyproject.toml", None, "", "docs/pyproject.toml"),
+                (self.IMAGE_MAIN_CHANGED, mine, "", "python/pyproject.toml"),
+                ("python/pyproject.toml", {}, "", "python/pyproject.toml"),
+                (self.IMAGE_MAIN_CHANGED, None, aot_rocm, aot_rocm)):
+            with self.subTest(edit=edit, blobs=blobs), tempfile.TemporaryDirectory() as d:
+                if still_there:
+                    f = Path(d) / "sgl-workspace" / "sglang" / still_there
+                    f.parent.mkdir(parents=True)
+                    f.write_text("[project]\n")
+                res, ran, _ = self.image_framework(d, branch="main", changed=changed, blobs=blobs)
+                self.assertEqual((res, ran), (("skipped", "changed: " + edit), []))
 
     def test_the_image_checkout_as_the_image_left_it_goes_on_main(self):
         with tempfile.TemporaryDirectory() as d:
@@ -758,23 +728,12 @@ class FrameworkTest(unittest.TestCase):
             self.assertEqual(ran, [["checkout", "HEAD", "--", "python/pyproject.toml", "python/sglang/kernels/aot/pyproject_rocm.toml"],
                                    ["checkout", "main"], ["pull", "--ff-only"]])
 
-    def test_the_checkout_of_a_given_image_is_never_changed(self):
-        pinned = {"INFERPILOT_IMAGE": "rocm/sgl-dev:v0.5.23-rocm724-mi30x-20261116", "INFERPILOT_IMAGE_PINNED": "1"}
-        image_states = {
-            "main": dict(branch="main", changed=self.IMAGE_MAIN_CHANGED),
-            "detached": dict(changed="python/pyproject.toml\npython/sglang/kernels/aot/pyproject_rocm.toml"),
-        }
+    def test_the_checkout_of_a_given_image_is_kept_as_the_image_has_it(self):
         with tempfile.TemporaryDirectory() as d:
-            for state, kw in image_states.items():
-                with self.subTest(state=state):
-                    res, ran, image = self.image_framework(d, **kw, **pinned)
-                    self.assertEqual((res, ran), (("kept", "%s as the image left it (IMAGE given)" % image), []))
-                    self.assertIn("git -C %s stash push -- python/pyproject.toml" % image, self.err)
-            res, ran, _ = self.image_framework(d, branch="main", **pinned)
-            self.assertEqual((res[0], ran, self.err), ("kept", [], ""))
-            res, ran, _ = self.image_framework(d, branch="main", changed=self.IMAGE_MAIN_CHANGED,
-                                               INFERPILOT_IMAGE_PINNED="0")
-            self.assertEqual(res[0], "updated", "an image chosen for you is still put on main")
+            for branch in ("main", ""):
+                res, ran, image = self.image_framework(d, branch=branch, changed=self.IMAGE_MAIN_CHANGED,
+                                                       INFERPILOT_IMAGE_PINNED="1")
+                self.assertEqual((res, ran), (("kept", image), []))
 
     def test_the_image_checkout_is_left_alone_unless_as_the_image_left_it(self):
         with tempfile.TemporaryDirectory() as d:

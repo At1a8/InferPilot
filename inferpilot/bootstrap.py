@@ -9,8 +9,7 @@ and your keys come in as one file: scripts/run_docker.sh mounts your ~/.inferpil
 Every step checks first, keeps what is already there and installs or creates only what is missing.
 Nothing is deleted, overwritten or re-cloned: a step that could only proceed by changing existing
 state warns and leaves it alone. The one exception is the image's own sglang checkout, which the
-framework step puts on main once, discarding only the image build's changes to its packaging files;
-not in a container run_docker.sh started from a given IMAGE, where it stays as the image has it.
+framework step puts on main once, discarding only the image build's changes to its packaging files.
 
   checkout      clone InferPilot to $INFERPILOT_HOME, unless run inside a checkout or one is already there
   keys          (root in a container) find your keys file: INFERPILOT_KEYS, else ~/.inferpilot_env, where
@@ -96,14 +95,12 @@ APPROVED_KEY_CHARS = 20
 AMD_GATEWAY_URL = "https://llm-api.amd.com/Unified"
 # sglang images ship a full-history checkout of sglang and install sglang from it in editable mode; tasks
 # work in it, each on its own branch. The image's build rewrites its packaging files (python/pyproject.toml
-# becomes the ROCm one) and normally leaves it detached at the commit it built; some daily images leave
-# the same build state on main.
+# becomes the ROCm one) and leaves it detached at the commit it built.
 IMAGE_SGLANG = "/sgl-workspace/sglang"
 PACKAGING = re.compile(r"(^|/)pyproject[^/]*\.toml$")
-# Some daily images leave that checkout on main instead of detached. On main only the build's own edits
-# are discarded, recognised by content: docker/rocm.Dockerfile copies pyproject_other.toml over
-# python/pyproject.toml and moves the aot pyproject_rocm.toml over pyproject.toml. A path maps to the file
-# at HEAD it must equal, or to None when it must be gone; any other edit may be a user's and stops Setup.
+# Some daily images leave that checkout on main instead. There only the build's own edits are discarded,
+# recognised by content (docker/rocm.Dockerfile): each path maps to the file at HEAD it was copied from,
+# or to None when the build moved it away; any other edit may be a user's and stops Setup.
 IMAGE_MAIN_PACKAGING = {
     "python/pyproject.toml": "python/pyproject_other.toml",
     "python/sglang/kernels/aot/pyproject.toml": "python/sglang/kernels/aot/pyproject_rocm.toml",
@@ -227,7 +224,6 @@ def settings(env=None, opts=None) -> dict:
         "host_home": _expand(env["INFERPILOT_HOST_HOME"], env) if env.get("INFERPILOT_HOST_HOME") else "",
         "shell": env.get("SHELL") or "",
         "framework_dir": _expand(framework_dir, env) if framework_dir else "",
-        "image": env.get("INFERPILOT_IMAGE") or "",
         "image_pinned": env.get("INFERPILOT_IMAGE_PINNED") == "1",
         "framework_repo": opts.get("framework_repo") or env.get("INFERPILOT_FRAMEWORK_REPO") or DEFAULT_FRAMEWORK_REPO,
         "evalscope_version": env.get("EVALSCOPE_VERSION") or "",
@@ -671,39 +667,30 @@ def _is_image_main_edit(d: str, f: str) -> bool:
     src = IMAGE_MAIN_PACKAGING[f]
     if src is None:
         return not os.path.lexists(os.path.join(d, f))
-    rc, have, _ = _out(["git", "-C", d, "hash-object", "--", f])
-    rc_src, want, _ = _out(["git", "-C", d, "rev-parse", "--verify", "-q", "HEAD:" + src])
-    return rc == 0 and rc_src == 0 and bool(have) and have == want
+    _, have, _ = _out(["git", "-C", d, "hash-object", "--", f])
+    _, want, _ = _out(["git", "-C", d, "rev-parse", "--verify", "-q", "HEAD:" + src])
+    return bool(have) and have == want
 
 
 def follow_main(d: str) -> tuple[str, str]:
     """Put the image's checkout on main once: discard the build's packaging changes, check out main, pull.
-    Only a checkout as the image left it is touched: a detached checkout must be at the installed commit
-    and have only packaging changes; main may discard only the build's own edits, checked by content,
-    and a clean main is kept. A task branch is already past this and is left alone (Setup takes it from
-    there)."""
+    Only a checkout as the image left it is touched: detached at the commit sglang was installed at, with
+    nothing but packaging files changed, or on main with only the build's own edits. One on another
+    branch, or a clean main, is already past this (Setup takes it from there)."""
     rc, branch, _ = _out(["git", "-C", d, "symbolic-ref", "-q", "--short", "HEAD"])
     _, head, _ = _out(["git", "-C", d, "log", "-1", "--format=%h %cs"])
-    on_branch = rc == 0 and bool(branch)
-    if on_branch and branch != "main":
+    _, changed, _ = _out(["git", "-C", d, "diff", "--name-only", "HEAD"])
+    files = [f for f in changed.splitlines() if f]
+    on_main = rc == 0 and branch == "main"
+    if rc == 0 and branch and not (on_main and files):
         log("framework: kept %s on %s (%s); the image's checkout, which tasks branch from" % (d, branch, head))
         return "kept", "%s on %s" % (d, branch)
     sha, built = (head.split() or [""])[0], installed_commit()
-    matches_image = bool(built and sha and (sha.startswith(built) or built.startswith(sha)))
-    if not on_branch and built and sha and not matches_image:
+    if not on_main and built and sha and not (sha.startswith(built) or built.startswith(sha)):
         warn("framework: %s is detached at %s, not at the commit the image installed (%s); left as it is"
              % (d, head, built))
         return "skipped", "detached at %s" % head
-    _, changed, _ = _out(["git", "-C", d, "diff", "--name-only", "HEAD"])
-    files = [f for f in changed.splitlines() if f]
-    if on_branch and not files:
-        log("framework: kept %s on main (%s); Setup fetches before every task" % (d, head))
-        return "kept", "%s on main (%s)" % (d, head)
-    other = (
-        [f for f in files if not _is_image_main_edit(d, f)]
-        if on_branch
-        else [f for f in files if not PACKAGING.search(f)]
-    )
+    other = [f for f in files if not (_is_image_main_edit(d, f) if on_main else PACKAGING.search(f))]
     if other:
         warn("framework: %s has changes the image build did not make (%s); left as it is, and Setup "
              "stops on it" % (d, ", ".join(other[:5])))
@@ -711,7 +698,7 @@ def follow_main(d: str) -> tuple[str, str]:
     if files and _run(["git", "-C", d, "checkout", "HEAD", "--"] + files).returncode != 0:
         warn("framework: could not discard the image's packaging changes in %s" % d)
         return "failed", "git checkout HEAD -- <packaging files>"
-    if not on_branch and _run(["git", "-C", d, "checkout", "main"]).returncode != 0:
+    if not on_main and _run(["git", "-C", d, "checkout", "main"]).returncode != 0:
         warn("framework: could not check out main in %s" % d)
         return "failed", "git checkout main"
     if _run(["git", "-C", d, "pull", "--ff-only"]).returncode != 0:
@@ -720,19 +707,6 @@ def follow_main(d: str) -> tuple[str, str]:
     log("framework: %s now on main (%s)%s; never `pip install -e` from it: its pyproject.toml is upstream's"
         % (d, head, ", the image's changes to %s discarded" % ", ".join(files) if files else ""))
     return "updated", "%s on main (%s)" % (d, head)
-
-
-def keep_pinned_image(d: str, head: str, image: str) -> tuple[str, str]:
-    """run_docker.sh started this container from a given IMAGE: its sglang is what is to run, so the
-    checkout is left exactly as the image has it, its packaging changes included."""
-    log("framework: kept %s as %s left it (%s): the container was started from that IMAGE, so it is not "
-        "put on main" % (d, image or "the image", head))
-    _, changed, _ = _out(["git", "-C", d, "diff", "--name-only", "HEAD"])
-    files = [f for f in changed.splitlines() if f]
-    if files:
-        warn("framework: %s has changes (%s), which stop a task's Setup; to run one here, decide what to do with "
-             "them yourself, e.g. `git -C %s stash push -- %s`" % (d, ", ".join(files[:5]), d, " ".join(files)))
-    return "kept", "%s as the image left it (IMAGE given)" % d
 
 
 def ensure_framework(s: dict) -> tuple[str, str]:
@@ -748,8 +722,8 @@ def ensure_framework(s: dict) -> tuple[str, str]:
                  "It is left as it is (`git -C %s fetch --unshallow` would deepen it)" % (d, d))
         if origin and _repo_key(origin) != _repo_key(s["framework_repo"]):
             warn("framework: %s tracks %s, not %s; kept as it is" % (d, origin, s["framework_repo"]))
-        if d == IMAGE_SGLANG:
-            return keep_pinned_image(d, head, s["image"]) if s["image_pinned"] else follow_main(d)
+        if d == IMAGE_SGLANG and not s["image_pinned"]:
+            return follow_main(d)
         log("framework: kept %s (%s)" % (d, head or "no commits"))
         return "kept", d
     if os.path.isdir(d) and os.listdir(d):
