@@ -83,6 +83,8 @@ class VersionAndSettingsTest(unittest.TestCase):
             self.assertEqual((s["evalscope_venv"], s["evalscope_version"]), (bs.EVALSCOPE_VENV, ""))
             s = bs.settings({"PWD": str(work), "HOME": d, "EVALSCOPE_VENV": "~/es", "EVALSCOPE_VERSION": "1.15.0"})
             self.assertEqual((s["evalscope_venv"], s["evalscope_version"]), (os.path.join(d, "es"), "1.15.0"))
+            self.assertEqual([S(work, HOME=d, INFERPILOT_IMAGE_PINNED=v)["image_pinned"] for v in ("1", "0", "")],
+                             [True, False, False])
 
 
 class KeysTest(unittest.TestCase):
@@ -260,8 +262,12 @@ class RunDockerTest(unittest.TestCase):
         make_exe(fake / "docker").write_text(
             '#!/bin/sh\necho "$*" >> "$DOCKER_LOG"\n'
             'if [ "$1" = inspect ]; then [ -n "$FAKE_IMAGE" ] || exit 1; echo "$FAKE_IMAGE"; fi\n'
-            'if [ "$1" = run ] && [ -n "$FAKE_DENY" ]; then echo "$FAKE_DENY" >&2; exit 125; fi\n')
+            'if [ "$1" = run ] && [ -n "$FAKE_DENY" ]; then echo "$FAKE_DENY" >&2; exit 125; fi\n'
+            'if [ "$1" = images ]; then printf "%s\\n" $FAKE_LOCAL; fi\n')
         make_exe(fake / "sudo").write_text('#!/bin/sh\nexec "$@"\n')
+        make_exe(fake / "rocm-smi").write_text(
+            '#!/bin/sh\n[ -n "$FAKE_GFX" ] && echo "GPU[0] : GFX Version: $FAKE_GFX"\n')
+        make_exe(fake / "rocminfo").write_text("#!/bin/sh\n")
         self.path = "%s:%s" % (fake, os.environ.get("PATH", "/usr/bin:/bin"))
 
     def run_docker(self, existing="", image="", **extra):
@@ -305,10 +311,34 @@ class RunDockerTest(unittest.TestCase):
         run = calls[-1]
         self.assertIn("-w /workspace", run)
         self.assertTrue(run.endswith("--name tester rocm/sgl-dev:new"), run)
+        self.assertIn("-e INFERPILOT_IMAGE=rocm/sgl-dev:new -e INFERPILOT_IMAGE_PINNED=1", run, "IMAGE was given")
         self.assertIn("-v /home:/home", run)
         self.assertIn("-e INFERPILOT_HOST_HOME=%s" % (self.tmp / "home"), run)
         self.assertIn("--privileged", run)
         self.assertNotIn(".inferpilot_env", run, "no keys file to mount")
+
+    def test_a_new_container_selects_the_image_variant_for_the_gpu(self):
+        fake_py = self.tmp / "py"
+        # run_docker.sh calls `python3 <latest_image.py> --variant <variant>`; Docker Hub has FAKE_HUB's variants
+        make_exe(fake_py / "python3").write_text(
+            '#!/bin/sh\ncase " $FAKE_HUB " in *" $3 "*) echo "rocm/sgl-dev:v0.5.23-$3-20261117" ;; *) exit 1 ;; esac\n')
+        hub = "rocm10-mi30x rocm10-mi35x rocm724-mi30x"
+        local = "rocm/sgl-dev:v0.5.13.post1-rocm720-mi30x-20260625 rocm/sgl-dev:v0.5.23-rocm724-mi30x-20261116"
+        for env, want in (
+                (dict(FAKE_GFX="gfx942", FAKE_HUB=hub), "v0.5.23-rocm10-mi30x-20261117"),
+                (dict(FAKE_GFX="gfx950", FAKE_HUB=hub), "v0.5.23-rocm10-mi35x-20261117"),
+                (dict(FAKE_GFX="gfx942", FAKE_HUB="rocm724-mi30x"), "v0.5.23-rocm724-mi30x-20261117"),
+                (dict(FAKE_GFX="gfx942", FAKE_LOCAL=local), "v0.5.23-rocm724-mi30x-20261116"),
+                (dict(FAKE_GFX="gfx942", FAKE_HUB=hub, IMAGE_VARIANT="rocm724-mi30x"), "v0.5.23-rocm724-mi30x-20261117"),
+                (dict(FAKE_GFX="gfx942", FAKE_LOCAL=local, IMAGE_VARIANT="rocm10-mi30x"), "")):
+            with self.subTest(**env):
+                rc, calls = self.run_docker(PATH="%s:%s" % (fake_py, self.path), **env)
+                if not want:
+                    self.assertEqual((rc, calls[-1].split()[0]), (1, "images"), "IMAGE_VARIANT is not widened")
+                    continue
+                self.assertEqual(rc, 0, self.stderr)
+                self.assertTrue(calls[-1].endswith("rocm/sgl-dev:" + want), calls[-1])
+                self.assertIn("-e INFERPILOT_IMAGE_PINNED=0", calls[-1], "the image was chosen for you")
 
     def test_without_a_terminal_it_starts_detached_and_says_how_to_enter(self):
         enter = "docker exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash"
@@ -640,7 +670,7 @@ class FrameworkTest(unittest.TestCase):
             with mock.patch.object(bs, "IMAGE_SGLANG", os.path.join(d, "no-image-checkout")), Quiet():
                 self.assertEqual(bs.ensure_framework(S(d))[0], "skipped")
 
-    def image_framework(self, d, branch="", changed="", built="f3532057e1"):
+    def image_framework(self, d, branch="", changed="", built="f3532057e1", **env):
         """ensure_framework on a fake image checkout; returns (result, the git commands it ran)."""
         image = Path(d) / "sgl-workspace" / "sglang"
         (image / ".git").mkdir(parents=True, exist_ok=True)
@@ -650,7 +680,7 @@ class FrameworkTest(unittest.TestCase):
         with mock.patch.object(bs, "IMAGE_SGLANG", str(image)), mock.patch.object(bs, "installed_commit", return_value=built), \
                 mock.patch.object(bs, "_out", side_effect=lambda cmd: answers[cmd[3]]), \
                 mock.patch.object(bs, "_run", return_value=OK) as run, Quiet():
-            res = bs.ensure_framework(S(d))
+            res = bs.ensure_framework(S(d, **env))
             self.assertNotIn("framework_dir=", bs.next_steps(bs.settings({"PWD": d, "HOME": d}), {}, {"api": True},
                                                              path_env="/usr/bin"))
         return res, [c.args[0][3:] for c in run.call_args_list], str(image)
@@ -666,6 +696,12 @@ class FrameworkTest(unittest.TestCase):
             self.assertEqual(res[0], "updated")
             self.assertEqual(ran, [["checkout", "HEAD", "--", "python/pyproject.toml", "python/sglang/kernels/aot/pyproject_rocm.toml"],
                                    ["checkout", "main"], ["pull", "--ff-only"]])
+
+    def test_the_checkout_of_a_given_image_is_kept_as_the_image_has_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            res, ran, image = self.image_framework(d, changed="python/pyproject.toml\npython/sglang/kernels/aot/pyproject_rocm.toml",
+                                                   INFERPILOT_IMAGE_PINNED="1")
+            self.assertEqual((res, ran), (("kept", image), []))
 
     def test_the_image_checkout_is_left_alone_unless_as_the_image_left_it(self):
         with tempfile.TemporaryDirectory() as d:

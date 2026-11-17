@@ -28,8 +28,9 @@ framework step puts on main once, discarding only the image build's changes to i
                 gateway
   framework     the image's /sgl-workspace/sglang by default, which the image installs sglang from in
                 editable mode: still as the image left it, it is put on main and pulled, so the current
-                main is what runs and what tasks branch from; --framework-dir names a host checkout
-                instead, cloned with its whole history if missing
+                main is what runs and what tasks branch from; in a container started from a given IMAGE
+                (INFERPILOT_IMAGE_PINNED=1) it is left as the image has it; --framework-dir names a host
+                checkout instead, cloned with its whole history if missing
   evalscope     (root in a container) evalscope for scripts/eval_accuracy.sh, in a venv of its own
                 (/opt/evalscope, linked as /usr/local/bin/evalscope): installed into the image's Python it
                 would downgrade packages sglang ships with. One already on PATH is kept
@@ -215,6 +216,7 @@ def settings(env=None, opts=None) -> dict:
         "host_home": _expand(env["INFERPILOT_HOST_HOME"], env) if env.get("INFERPILOT_HOST_HOME") else "",
         "shell": env.get("SHELL") or "",
         "framework_dir": _expand(framework_dir, env) if framework_dir else "",
+        "image_pinned": env.get("INFERPILOT_IMAGE_PINNED") == "1",
         "framework_repo": opts.get("framework_repo") or env.get("INFERPILOT_FRAMEWORK_REPO") or DEFAULT_FRAMEWORK_REPO,
         "evalscope_version": env.get("EVALSCOPE_VERSION") or "",
         "evalscope_venv": _expand(env.get("EVALSCOPE_VENV") or EVALSCOPE_VENV, env),
@@ -698,7 +700,7 @@ def ensure_framework(s: dict) -> tuple[str, str]:
                  "It is left as it is (`git -C %s fetch --unshallow` would deepen it)" % (d, d))
         if origin and _repo_key(origin) != _repo_key(s["framework_repo"]):
             warn("framework: %s tracks %s, not %s; kept as it is" % (d, origin, s["framework_repo"]))
-        if d == IMAGE_SGLANG:
+        if d == IMAGE_SGLANG and not s["image_pinned"]:
             return follow_main(d)
         log("framework: kept %s (%s)" % (d, head or "no commits"))
         return "kept", d
