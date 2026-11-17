@@ -1,7 +1,7 @@
 export const meta = {
   name: 'inferpilot',
   description: 'InferPilot: the framework agent for open-source LLM inference frameworks on AMD GPUs (sglang first). It turns one task (an upstream feature to bring to AMD, an AMD user issue, a red AMD CI job, a system-level performance gap) into a verified, reviewable pull request: correct first (independent unit gates, G0-G4 against a same-pattern baseline, an investigation loop with controls), then fast (equal-budget G5), within the community rules of knowledge/guardrails.md. mode=scan writes the day\'s report on the framework (the AMD CI on main, user issues by priority, upstream changes AMD needs to follow) and ranks the tasks in it, changing no code. InferPilot never pushes and never posts upstream: it prepares the branch, the PR body and the reply drafts for a human; the one thing it posts is the knowledge a run proved, as a pull request to its own repository for a human to merge; a scan\'s daily report is a local file for a human to share.',
-  whenToUse: 'Pass args.inferpilot_dir (absolute path of the InferPilot checkout, required) and the task, either as args.request (the user\'s words, any language; the Intake phase turns it into a task definition) or as the task-definition fields of templates/task_definition.md: args.mode (feature | issue | ci | perf | scan), args.task (the upstream PR or design, issue URL, CI job or tracker cluster, or performance goal), args.framework_dir (the framework checkout; for sglang the image\'s /sgl-workspace/sglang by default), args.model_path (required for feature and perf), args.workload (required for perf: the fixed benchmark every measurement uses), args.server_script (required for feature and perf: a script that starts the baseline server; InferPilot sets PORT, HIP_VISIBLE_DEVICES and PYTHONPATH, and EXTRA_ARGS carries the feature flags) and args.client_script (required for perf, and for a feature with a workload: runs the fixed workload against PORT and writes to OUT_DIR), args.goal (what done means), args.framework (default sglang), args.platform, args.gpu_ids, args.container, args.apply_prs (perf), args.sources, args.since, args.upstream_repos and args.rescan (scan: a report from the last 24 hours makes the run ask before scanning again), args.image (the image a task must run on; by default the newest daily one, and another stops Setup to ask) and args.image_ok, args.stop_after (a phase title), args.resume_from="implement" with args.run_dir (feature: continue after a human approved design.md), args.kernel_backend (none | geak | command) with args.kernel_backend_dir (geak) or args.kernel_backend_command (command), args.kernel_budget. A definition that lacks something its mode needs returns status=needs_input with questions and starts nothing: answer them and run again with the same args plus args.answers ({"<field>": <value>}). Operator settings: args.exp_root, args.review_model (the reviewer\'s model, where the runtime takes one per call), args.max_fix_rounds, args.max_investigate_rounds, args.max_review_rounds, args.max_work_packages, args.agent_retries, args.agent_timeout_ms.',
+  whenToUse: 'Pass args.inferpilot_dir (absolute path of the InferPilot checkout, required) and the task, either as args.request (the user\'s words, any language; the Intake phase turns it into a task definition) or as the task-definition fields of templates/task_definition.md: args.mode (feature | issue | ci | perf | scan), args.task (the upstream PR or design, issue URL, CI job or tracker cluster, or performance goal), args.framework_dir (the framework checkout; for sglang the image\'s /sgl-workspace/sglang by default), args.model_path (required for feature and perf), args.workload (required for perf: the fixed benchmark every measurement uses), args.server_script (required for feature and perf: a script that starts the baseline server; InferPilot sets PORT, HIP_VISIBLE_DEVICES and PYTHONPATH, and EXTRA_ARGS carries the feature flags) and args.client_script (required for perf, and for a feature with a workload: runs the fixed workload against PORT and writes to OUT_DIR), args.goal (what done means), args.framework (default sglang), args.platform, args.gpu_ids, args.container, args.apply_prs (perf), args.sources, args.since, args.upstream_repos and args.rescan (scan: a report from the last 24 hours makes the run ask before scanning again), args.image (the image a task must run on; by default the newest daily one, and another stops Setup to ask) and args.image_ok, args.stop_after (a phase title), args.resume_from="implement" with args.run_dir (feature: continue after a human approved design.md), args.auto_approve_design (feature, default true: a design the architect flags, or L3 work, goes on to Implement and the report says no human approved it; false makes it wait at Design for a human; stop_after still stops), args.kernel_backend (none | geak | command) with args.kernel_backend_dir (geak) or args.kernel_backend_command (command), args.kernel_budget. A definition that lacks something its mode needs returns status=needs_input with questions and starts nothing: answer them and run again with the same args plus args.answers ({"<field>": <value>}). Operator settings: args.exp_root, args.review_model (the reviewer\'s model, where the runtime takes one per call), args.max_fix_rounds, args.max_investigate_rounds, args.max_review_rounds, args.max_work_packages, args.agent_retries, args.agent_timeout_ms.',
   phases: [
     { title: 'Intake', detail: 'intake: turn a request, or a definition with gaps, into a complete task definition; questions when something is missing' },
     { title: 'Setup', detail: 'director: run dir, the task\'s branch in the framework checkout, the server and client scripts, baseline (not in scan)' },
@@ -90,6 +90,7 @@ const strs = arr(str);
 // ---------------------------------------------------------------------------
 const TASK_KEYS = ['mode', 'task', 'goal', 'framework', 'framework_dir', 'model_path', 'platform', 'gpu_ids',
   'container', 'workload', 'server_script', 'client_script', 'apply_prs', 'sources', 'since', 'stop_after', 'resume_from', 'run_dir',
+  'auto_approve_design',
   'kernel_backend', 'kernel_backend_dir', 'kernel_backend_command', 'kernel_budget', 'rescan', 'upstream_repos',
   'image', 'image_ok'];
 // '' is accepted for the enums so an undecided field costs no schema retry; pick() drops it.
@@ -261,6 +262,7 @@ const MAX_WPS = Math.max(1, int(A.max_work_packages, 12));
 const STOP_AFTER = String(A.stop_after || '').trim().toLowerCase();
 const IMAGE_WANTED = String(A.image || '').trim();  // the image the task asks for; empty: the newest daily one
 const IMAGE_OK = A.image_ok === true || String(A.image_ok).toLowerCase() === 'true';
+const AUTO_APPROVE_DESIGN = !(A.auto_approve_design === false || String(A.auto_approve_design).toLowerCase() === 'false');
 const RESUME = String(A.resume_from || '').trim().toLowerCase();
 const EXP_ROOT = String(A.exp_root || `${INFERPILOT}/exp`).replace(/\/+$/, '');
 const KERNEL_BACKEND = String(A.kernel_backend || 'none').trim().toLowerCase();
@@ -1090,9 +1092,15 @@ async function runFeature() {
   }
   if (design.design_path) C.design_path = design.design_path;
   note('Design', 'pass', `${design.work_packages.length} work package(s)${design.summary ? `; ${design.summary}` : ''}`);
-  // L3 work, or a design the architect flags, waits for a human-approved design.
-  if (stopHere('Design') || design.needs_human_review === true || recon.level === 'L3') {
+  // L3 work, or a design the architect flags, goes on as approved and the report says no human did;
+  // auto_approve_design=false makes it wait for a human. stop_after "Design" stops either way.
+  const review = design.needs_human_review === true || recon.level === 'L3';
+  if (stopHere('Design') || (review && !AUTO_APPROVE_DESIGN)) {
     return finish(stopHere('Design') ? 'stopped' : 'awaiting_design_review', 'Design');
+  }
+  if (review) {
+    note('Design', 'auto_approved', `auto_approve_design: ${recon.level === 'L3' ? 'L3 work' : 'the architect asked for a human review'}`
+      + ` that no human gave; ${C.design_path} goes to the PR's reviewer${design.summary ? `; ${design.summary}` : ''}`);
   }
 
   return deliver(design.work_packages, [], spec.perf_claim || '', true);

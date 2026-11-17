@@ -29,8 +29,9 @@ than the size of the diff.
 | L2 | on another platform or framework | ATOM's two-batch overlap → sglang |
 | L3 | only in a paper or a design document | independent development |
 
-L1 tasks are routine for InferPilot; L2 tasks need an expert's review of the design; L3 tasks start with a
-human-approved design.
+L1 tasks are routine for InferPilot; L2 tasks need an expert's review of the design; L3 tasks start from a
+design a human should approve (a run waits for that only with `auto_approve_design: false`; otherwise its
+report says no human did).
 
 ## 3. CUDA dependencies and AMD starting points
 

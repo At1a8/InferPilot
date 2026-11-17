@@ -156,8 +156,10 @@ directory is not visible: `run_lock.py release --force` frees a lock whose run i
 - The PR phase changes no code: hygiene and lint happen in Implement, gaps found at PR come back as work
   packages through Implement, Verify and Review, and main is only trial-merged to report conflicts, so
   the pushed branch is the one that was verified.
-- Human checkpoints: the intake's questions (`needs_input`); `stop_after` any phase; L3 tasks and designs the architect flags stop at Design
-  (`awaiting_design_review`) and continue with `resume_from: "implement"`; the PR is prepared, never
+- Human checkpoints: the intake's questions (`needs_input`); `stop_after` any phase; with
+  `auto_approve_design: false`, L3 tasks and designs the architect flags stop at Design
+  (`awaiting_design_review`) and continue with `resume_from: "implement"` (by default they go on, and
+  the report says no human approved the design); the PR is prepared, never
   pushed; issue replies are drafts; a scan's daily report is a file a human shares, checked to name
   nothing about the machine (`scripts/daily_report.py`), and a shared copy is where the next scan, in
   any container, continues from. The one post is the curator's knowledge changes, as a pull request to
@@ -178,7 +180,8 @@ workloads → P1 issues and performance opportunities → the rest. Issue priori
 Difficulty: **L1** — a similar implementation exists in the same framework (an AMD sibling model or
 the NV path); **L2** — on another platform or framework (ATOM's two-batch overlap → sglang); **L3** —
 only a paper or a document. L1 is routine; L2 needs an expert's design review; L3 starts from a
-human-approved design.
+design a human should approve (a run waits for that only with `auto_approve_design: false`; otherwise
+its report says no human did).
 
 ## 7. Composability
 

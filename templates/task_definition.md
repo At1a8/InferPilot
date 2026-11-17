@@ -23,6 +23,7 @@ of it.
 | `sources`, `since` | what to scan, from when | | | | | optional |
 | `stop_after` | stop after this phase | optional | optional | optional | optional | optional |
 | `resume_from`, `run_dir` | `implement`: continue after a human approved the design | optional | | | | |
+| `auto_approve_design` | default `true`: a design the architect flags goes on to Implement and the report says so; `false`: it waits for a human review | optional | | | | |
 | `kernel_backend` with `kernel_backend_dir` or `kernel_backend_command` | where kernel hand-offs go | optional | optional | optional | optional | |
 
 `inferpilot.js` checks the required fields (and a back end's own field) for every definition; one that
