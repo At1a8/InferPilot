@@ -558,7 +558,7 @@ const scenarios = [
     check(noClaim.result.status === 'ready_for_review' && noClaim.keys.includes('perf_engineer:perf_eval'),
       `no claim, only guards: ${noClaim.result.status}`);
   }],
-  ['perf: held_out, guards and sweep are off by default, and every role sees them', async () => {
+  ['perf: held_out, guards, sweep and tune are off by default, and every role sees them', async () => {
     const vanish = {
       'perf_engineer:perf_eval': () => ({ claim_reproduced: true, held_out_ok: false, guards_ok: true, workload_unchanged: true, path_ok: true }),
     };
@@ -567,11 +567,13 @@ const scenarios = [
     const feature = await run({ mode: 'feature', task: 't' }, vanish);
     check(feature.result.status === 'ready_for_review', `feature, held_out off: ${feature.result.status}`);
     const pe = feature.calls.find((c) => c.key === 'perf_engineer:perf_eval');
-    check(pe && pe.ins.held_out === false && pe.ins.guards === false && pe.ins.sweep === false,
-      `off for the perf engineer: ${JSON.stringify(pe && [pe.ins.held_out, pe.ins.guards, pe.ins.sweep])}`);
-    const asked = await run({ mode: 'feature', task: 't', held_out: 'true', guards: true, sweep: true });
+    check(pe && pe.ins.held_out === false && pe.ins.guards === false && pe.ins.sweep === false && pe.ins.tune === false,
+      `off for the perf engineer: ${JSON.stringify(pe && [pe.ins.held_out, pe.ins.guards, pe.ins.sweep, pe.ins.tune])}`);
+    const asked = await run({ mode: 'feature', task: 't', held_out: 'true', guards: true, sweep: true, tune: 'true' });
     const sp = asked.calls.find((c) => c.key === 'director:spec');
     check(sp && sp.ins.held_out === true && sp.ins.guards === true && sp.ins.sweep === true, 'on for the spec when the task sets them');
+    const ar = asked.calls.find((c) => c.key === 'architect:design');
+    check(ar && ar.ins.tune === true, 'tune reaches the architect, which adds a tuning package only then');
   }],
   ['perf: measured win to a PR', async () => {
     const r = await run({ mode: 'perf', task: 'p', apply_prs: ['#46329'] });

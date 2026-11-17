@@ -54,8 +54,9 @@ Inputs: `claim` (empty when the task claims no gain).
 1. Follow `perf_evaluation.md`: the benchmark is the task's `client_script`, run unchanged with
    `OUT_DIR` set, against servers started from its `server_script` (the change's flags in
    `EXTRA_ARGS`); equal budget for the scarce resource; guard workloads only where the goal or the acceptance
-   matrix lists them; fresh server per arm; prefix cache flushed; one warm-up and at least two timed runs
-   per arm; interleave arms on a shared box.
+   matrix lists them; fresh server per arm; prefix cache flushed; one warm-up, then one A/B round (one
+   timed run per arm), and a round that shows no gain is reproduced at most twice and judged on the
+   median (`perf_evaluation.md` §3); interleave arms on a shared box.
 2. Check every server log for out-of-memory, retraction and watchdog messages; a run with any of them
    is not a performance number.
 3. `workload_unchanged`: every arm ran the fixed workload — `RUN_DIR/run.json` in `perf`, the spec's
@@ -68,8 +69,7 @@ Inputs: `claim` (empty when the task claims no gain).
    `summary` with its id, for the reviewer; a gain that depends on one is not reproduced.
 5. In `mode=perf`, re-capture the trace metrics too: the mechanism must have moved (e.g. syncs per step
    5 → 0), not only the headline number.
-6. `claim_reproduced`: the measured gain meets `claim` beyond the noise band (true when `claim` is
-   empty). `held_out_ok`: with `held_out` on, at the held-out operating point (`perf_evaluation.md` §3:
+6. `claim_reproduced`: the median of the rounds meets `claim` (true when `claim` is empty). `held_out_ok`: with `held_out` on, at the held-out operating point (`perf_evaluation.md` §3:
    the client at half the concurrency through `CONCURRENCY`, fixed at Setup), measured the same way, the
    change still wins beyond the noise band (true when `held_out` is off, when `claim` is empty, or when the
    client cannot take another concurrency: say which in `summary`). `guards_ok`: no guard workload the

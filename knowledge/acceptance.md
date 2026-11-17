@@ -36,14 +36,11 @@ Two rules hold across the dimensions:
   the baseline on a fixed prompt set, and every divergence is checked (a near-tie between the top
   logits is acceptable, a systematic difference is not); GSM8K on all 1319 questions, one run per arm
   (`scripts/eval_accuracy.sh`), at most 1 point below the baseline.
-- **Lossy changes** (relaxed draft verification, quantization, sparse attention, KV compression): GSM8K
-  as above by default, and nothing more unless the task asks: the matrix adds no set of its own, not
-  even a report-only one, and its risks say that GSM8K may not show the loss (`validation_doctrine.md`,
-  G2). When the goal asks for more, the budget is declared before anything is measured: the suite, the
-  metric and the largest acceptable loss. It includes at least one set that is sensitive to the loss: a
-  recall-heavy set such as simple_qa for relaxed verification, a long-context set for KV compression.
-  Run at least 3 times per arm, since a single run of such a set moves by about ±0.5 points
-  (`feature_skills/fly-dspark`).
+- **Lossy changes** (relaxed draft verification, quantization, sparse attention, KV compression): gsm8k
+  (1319), gpqa_diamond (198) and simple_qa (4326, LLM-judged), each once per arm with
+  `scripts/eval_accuracy.sh`, and at most 1 point below the baseline on each (`validation_doctrine.md`,
+  G2). A goal may ask for more, declared before anything is measured: other sets (a long-context set
+  for KV compression, for example), more runs or another budget.
 - **Capability suites**, for what the change touches: long context (needle-in-a-haystack, G3),
   reasoning (GPQA, AIME), tool calls, multimodal input.
 - **Parity with a reference**, for a new model, a new kernel or a refactor: logprobs or the KL
@@ -108,7 +105,7 @@ extra items of its feature classes (§1.4).
 | Dimension | Upstream feature | Issue fix | CI fix | Performance | Requirement |
 |---|---|---|---|---|---|
 | Correctness | required | required; the reproduction becomes a regression test | required; the failing test passes on every lane it failed on | required | required |
-| Accuracy | required: GSM8K, more sets only when the task asks (§1.1) | when the issue is an accuracy loss | no regression | required, as lossless | on the requester's data set |
+| Accuracy | required: GSM8K; for a lossy change gsm8k, gpqa_diamond and simple_qa (§1.1) | when the issue is an accuracy loss | no regression | required, as lossless | on the requester's data set |
 | Performance | when the feature claims a gain | when the issue is a performance problem: the reported number comes back | — | required: the gain; a guard and a held-out point when the task asks (`guards`, `held_out`) | the requester's SLA |
 | Stability | required (G4) | when the issue is a crash or hang | a flaky test passes repeatedly (§4) | when the change touches memory or scheduling | required, with a soak |
 | Compatibility | required | required | required | required | the requester's platforms |
@@ -150,9 +147,11 @@ this form after the fact:
 
 - **Noise band:** set from repeated baseline runs (their range, or the standard error of the mean) and
   stated next to every result.
-- **Runs:** GSM8K once per arm by default; failure rates at least 4 per configuration (`validation_doctrine.md`); performance at least
-  2 timed runs per arm after a warm-up, more when the spread is wide (`perf_evaluation.md` §3); a
-  recall set the task asks for at least 3 runs per arm; a flaky test passes in every one of at least 10 runs.
+- **Runs:** each accuracy set once per arm; performance one A/B round, one timed run per arm after a
+  warm-up (`perf_evaluation.md` §3). A result that misses its expectation (accuracy below its budget,
+  no performance gain) is reproduced at most twice, so three results at most, and the verdict is their
+  median. Failure rates at least 4 per configuration (`validation_doctrine.md`); a flaky test passes
+  in every one of at least 10 runs.
 - **Distribution tests** (a sampler or a lossless verification change): per tested prompt, compare the
   sampled tokens with the target distribution using a stated test, sample size and significance level,
   e.g. a chi-square test on at least 10,000 samples at p = 0.01.
@@ -160,9 +159,9 @@ this form after the fact:
   differing token fails the item.
 - **Two lanes at once** (two servers on one node): swap the arms between the lanes every round, and
   report the result both pooled and paired by round.
-- **Verdicts:** a gain counts when it exceeds the noise band, and with `held_out` on when it also holds
-  at the held-out point; a guard
-  holds when the change stays inside the band. Every run is reported, with its range, never only the
+- **Verdicts:** a gain counts when the median of the rounds shows it (above zero, or at least the size
+  the goal claims), and with `held_out` on when it also holds at the held-out point; a guard holds when
+  the change stays inside the noise band. Every run is reported, with its range, never only the
   best (`reward_hacks.md` P9).
 
 ## 5. Fixed before the work

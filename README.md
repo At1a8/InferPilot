@@ -429,6 +429,7 @@ described at the top of `runtime/run.mjs`.
 | `resume_from`, `run_dir` | `feature`: `implement` continues a run that stopped at Design once a human approved `design.md` |
 | `auto_approve_design` | `feature`, default `true`: a design the architect flags, or L3 work, goes on to Implement, and the report says no human approved the design. `false` makes such a design wait at Design for a human (`awaiting_design_review`). `stop_after` still stops |
 | `held_out`, `guards`, `sweep` | performance checks beyond the task's own workload and goal, each off by default: `held_out` measures the gain again at a held-out operating point (half the concurrency) and requires it to hold there; `guards` adds guard workloads of InferPilot's choosing to the ones the goal names; `sweep` measures points beyond the workload's own (more concurrencies or lengths) |
+| `tune` | `feature`, default `false`: the feature runs at the configuration of the target PR or design (for FLy, vLLM's window 2, threshold 0.3, top-k 3) and has to work there; `true` adds a work package that chooses its knobs by measurement |
 | `review_model` | the reviewer's model, passed with its agent call (InferPilot's runner gives it to the CLI as `--model`; in Claude Code it depends on the Workflow tool) |
 | `max_fix_rounds`, `max_investigate_rounds`, `max_review_rounds`, `max_work_packages` | budgets |
 | `agent_retries`, `agent_timeout_ms` | an agent call is retried after an error (the retry checks what the failed attempt left), never after a timeout: the timed-out agent may still be running, so it goes on the report's attention list, and its work package gets no further round and no rollback. Default timeout 3 h, 6 h for the verify and performance engineers and the investigator |
@@ -472,7 +473,7 @@ GitHub allows 60 requests an hour and 10 searches a minute per IP address).
 |---|---|
 | `scripts/scan_issues.py` | open AMD issues with linked PRs, replies and the projected 60-day auto-close date |
 | `scripts/scan_ci.py` | the AMD CI on main from its own runs and logs (each failing job: since when, last passed, failed tests, first errors), and the Failure Trackers' clusters |
-| `scripts/eval_accuracy.sh` | accuracy of a running server with evalscope (the bootstrap installs it): GSM8K on all 1319 questions, once, by default; other sets by name; keys only from the environment |
+| `scripts/eval_accuracy.sh` | accuracy of a running server with evalscope (the bootstrap installs it): GSM8K on all 1319 questions, once, by default (a lossy feature adds gpqa_diamond and simple_qa); other sets by name; keys only from the environment |
 | `scripts/scan_upstream.py` | merged upstream commits: new CUDA gates, CUDA-first features, new models |
 | `scripts/audit_platform_gates.py` | platform gates to re-check on a new architecture (capability checks true on gfx1250, wave32 assumptions) |
 | `scripts/audit_host_syncs.py` | host-device sync and copy candidates on the hot path (leads for a profile) |
