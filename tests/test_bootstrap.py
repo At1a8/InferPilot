@@ -262,6 +262,9 @@ class RunDockerTest(unittest.TestCase):
             'if [ "$1" = inspect ]; then [ -n "$FAKE_IMAGE" ] || exit 1; echo "$FAKE_IMAGE"; fi\n'
             'if [ "$1" = run ] && [ -n "$FAKE_DENY" ]; then echo "$FAKE_DENY" >&2; exit 125; fi\n')
         make_exe(fake / "sudo").write_text('#!/bin/sh\nexec "$@"\n')
+        make_exe(fake / "rocm-smi").write_text(
+            '#!/bin/sh\n[ -n "$FAKE_GFX" ] && echo "GPU[0] : GFX Version: $FAKE_GFX"\n')
+        make_exe(fake / "rocminfo").write_text("#!/bin/sh\n")
         self.path = "%s:%s" % (fake, os.environ.get("PATH", "/usr/bin:/bin"))
 
     def run_docker(self, existing="", image="", **extra):
@@ -309,6 +312,30 @@ class RunDockerTest(unittest.TestCase):
         self.assertIn("-e INFERPILOT_HOST_HOME=%s" % (self.tmp / "home"), run)
         self.assertIn("--privileged", run)
         self.assertNotIn(".inferpilot_env", run, "no keys file to mount")
+
+    def test_a_new_container_selects_the_image_variant_for_the_gpu(self):
+        fake_py = self.tmp / "py"
+        make_exe(fake_py / "python3").write_text(
+            """#!/bin/sh
+variant=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --variant ]; then shift; variant=$1; break; fi
+  shift
+done
+[ -n "$variant" ] || exit 1
+echo "rocm/sgl-dev:v0.5.23-$variant-20261117"
+"""
+        )
+        path = "%s:%s" % (fake_py, self.path)
+        for gfx, variant in (("gfx942", "rocm10-mi30x"), ("gfx950", "rocm10-mi35x")):
+            with self.subTest(gfx=gfx):
+                rc, calls = self.run_docker(PATH=path, FAKE_GFX=gfx)
+                self.assertEqual(rc, 0, self.stderr)
+                self.assertTrue(calls[-1].endswith("rocm/sgl-dev:v0.5.23-%s-20261117" % variant), calls[-1])
+
+        rc, calls = self.run_docker(PATH=path, FAKE_GFX="gfx942", IMAGE_VARIANT="rocm724-mi30x")
+        self.assertEqual(rc, 0, self.stderr)
+        self.assertTrue(calls[-1].endswith("rocm/sgl-dev:v0.5.23-rocm724-mi30x-20261117"), calls[-1])
 
     def test_without_a_terminal_it_starts_detached_and_says_how_to_enter(self):
         enter = "docker exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash"
@@ -655,10 +682,37 @@ class FrameworkTest(unittest.TestCase):
                                                              path_env="/usr/bin"))
         return res, [c.args[0][3:] for c in run.call_args_list], str(image)
 
-    def test_the_image_checkout_on_a_branch_is_kept(self):
+    def test_the_image_checkout_on_a_task_branch_is_kept(self):
         with tempfile.TemporaryDirectory() as d:
-            res, ran, image = self.image_framework(d, branch="main")
-            self.assertEqual((res, ran), (("kept", "%s on main" % image), []))
+            res, ran, image = self.image_framework(d, branch="inferpilot/work")
+            self.assertEqual((res, ran), (("kept", "%s on inferpilot/work" % image), []))
+
+    def test_the_image_checkout_on_main_is_normalized_when_it_is_still_the_image_state(self):
+        with tempfile.TemporaryDirectory() as d:
+            changed = "\n".join(
+                [
+                    "python/pyproject.toml",
+                    "python/sglang/kernels/aot/pyproject.toml",
+                    "python/sglang/kernels/aot/pyproject_rocm.toml",
+                ]
+            )
+            for built in ("f3532057e1", "0123456789"):
+                with self.subTest(installed_commit=built):
+                    res, ran, image = self.image_framework(d, branch="main", changed=changed, built=built)
+                    self.assertEqual(res[0], "updated")
+                    self.assertEqual(
+                        ran,
+                        [
+                            ["checkout", "HEAD", "--"] + changed.splitlines(),
+                            ["pull", "--ff-only"],
+                        ],
+                    )
+                    self.assertIn(image, res[1])
+
+    def test_main_is_kept_when_it_has_an_unknown_packaging_edit(self):
+        with tempfile.TemporaryDirectory() as d:
+            res, ran, _ = self.image_framework(d, branch="main", changed="docs/pyproject.toml")
+            self.assertEqual((res[0], ran), ("skipped", []))
 
     def test_the_image_checkout_as_the_image_left_it_goes_on_main(self):
         with tempfile.TemporaryDirectory() as d:

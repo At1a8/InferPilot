@@ -186,11 +186,13 @@ clean-room re-implementation). Your keys also come in as root's `~/.inferpilot_e
 Unlike many such scripts it does not mount the host's Docker socket (`DOCKER_SOCKET=1` does): it would put
 every container on the host within the agents' reach.
 
-- **Image.** Tasks test the newest sglang, so it starts from the newest daily `rocm/sgl-dev` build for
-  ROCm 10 and MI35x ([`scripts/latest_image.py`](scripts/latest_image.py), e.g.
-  `v0.5.23-rocm10-mi35x-20261103`; the `miles` images on the same page are for reinforcement learning
-  and are skipped). A new day's image is pulled at its first use, about 43 GB. On MI30x, set
-  `IMAGE_VARIANT=rocm10-mi30x`; for a fixed image, `IMAGE=rocm/sgl-dev:<tag>`. A container keeps the
+- **Image.** Tasks test the newest sglang, so the launcher detects the host GPU and starts from the newest
+  matching daily ROCm 10 `rocm/sgl-dev` build: `rocm10-mi30x` for gfx942 (MI300/MI308/MI325) and
+  `rocm10-mi35x` for gfx950 (MI350/MI355). If detection is unavailable it warns and falls back to MI35x
+  ([`scripts/latest_image.py`](scripts/latest_image.py), e.g. `v0.5.23-rocm10-mi35x-20261103`; the
+  `miles` images on the same page are for reinforcement learning and are skipped). A new day's image is
+  pulled at its first use, about 43 GB. `IMAGE_VARIANT` overrides detection, for example
+  `IMAGE_VARIANT=rocm724-mi30x`; for a fixed image, use `IMAGE=rocm/sgl-dev:<tag>`. A container keeps the
   image it started from: run_docker.sh says so when you come back to one whose image is no longer the
   newest daily one, and a task there stops at Setup, before it creates anything, to ask whether to run
   on it anyway (`image_ok`), unless the task names that image (`image`). A scan goes on and names its
@@ -365,7 +367,7 @@ step 3 too, cloning InferPilot to `/workspace/inferpilot` (pip shows the output 
 | Variable | Used by | Default |
 |---|---|---|
 | `IMAGE` | `scripts/run_docker.sh` | the newest daily `rocm/sgl-dev` image of `IMAGE_VARIANT` (the newest local one when Docker Hub cannot be reached) |
-| `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS`, `MOUNT_HOME` | `scripts/run_docker.sh` | `rocm10-mi35x`; your user name; more directories to mount, space-separated; `0` leaves `/home` out |
+| `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS`, `MOUNT_HOME` | `scripts/run_docker.sh` | detected from gfx942/gfx950 (fallback `rocm10-mi35x`); your user name; more directories to mount, space-separated; `0` leaves `/home` out |
 | `DOCKER_SOCKET` | `scripts/run_docker.sh` | unset; `1` also mounts the host's Docker socket and `docker` |
 | `DETACH`, `PRIVILEGED` | `scripts/run_docker.sh` | unset: in the background when there is no terminal, else an interactive shell; `PRIVILEGED=0` leaves out `--privileged` |
 | `INFERPILOT_LOCK_FILE` | `scripts/run_lock.py` | `/dev/shm/inferpilot-run.lock`, the machine's one-task lock |

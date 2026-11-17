@@ -2,8 +2,8 @@
 # Start a ROCm container for InferPilot, or get back into it, and open a root shell in its /workspace
 # (README step 2).
 #
-#   scripts/run_docker.sh                                # the newest daily sglang image, ROCm 10, MI35x
-#   IMAGE_VARIANT=rocm10-mi30x scripts/run_docker.sh     # the newest one for another GPU or ROCm
+#   scripts/run_docker.sh                                # newest ROCm 10 daily for the detected gfx942/gfx950 GPU
+#   IMAGE_VARIANT=rocm724-mi30x scripts/run_docker.sh    # override the detected GPU or ROCm version
 #   IMAGE=rocm/sgl-dev:<tag> NAME=<name> scripts/run_docker.sh
 #   EXTRA_MOUNTS="/home/<you>/models" scripts/run_docker.sh   # more host directories, at the same paths
 #   DOCKER_SOCKET=1 scripts/run_docker.sh                # also mount the host's Docker socket
@@ -30,7 +30,7 @@
 #
 # `docker run -it` needs a terminal. Without one (srun, CI, an agent's shell) the container starts in the
 # background and the script prints the `docker exec` that enters it; DETACH=0 or 1 overrides the guess.
-VARIANT=${IMAGE_VARIANT:-rocm10-mi35x}
+VARIANT=${IMAGE_VARIANT:-}
 NAME=${NAME:-${SUDO_USER:-$USER}}
 HOST_HOME=$HOME
 [ -n "$SUDO_USER" ] && HOST_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
@@ -50,6 +50,27 @@ latest_image() {  # scripts/latest_image.py next to this script, else the one on
     python3 "$(dirname "$0")/latest_image.py" "$@"
   else
     curl -fsSL "$RAW/latest_image.py" | python3 - "$@"
+  fi
+}
+
+detect_variant() {
+  local info="" gfx=""
+  if command -v rocm-smi >/dev/null 2>&1; then
+    info=$(rocm-smi --showproductname 2>/dev/null || true)
+    gfx=$(printf '%s\n' "$info" | awk '/GFX Version:/ { print $NF; exit }')
+  fi
+  if [ -z "$gfx" ] && command -v rocminfo >/dev/null 2>&1; then
+    info=$(rocminfo 2>/dev/null || true)
+    gfx=$(printf '%s\n' "$info" | awk '$1 == "Name:" && $2 ~ /^gfx[0-9]+$/ { print $2; exit }')
+  fi
+  if [ "$gfx" = gfx942 ]; then
+    echo rocm10-mi30x
+  elif [ "$gfx" = gfx950 ]; then
+    echo rocm10-mi35x
+  else
+    echo "run_docker.sh: cannot map GPU architecture ${gfx:-unknown} to an image variant;" \
+      "defaulting to rocm10-mi35x. Set IMAGE_VARIANT or IMAGE to override." >&2
+    echo rocm10-mi35x
   fi
 }
 
@@ -73,6 +94,7 @@ if OLD=$($SUDO docker inspect -f '{{.Config.Image}}' "$NAME" 2>/dev/null); then
 fi
 
 if [ -z "$IMAGE" ]; then
+  [ -n "$VARIANT" ] || VARIANT=$(detect_variant)
   IMAGE=$(latest_image --variant "$VARIANT")
   if [ -z "$IMAGE" ]; then
     IMAGE=$($SUDO docker images --format '{{.Repository}}:{{.Tag}}' rocm/sgl-dev |

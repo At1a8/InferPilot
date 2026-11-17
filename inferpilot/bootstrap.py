@@ -94,9 +94,19 @@ APPROVED_KEY_CHARS = 20
 AMD_GATEWAY_URL = "https://llm-api.amd.com/Unified"
 # sglang images ship a full-history checkout of sglang and install sglang from it in editable mode; tasks
 # work in it, each on its own branch. The image's build rewrites its packaging files (python/pyproject.toml
-# becomes the ROCm one) and leaves it detached at the commit it built.
+# becomes the ROCm one) and normally leaves it detached at the commit it built; some daily images leave
+# the same build state on main.
 IMAGE_SGLANG = "/sgl-workspace/sglang"
 PACKAGING = re.compile(r"(^|/)pyproject[^/]*\.toml$")
+# Some daily images leave that checkout on main instead of detached. Only these known build-time edits
+# may be discarded from main; a different pyproject edit may be a user's work and must stop Setup.
+IMAGE_MAIN_PACKAGING = frozenset(
+    {
+        "python/pyproject.toml",
+        "python/sglang/kernels/aot/pyproject.toml",
+        "python/sglang/kernels/aot/pyproject_rocm.toml",
+    }
+)
 # scripts/eval_accuracy.sh reaches the server over HTTP, so evalscope needs nothing of sglang's Python, and
 # installed into it, it would change it: evalscope 1.15 downgrades datasets and fsspec below the image's.
 EVALSCOPE_VENV = "/opt/evalscope"
@@ -652,21 +662,28 @@ def installed_commit() -> str:
 
 def follow_main(d: str) -> tuple[str, str]:
     """Put the image's checkout on main once: discard the build's packaging changes, check out main, pull.
-    Only a checkout as the image left it is touched: detached at the commit sglang was installed at, with
-    nothing but packaging files changed. One on a branch is already past this (Setup takes it from there)."""
+    Only a checkout as the image left it is touched: a detached checkout must be at the installed commit
+    and have only packaging changes; main may discard only the exact known build-time packaging paths.
+    A task branch is already past this and is left alone (Setup takes it from there)."""
     rc, branch, _ = _out(["git", "-C", d, "symbolic-ref", "-q", "--short", "HEAD"])
     _, head, _ = _out(["git", "-C", d, "log", "-1", "--format=%h %cs"])
-    if rc == 0 and branch:
+    on_branch = rc == 0 and bool(branch)
+    if on_branch and branch != "main":
         log("framework: kept %s on %s (%s); the image's checkout, which tasks branch from" % (d, branch, head))
         return "kept", "%s on %s" % (d, branch)
     sha, built = (head.split() or [""])[0], installed_commit()
-    if built and sha and not (sha.startswith(built) or built.startswith(sha)):
+    matches_image = bool(built and sha and (sha.startswith(built) or built.startswith(sha)))
+    if not on_branch and built and sha and not matches_image:
         warn("framework: %s is detached at %s, not at the commit the image installed (%s); left as it is"
              % (d, head, built))
         return "skipped", "detached at %s" % head
     _, changed, _ = _out(["git", "-C", d, "diff", "--name-only", "HEAD"])
     files = [f for f in changed.splitlines() if f]
-    other = [f for f in files if not PACKAGING.search(f)]
+    other = (
+        [f for f in files if f not in IMAGE_MAIN_PACKAGING]
+        if on_branch
+        else [f for f in files if not PACKAGING.search(f)]
+    )
     if other:
         warn("framework: %s has changes beyond the image's packaging files (%s); left as it is, and Setup "
              "stops on it" % (d, ", ".join(other[:5])))
@@ -674,7 +691,7 @@ def follow_main(d: str) -> tuple[str, str]:
     if files and _run(["git", "-C", d, "checkout", "HEAD", "--"] + files).returncode != 0:
         warn("framework: could not discard the image's packaging changes in %s" % d)
         return "failed", "git checkout HEAD -- <packaging files>"
-    if _run(["git", "-C", d, "checkout", "main"]).returncode != 0:
+    if not on_branch and _run(["git", "-C", d, "checkout", "main"]).returncode != 0:
         warn("framework: could not check out main in %s" % d)
         return "failed", "git checkout main"
     if _run(["git", "-C", d, "pull", "--ff-only"]).returncode != 0:
