@@ -208,6 +208,13 @@ every container on the host within the agents' reach.
   run_docker.sh of your own works too: mount your keys as root's `~/.inferpilot_env`
   (`-v $HOME/.inferpilot_env:/root/.inferpilot_env:ro`), or name the file with `INFERPILOT_KEYS`; in a container that
   mounts `/home`, the bootstrap also finds it in your home there (step 3).
+- **Without a terminal.** Under a job scheduler (`srun`), in CI or from an agent's shell there is no
+  terminal for `docker run -it`: run_docker.sh then starts the container in the background and prints
+  the `docker exec` that enters it (`DETACH=0` or `1` overrides the guess). Where the Docker daemon
+  refuses `--privileged`, `PRIVILEGED=0` leaves it out; the GPUs still come through `/dev/kfd` and
+  `/dev/dri`, but the container cannot write `/proc/sys`. Where it refuses a mount of all of `/home`,
+  `MOUNT_HOME=0` leaves it out, and `EXTRA_MOUNTS=$HOME` brings back only yours. When it starts the
+  container in the background, run_docker.sh says which of these a refusal calls for.
 
 `claude` is not there yet (`claude: command not found`): step 3 installs it.
 
@@ -358,6 +365,7 @@ step 3 the GEAK way, cloning InferPilot to `/workspace/inferpilot` (pip shows th
 | `IMAGE` | `scripts/run_docker.sh` | the newest daily `rocm/sgl-dev` image of `IMAGE_VARIANT` (the newest local one when Docker Hub cannot be reached) |
 | `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS`, `MOUNT_HOME` | `scripts/run_docker.sh` | `rocm10-mi35x`; your user name; more directories to mount, space-separated; `0` leaves `/home` out |
 | `DOCKER_SOCKET` | `scripts/run_docker.sh` | unset; `1` also mounts the host's Docker socket and `docker` |
+| `DETACH`, `PRIVILEGED` | `scripts/run_docker.sh` | unset: in the background when there is no terminal, else an interactive shell; `PRIVILEGED=0` leaves out `--privileged` |
 | `INFERPILOT_LOCK_FILE` | `scripts/run_lock.py` | `/dev/shm/inferpilot-run.lock`, the machine's one-task lock |
 | `INFERPILOT_HOME` | bootstrap | `./inferpilot`, or the checkout you run from |
 | `INFERPILOT_KEYS` | bootstrap | root's `~/.inferpilot_env`, where run_docker.sh mounts yours: the keys file the container's shells load |
