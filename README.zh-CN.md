@@ -135,7 +135,8 @@ claude --version    # 装在这个容器里的 Claude Code
 | shell | 在 root 的 `~/.bashrc` 里设置 `PYTHONDONTWRITEBYTECODE=1`（宿主机挂载目录里的 checkout 不会出现 root 所有的 `__pycache__`）和 `DISABLE_AUTOUPDATER=1`，并加载 key 文件，之后才放进去的也会加载；设置了 `LLM_GATEWAY_KEY` 且没有 `ANTHROPIC_BASE_URL` 时，让 Claude Code 走 AMD LLM 网关 |
 | 框架 | 镜像里的 `/sgl-workspace/sglang`，原样保留：用每日镜像新建的容器里，run_docker.sh 已经把它切到当前的 main（第 2 步）；用指定的 `IMAGE` 新建的容器、以及再次进入的容器，代码保持原样。这里有未提交的改动时会提示，因为任务的 Setup 会因此停下，直到你自己处理（用指定 `IMAGE` 新建的容器里，就是镜像构建对打包文件的改动）；用 `--framework-dir` 可以改用宿主机上的 checkout（已有的原样使用，缺失时带完整历史克隆） |
 | evalscope | 供 `scripts/eval_accuracy.sh` 使用：装在单独的 venv `/opt/evalscope` 里（约一分钟、1.2 GB），并链接为 `/usr/local/bin/evalscope`。不装进镜像的 Python，否则会把 `datasets` 和 `fsspec` 降到比 sglang 自带的更低的版本；`PATH` 上已经有 `evalscope` 时保留原样 |
-| 检查 | GPU、sglang、evalscope、API 访问、`GITHUB_TOKEN`，key 文件里设置的也算（只检测） |
+| node、cursor | 只在加 `--cursor` 时运行，供 `runtime/run.mjs --backend cursor` 使用：安装 Node.js（默认最新的 LTS，可用 `INFERPILOT_NODE_VERSION` 指定），按 nodejs.org 的校验和核对后解压到 `/opt/node/<版本>`，并链接到 `/usr/local/bin`；再用官方安装脚本装 Cursor CLI（`agent`）。已有的 Node.js 20+ 或 `agent` 保留原样。CLI 需要你自己登录，每个容器一次：`NO_OPEN_BROWSER=1 agent login`，在浏览器里打开打印出的链接；或者在 key 文件里设置 `CURSOR_API_KEY` |
+| 检查 | GPU、sglang、evalscope、API 访问、`GITHUB_TOKEN`，key 文件里设置的也算；加 `--cursor` 时还检查 Cursor CLI（只检测） |
 
 只有 `/workspace/inferpilot` 还不存在时才会克隆；bootstrap 从不写入 key。
 
@@ -212,7 +213,7 @@ docker cp <name>:/workspace/inferpilot/exp/<run> ~/
 
 ### 重复执行与选项
 
-`inferpilot.bootstrap` 的每一步都会报告 `kept`、`installed`、`updated`、`added`、`created`、`skipped` 或 `failed`；最后有一份汇总，"下一步"只列出仍然缺少的内容，任何一步失败时退出码为 1。在新容器里，它会安装 Claude Code 和 evalscope（各需要一两分钟），并写好 Claude Code 的配置以及 git 和 shell 的设置。`--claude-only` 只运行 key 和 Claude Code 相关的步骤，`--check` 只运行检查。在容器里，`cd /workspace && pip install -v git+https://github.com/At1a8/inferpilot` 同样会执行第 3 步，把 InferPilot 克隆到 `/workspace/inferpilot`（加 `-v` 时 pip 才显示输出；用了缓存的 wheel 时会跳过）。
+`inferpilot.bootstrap` 的每一步都会报告 `kept`、`installed`、`updated`、`added`、`created`、`skipped` 或 `failed`；最后有一份汇总，"下一步"只列出仍然缺少的内容，任何一步失败时退出码为 1。在新容器里，它会安装 Claude Code 和 evalscope（各需要一两分钟），并写好 Claude Code 的配置以及 git 和 shell 的设置。`--claude-only` 只运行 key 和 Claude Code 相关的步骤，`--check` 只运行检查，`--cursor` 额外安装 Node.js 和 Cursor CLI。在容器里，`cd /workspace && pip install -v git+https://github.com/At1a8/inferpilot` 同样会执行第 3 步，把 InferPilot 克隆到 `/workspace/inferpilot`（加 `-v` 时 pip 才显示输出；用了缓存的 wheel 时会跳过）。
 
 | 变量 | 使用者 | 默认值 |
 |---|---|---|
@@ -228,6 +229,7 @@ docker cp <name>:/workspace/inferpilot/exp/<run> ~/
 | `CLAUDE_VERSION`、`CLAUDE_BIN_DIR` | bootstrap | `latest`，`~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code、bootstrap | 不设置（`~`）：Claude Code 自己的变量，指它的配置所在的目录；bootstrap 把首次启动的回答写在那里 |
 | `EVALSCOPE_VERSION`、`EVALSCOPE_VENV` | bootstrap | `latest`，`/opt/evalscope` |
+| `INFERPILOT_CURSOR`、`INFERPILOT_NODE_VERSION` | bootstrap | 不设置；设置后和 `--cursor` 一样运行 node、cursor 两步；默认装最新的 Node.js LTS（`22` 表示最新的 22.x，也可以写确切的 `v22.11.0`） |
 | `INFERPILOT_GIT_NAME`、`INFERPILOT_GIT_EMAIL` | `~/.inferpilot_env`、bootstrap | 不设置；容器里 root 提交时用的身份 |
 | `INFERPILOT_REPO_TOKEN` | `~/.inferpilot_env`、`scripts/propose_knowledge.py` | 不设置；只对 InferPilot 自己仓库有 Contents、Pull requests 读写权限的 fine-grained token，curator 用它提 PR |
 | `LLM_GATEWAY_KEY` | `~/.inferpilot_env`、容器的 shell 配置 | 不设置；设置后 Claude Code 走 AMD LLM 网关，除非 `ANTHROPIC_BASE_URL` 指定了别的地址 |
@@ -236,7 +238,7 @@ docker cp <name>:/workspace/inferpilot/exp/<run> ~/
 
 ## 运行
 
-InferPilot 是一个工作流：`inferpilot.js` 负责控制流，`roles/` 是 agent 的指令，`knowledge/` 是方法，`templates/` 是产物模板。在 Claude Code 里，用一句话说出 `inferpilot.js` 和它的参数即可，就像 [第 4 步](#4-启动-claude-code-并交给它任务容器内)那样，由它的 Workflow 工具执行。在其他地方，由 InferPilot 自带的 runner `runtime/run.mjs`（Node 20+）执行，每个角色交给一个命令行 agent：`--backend claude` 运行 `claude -p`，`--backend cursor` 运行 Cursor CLI（`agent -p`），用 `agent login` 登录的账号或 `CURSOR_API_KEY`。dry run 用的也是这个 runner。
+InferPilot 是一个工作流：`inferpilot.js` 负责控制流，`roles/` 是 agent 的指令，`knowledge/` 是方法，`templates/` 是产物模板。在 Claude Code 里，用一句话说出 `inferpilot.js` 和它的参数即可，就像 [第 4 步](#4-启动-claude-code-并交给它任务容器内)那样，由它的 Workflow 工具执行。在其他地方，由 InferPilot 自带的 runner `runtime/run.mjs`（Node 20+）执行，每个角色交给一个命令行 agent：`--backend claude` 运行 `claude -p`，`--backend cursor` 运行 Cursor CLI（`agent -p`），用 `agent login` 登录的账号或 `CURSOR_API_KEY`。在容器里，`python3 -B -m inferpilot.bootstrap --cursor` 会装好 Node.js 和 Cursor CLI；`NO_OPEN_BROWSER=1 agent login` 会打印一个链接，在别处的浏览器里打开就能登录。dry run 用的也是这个 runner。
 
 ```bash
 node runtime/run.mjs inferpilot.js --backend cursor \

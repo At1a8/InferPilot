@@ -34,10 +34,16 @@ state warns and leaves it alone.
   evalscope     (root in a container) evalscope for scripts/eval_accuracy.sh, in a venv of its own
                 (/opt/evalscope, linked as /usr/local/bin/evalscope): installed into the image's Python it
                 would downgrade packages sglang ships with. One already on PATH is kept
-  checks        git, docker (host only), ROCm, sglang, evalscope, Node.js, API access, GitHub token
-                (detect only)
+  node, cursor  (--cursor) Node.js 20+ for runtime/run.mjs, the newest LTS unless INFERPILOT_NODE_VERSION
+                names one, checked against nodejs.org's SHASUMS256.txt and unpacked into
+                /opt/node/<version> (~/.local/node as a user), linked into /usr/local/bin (~/.local/bin);
+                and the Cursor CLI (agent) from cursor.com/install. A Node.js 20+ or an agent already
+                there is kept. Logging the CLI in is yours: NO_OPEN_BROWSER=1 agent login, or CURSOR_API_KEY
+  checks        git, docker (host only), ROCm, sglang, evalscope, Node.js, API access, GitHub token, and
+                with --cursor the Cursor CLI (detect only)
 
   python3 -B -m inferpilot.bootstrap [--framework-dir DIR]
+  python3 -B -m inferpilot.bootstrap --cursor        # also Node.js and the Cursor CLI (--backend cursor)
   python3 -B -m inferpilot.bootstrap --claude-only   # the keys, claude, path and claude-config steps
   python3 -B -m inferpilot.bootstrap --check         # the checks
 
@@ -54,6 +60,9 @@ Environment (a flag wins over its variable):
   EVALSCOPE_VERSION, EVALSCOPE_VENV
                                 (container) the evalscope version to install (latest), its venv
                                 (/opt/evalscope)
+  INFERPILOT_CURSOR             set to run the node and cursor steps, as --cursor does
+  INFERPILOT_NODE_VERSION       (--cursor) the Node.js to install: 22 for the newest 22.x, or v22.11.0
+                                (default: the newest LTS)
   INFERPILOT_FRAMEWORK_DIR, INFERPILOT_FRAMEWORK_REPO
                                 --framework-dir (default: the image's checkout), --framework-repo
                                 (default: sglang)
@@ -64,12 +73,16 @@ Environment (a flag wins over its variable):
 from __future__ import annotations
 
 import argparse
+import hashlib
+import io
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 
 CLAUDE_MIN_VERSION = "2.1.177"  # first Claude Code with the dynamic Workflow tool inferpilot.js runs in
 DEFAULT_REPO_URL = "https://github.com/At1a8/inferpilot.git"
@@ -104,6 +117,10 @@ IMAGE_SGLANG = "/sgl-workspace/sglang"
 # installed into it, it would change it: evalscope 1.15 downgrades datasets and fsspec below the image's.
 EVALSCOPE_VENV = "/opt/evalscope"
 EVALSCOPE_LINK = "/usr/local/bin/evalscope"
+# runtime/run.mjs, InferPilot's own runner, needs Node.js 20+; --cursor installs it and the Cursor CLI.
+NODE_MIN_MAJOR = 20
+NODE_DIST = "https://nodejs.org/dist"
+CURSOR_INSTALL = "https://cursor.com/install"
 GATEWAY_ENV = (
     'if [ -n "$LLM_GATEWAY_KEY" ] && [ -z "$ANTHROPIC_BASE_URL" ]; then\n'
     '  export ANTHROPIC_BASE_URL=%s\n'
@@ -222,6 +239,10 @@ def settings(env=None, opts=None) -> dict:
         "evalscope_version": env.get("EVALSCOPE_VERSION") or "",
         "evalscope_venv": _expand(env.get("EVALSCOPE_VENV") or EVALSCOPE_VENV, env),
         "evalscope_link": EVALSCOPE_LINK,
+        "cursor": bool(opts.get("cursor") or env.get("INFERPILOT_CURSOR")),
+        "node_version": env.get("INFERPILOT_NODE_VERSION") or "",
+        "node_dir": _expand("/opt/node" if is_root() else "~/.local/node", env),
+        "link_dir": "/usr/local/bin" if is_root() else _expand(env.get("CLAUDE_BIN_DIR") or "~/.local/bin", env),
     }
 
 
@@ -725,6 +746,163 @@ def ensure_evalscope(s: dict) -> tuple[str, str]:
     return status, exe
 
 
+# --- Node.js and the Cursor CLI (--cursor) ---------------------------------------
+
+def node_platform() -> str:
+    return {"x86_64": "linux-x64", "amd64": "linux-x64", "aarch64": "linux-arm64",
+            "arm64": "linux-arm64"}.get(platform.machine().lower(), "")
+
+
+def node_major(path: str) -> int:
+    """Major version of `<path> --version` (v22.11.0 -> 22), 0 when it does not run."""
+    rc, out, _ = _out([path, "--version"])
+    m = re.match(r"v?(\d+)\.", out) if rc == 0 else None
+    return int(m.group(1)) if m else 0
+
+
+def _fetch(url: str, timeout: float = 60) -> bytes:
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        return r.read()
+
+
+def node_release(want: str, fetch=_fetch) -> str:
+    """The release to install from nodejs.org's index (newest first): `want` (22 for the newest 22.x, or
+    an exact v22.11.0), else the newest LTS; '' when none has a build for this machine."""
+    plat = node_platform()
+    want = want if not want or want.startswith("v") else "v" + want
+    for rel in json.loads(fetch(NODE_DIST + "/index.json")):
+        version = rel.get("version", "")
+        if plat not in rel.get("files", []):
+            continue
+        if (version == want or version.startswith(want + ".")) if want else rel.get("lts"):
+            return version
+    return ""
+
+
+def install_node(version: str, dest: str, fetch=_fetch) -> str:
+    """Unpack node-<version>-<platform>.tar.xz into dest, a directory that does not exist yet, after
+    checking it against the release's SHASUMS256.txt; '' on success, else what went wrong."""
+    name = "node-%s-%s" % (version, node_platform())
+    sums = fetch("%s/%s/SHASUMS256.txt" % (NODE_DIST, version)).decode()
+    want = next((line.split()[0] for line in sums.splitlines() if line.endswith("  %s.tar.xz" % name)), "")
+    if not want:
+        return "no checksum for %s.tar.xz" % name
+    blob = fetch("%s/%s/%s.tar.xz" % (NODE_DIST, version, name), timeout=600)
+    if hashlib.sha256(blob).hexdigest() != want:
+        return "%s.tar.xz does not match its checksum" % name
+    partial = dest + ".partial"
+    shutil.rmtree(partial, ignore_errors=True)
+    os.makedirs(partial)
+    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:xz") as tar:
+        tar.extractall(partial, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
+    os.rename(os.path.join(partial, name), dest)
+    shutil.rmtree(partial, ignore_errors=True)
+    return ""
+
+
+def _link(target: str, link: str, what: str) -> str:
+    """Link `link` to `target` unless something else is there: 'added', 'kept' or 'skipped'."""
+    if os.path.lexists(link):
+        if os.path.realpath(link) == os.path.realpath(target):
+            return "kept"
+        warn("%s: %s is another file; left as it is" % (what, link))
+        return "skipped"
+    os.makedirs(os.path.dirname(link), exist_ok=True)
+    os.symlink(target, link)
+    return "added"
+
+
+def ensure_node(s: dict, fetch=_fetch) -> tuple[str, str]:
+    """Node.js 20+ for runtime/run.mjs. One on PATH is kept; else the newest LTS, or the release
+    INFERPILOT_NODE_VERSION names, goes to node_dir/<version> with node, npm and npx linked into link_dir."""
+    found = shutil.which("node")
+    major = node_major(found) if found else 0
+    if major >= NODE_MIN_MAJOR:
+        log("node: kept v%d (%s)" % (major, found))
+        return "kept", found
+    if not node_platform():
+        warn("node: nodejs.org has no build for %s; install Node.js %d+ yourself" % (platform.machine(), NODE_MIN_MAJOR))
+        return "failed", platform.machine()
+    try:
+        version = node_release(s["node_version"], fetch)
+    except Exception as e:
+        warn("node: cannot read %s/index.json (%s); check the network and run this again" % (NODE_DIST, e))
+        return "failed", "index.json"
+    if not version:
+        warn("node: no Node.js release matches %s" % (s["node_version"] or "the newest LTS"))
+        return "failed", s["node_version"] or "lts"
+    dest = os.path.join(s["node_dir"], version)
+    status = "kept"
+    if not os.access(os.path.join(dest, "bin", "node"), os.X_OK):
+        log("node: installing Node.js %s into %s%s" % (version, dest, " (%s is v%d)" % (found, major) if found else ""))
+        os.makedirs(s["node_dir"], exist_ok=True)
+        try:
+            err = install_node(version, dest, fetch)
+        except Exception as e:
+            err = str(e)
+        if err:
+            warn("node: could not install Node.js %s (%s)" % (version, err))
+            return "failed", version
+        status = "installed"
+    links = {tool: _link(os.path.join(dest, "bin", tool), os.path.join(s["link_dir"], tool), "node")
+             for tool in ("node", "npm", "npx")}
+    if links["node"] == "skipped":
+        return "skipped", dest
+    if status == "kept" and "added" in links.values():
+        status = "added"
+    log("node: %s Node.js %s (%s), linked into %s" % (status, version, dest, s["link_dir"]))
+    return status, version
+
+
+def find_cursor_cli(s: dict) -> str:
+    """The Cursor CLI: `agent` on PATH, else where its installer puts it (~/.local/bin, ~/.cursor/bin)."""
+    found = shutil.which("agent")
+    if found:
+        return found
+    for d in (".local/bin", ".cursor/bin"):
+        cand = os.path.join(s["user_home"], d, "agent")
+        if os.access(cand, os.X_OK):
+            return cand
+    return ""
+
+
+def ensure_cursor_cli(s: dict) -> tuple[str, str]:
+    """The Cursor CLI for runtime/run.mjs --backend cursor, from its installer; one already there is kept.
+    Logging it in is the user's (the next steps say how)."""
+    path = find_cursor_cli(s)
+    if path:
+        log("cursor: kept the Cursor CLI (%s)" % path)
+        return "kept", path
+    if not _has("curl"):
+        warn("cursor: curl not found; cannot run the Cursor CLI installer (%s)" % CURSOR_INSTALL)
+        return "failed", "no curl"
+    log("cursor: installing the Cursor CLI (%s)" % CURSOR_INSTALL)
+    if _run("curl -fsS --connect-timeout 20 %s | bash" % CURSOR_INSTALL, shell=True).returncode != 0:
+        warn("cursor: the Cursor CLI installer failed; it needs cursor.com, *.cursor.sh and *.cursorapi.com")
+        return "failed", CURSOR_INSTALL
+    path = find_cursor_cli(s)
+    if not path:
+        warn("cursor: the installer ran, but no agent is in ~/.local/bin or ~/.cursor/bin")
+        return "failed", "agent"
+    if not shutil.which("agent"):
+        _link(path, os.path.join(s["link_dir"], "agent"), "cursor")
+    log("cursor: installed the Cursor CLI (%s)" % path)
+    return "installed", path
+
+
+def cursor_logged_in(path: str, env) -> bool:
+    """CURSOR_API_KEY set, or `agent status` reporting a login; decides only whether the next steps
+    show how to log in."""
+    if env.get("CURSOR_API_KEY"):
+        return True
+    if not path:
+        return False
+    rc, out, err = _out([path, "status"], timeout=30)
+    text = ("%s\n%s" % (out, err)).lower()
+    return rc == 0 and "logged in" in text and "not logged in" not in text
+
+
 # --- checks (detect only) --------------------------------------------------------
 
 def api_configured(env, user_home: str) -> bool:
@@ -755,8 +933,9 @@ def keys_defined(path: str) -> set:
     return names
 
 
-def check_environment(env=None, keys_path: str = "") -> dict:
-    """keys_path: ~/.inferpilot_env, which new shells load; what it sets counts before this shell has it."""
+def check_environment(env=None, keys_path: str = "", cursor: bool = False) -> dict:
+    """keys_path: ~/.inferpilot_env, which new shells load; what it sets counts before this shell has it.
+    cursor: also check the Cursor CLI (--cursor)."""
     env = dict(os.environ if env is None else env)
     for name in keys_defined(keys_path):
         env.setdefault(name, "set in %s" % keys_path)
@@ -776,6 +955,9 @@ def check_environment(env=None, keys_path: str = "") -> dict:
          "no INFERPILOT_REPO_TOKEN (optional): the curator's knowledge changes stay in this checkout instead of a "
          "pull request to InferPilot's repository (README step 1)"),
     ]
+    if cursor:
+        checks.append(("cursor_cli", _has("agent"),
+                       "Cursor CLI (agent) not on PATH: runtime/run.mjs --backend cursor runs it; bootstrap --cursor installs it"))
     found = {}
     log("checks (detect only):")
     for name, ok, hint in checks:
@@ -848,6 +1030,17 @@ def next_steps(s: dict, statuses: dict, found: dict | None = None, path_env: str
                       "use %s/inferpilot.js with mode=scan, inferpilot_dir=%s%s" % (s["home"], s["home"], fw),
                       "use %s/inferpilot.js with mode=issue, task=<issue URL>, inferpilot_dir=%s%s, gpu_ids=0%s"
                       % (s["home"], s["home"], fw, elsewhere)])
+    if statuses.get("cursor") in ("kept", "installed"):
+        env = dict(os.environ, **{name: "set in %s" % keys for name in keys_defined(keys)})
+        if not cursor_logged_in(find_cursor_cli(s), env):
+            steps.append(["Log the Cursor CLI in (once per container), for runtime/run.mjs --backend cursor:",
+                          "a. web login:  " + hl("NO_OPEN_BROWSER=1 agent login")
+                          + "   then open the URL it prints where a browser is (q shows a QR code)",
+                          "b. API key:    " + hl("export CURSOR_API_KEY=<key>") + "   in %s (Cursor Dashboard, API Keys)"
+                          % (keys or os.path.join(s["user_home"], KEYS_FILE))])
+        steps.append(["Run a task with every role on the Cursor CLI:",
+                      hl("cd %s && node runtime/run.mjs inferpilot.js --backend cursor --args '{\"mode\": \"scan\", "
+                         "\"inferpilot_dir\": \"%s\"}'" % (s["home"], s["home"]))])
     lines = ["Next steps:"]
     for i, (head, *body) in enumerate(steps, 1):
         lines.append("%d) %s" % (i, head))
@@ -864,17 +1057,19 @@ def main(argv=None) -> int:
     g.add_argument("--check", action="store_true", help="only the environment checks")
     ap.add_argument("--framework-dir", help="framework checkout for tasks; cloned only if missing (INFERPILOT_FRAMEWORK_DIR)")
     ap.add_argument("--framework-repo", help="repository to clone it from (default: sglang; INFERPILOT_FRAMEWORK_REPO)")
+    ap.add_argument("--cursor", action="store_true",
+                    help="also install Node.js and the Cursor CLI, for runtime/run.mjs --backend cursor (INFERPILOT_CURSOR)")
     a = ap.parse_args([] if argv is None else argv)
 
     if os.environ.get("INFERPILOT_SKIP_BOOTSTRAP"):
         log("INFERPILOT_SKIP_BOOTSTRAP set; skipping")
         return 0
-    s = settings(opts={"framework_dir": a.framework_dir, "framework_repo": a.framework_repo})
+    s = settings(opts={"framework_dir": a.framework_dir, "framework_repo": a.framework_repo, "cursor": a.cursor})
     container = in_container()
     if a.check:
         if container and is_root() and not keys_file(s):
             find_host_home(s)
-        check_environment(keys_path=keys_file(s) if container else "")
+        check_environment(keys_path=keys_file(s) if container else "", cursor=s["cursor"])
         return 0
     steps = [] if a.claude_only else [("checkout", ensure_checkout)]
     if container and is_root():
@@ -888,10 +1083,12 @@ def main(argv=None) -> int:
         steps.append(("framework", ensure_framework))
         if container and is_root():
             steps.append(("evalscope", ensure_evalscope))
+        if s["cursor"]:
+            steps += [("node", ensure_node), ("cursor", ensure_cursor_cli)]
     results = [(name,) + step(s) for name, step in steps]
     statuses = {step: status for step, status, _ in results}
     keys = keys_file(s) if container else ""
-    found = None if a.claude_only else check_environment(keys_path=keys)
+    found = None if a.claude_only else check_environment(keys_path=keys, cursor=s["cursor"])
     print("\n[inferpilot-bootstrap] %s\n\n%s" % (summary(results), next_steps(s, statuses, found, claude_only=a.claude_only)),
           flush=True)
     return 1 if "failed" in statuses.values() else 0

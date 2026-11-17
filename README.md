@@ -261,7 +261,8 @@ claude --version    # installed in this container
 | shell | root's `~/.bashrc` gets `PYTHONDONTWRITEBYTECODE=1` (no root-owned `__pycache__` in checkouts on host mounts) and `DISABLE_AUTOUPDATER=1`, and loads the keys file, also one put in place later; with `LLM_GATEWAY_KEY` and no `ANTHROPIC_BASE_URL`, it points Claude Code at the AMD LLM gateway |
 | framework | the image's `/sgl-workspace/sglang`, left as it is: run_docker.sh has put it on the current main in a new container from the daily image (step 2), and a container from a given `IMAGE`, or one you came back to, keeps its code. Uncommitted changes there are reported, since a task's Setup stops on them until you deal with them (in a container from a given `IMAGE`, the image build's packaging changes); `--framework-dir` names a host checkout instead (used as it is, or cloned with its whole history when missing) |
 | evalscope | for `scripts/eval_accuracy.sh`: installed in a venv of its own, `/opt/evalscope` (about a minute and 1.2 GB), and linked as `/usr/local/bin/evalscope`. Not in the image's Python, where it would downgrade `datasets` and `fsspec` below what sglang ships with; an `evalscope` already on `PATH` is kept |
-| checks | GPUs, sglang, evalscope, API access, `GITHUB_TOKEN`, counting what the keys file sets (detect only) |
+| node, cursor | only with `--cursor`, for `runtime/run.mjs --backend cursor`: Node.js, the newest LTS unless `INFERPILOT_NODE_VERSION` names one, checked against nodejs.org's checksums, unpacked into `/opt/node/<version>` and linked into `/usr/local/bin`; and the Cursor CLI (`agent`) from its installer. A Node.js 20+ or an `agent` already there is kept. Logging the CLI in is yours, once per container: `NO_OPEN_BROWSER=1 agent login`, then the printed URL in a browser, or `CURSOR_API_KEY` in the keys file |
+| checks | GPUs, sglang, evalscope, API access, `GITHUB_TOKEN`, counting what the keys file sets, and with `--cursor` the Cursor CLI (detect only) |
 
 The clone runs only when `/workspace/inferpilot` is not there yet; the bootstrap never writes keys.
 
@@ -378,7 +379,7 @@ Each step of `inferpilot.bootstrap` reports `kept`, `installed`, `updated`, `add
 `failed`; a summary lists them, the next steps list only what is still missing, and the exit code is 1
 when a step failed. In a new container it installs Claude Code and evalscope, a minute or two each, and
 writes Claude Code's config and the git and shell settings. `--claude-only` runs only the keys and Claude Code steps,
-`--check` only the checks. Inside a container, `cd /workspace && pip install -v git+https://github.com/At1a8/inferpilot` runs
+`--check` only the checks, and `--cursor` adds Node.js and the Cursor CLI. Inside a container, `cd /workspace && pip install -v git+https://github.com/At1a8/inferpilot` runs
 step 3 too, cloning InferPilot to `/workspace/inferpilot` (pip shows the output only with `-v`; a cached wheel skips it).
 
 | Variable | Used by | Default |
@@ -395,6 +396,7 @@ step 3 too, cloning InferPilot to `/workspace/inferpilot` (pip shows the output 
 | `CLAUDE_VERSION`, `CLAUDE_BIN_DIR` | bootstrap | `latest`, `~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code, bootstrap | unset (`~`): Claude Code's own, where its config lives; the bootstrap writes the first-start answers there |
 | `EVALSCOPE_VERSION`, `EVALSCOPE_VENV` | bootstrap | `latest`, `/opt/evalscope` |
+| `INFERPILOT_CURSOR`, `INFERPILOT_NODE_VERSION` | bootstrap | unset; set, the node and cursor steps run as with `--cursor`; the newest Node.js LTS (`22` for the newest 22.x, or an exact `v22.11.0`) |
 | `INFERPILOT_GIT_NAME`, `INFERPILOT_GIT_EMAIL` | `~/.inferpilot_env`, bootstrap | unset; the identity root commits with in the container |
 | `INFERPILOT_REPO_TOKEN` | `~/.inferpilot_env`, `scripts/propose_knowledge.py` | unset; a fine-grained token for InferPilot's own repository alone (Contents, Pull requests: read and write), with which the curator opens its pull request |
 | `LLM_GATEWAY_KEY` | `~/.inferpilot_env`, the container's shell settings | unset; set, Claude Code runs on the AMD LLM gateway unless `ANTHROPIC_BASE_URL` names another |
@@ -408,8 +410,10 @@ InferPilot is a workflow: `inferpilot.js` holds the control flow, `roles/` the a
 in one sentence, as in [step 4](#4-start-claude-code-and-give-it-a-task-inside-the-container): its Workflow tool runs it.
 Anywhere else InferPilot's own runner, `runtime/run.mjs` (Node 20+), runs it with each role on a
 command-line agent: `--backend claude` runs `claude -p`, and `--backend cursor` runs the Cursor CLI
-(`agent -p`) on the account it was logged in with (`agent login`) or on `CURSOR_API_KEY`. The dry run
-uses the same runner.
+(`agent -p`) on the account it was logged in with (`agent login`) or on `CURSOR_API_KEY`. In a container,
+`python3 -B -m inferpilot.bootstrap --cursor` installs Node.js and the Cursor CLI, and
+`NO_OPEN_BROWSER=1 agent login` prints the URL to log in from a browser elsewhere. The dry run uses the
+same runner.
 
 ```bash
 node runtime/run.mjs inferpilot.js --backend cursor \

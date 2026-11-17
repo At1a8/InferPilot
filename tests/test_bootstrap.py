@@ -3,6 +3,7 @@ linked outside temporary directories (commands are mocked).
 
     python3 -m unittest discover -s tests
 """
+import hashlib
 import io
 import json
 import os
@@ -12,6 +13,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
@@ -85,6 +87,10 @@ class VersionAndSettingsTest(unittest.TestCase):
             self.assertEqual((s["evalscope_venv"], s["evalscope_version"]), (bs.EVALSCOPE_VENV, ""))
             s = bs.settings({"PWD": str(work), "HOME": d, "EVALSCOPE_VENV": "~/es", "EVALSCOPE_VERSION": "1.15.0"})
             self.assertEqual((s["evalscope_venv"], s["evalscope_version"]), (os.path.join(d, "es"), "1.15.0"))
+            self.assertFalse(s["cursor"])
+            s = bs.settings({"PWD": str(work), "HOME": d, "INFERPILOT_CURSOR": "1", "INFERPILOT_NODE_VERSION": "22"})
+            self.assertEqual((s["cursor"], s["node_version"]), (True, "22"))
+            self.assertTrue(bs.settings({"PWD": str(work), "HOME": d}, {"cursor": True})["cursor"])
 
 
 class KeysTest(unittest.TestCase):
@@ -905,6 +911,122 @@ class EvalscopeTest(unittest.TestCase):
         self.assertIn("EVALSCOPE=%s" % self.exe, q.err.getvalue())
 
 
+def node_tarball(version, plat="linux-x64"):
+    buf = io.BytesIO()
+    name = "node-%s-%s" % (version, plat)
+    with tarfile.open(fileobj=buf, mode="w:xz") as tar:
+        for tool, body in (("node", "echo %s" % version), ("npm", "echo npm"), ("npx", "echo npx")):
+            data = ("#!/bin/sh\n%s\n" % body).encode()
+            info = tarfile.TarInfo("%s/bin/%s" % (name, tool))
+            info.size, info.mode = len(data), 0o755
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+class NodeTest(unittest.TestCase):
+    INDEX = [{"version": "v25.2.0", "lts": False, "files": ["linux-x64", "linux-arm64"]},
+             {"version": "v24.11.1", "lts": "Krypton", "files": ["linux-x64", "linux-arm64"]},
+             {"version": "v22.21.1", "lts": "Jod", "files": ["linux-x64"]}]
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        self.s = dict(S(tmp.name), node_dir=str(self.tmp / "node"), link_dir=str(self.tmp / "bin"), node_version="")
+        patcher = mock.patch.object(bs, "node_platform", return_value="linux-x64")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def fetcher(self, version="v24.11.1", tamper=False):
+        blob = node_tarball(version)
+        sha = hashlib.sha256(b"x" if tamper else blob).hexdigest()
+        files = {bs.NODE_DIST + "/index.json": json.dumps(self.INDEX).encode(),
+                 "%s/%s/SHASUMS256.txt" % (bs.NODE_DIST, version): ("%s  node-%s-linux-x64.tar.xz\n" % (sha, version)).encode(),
+                 "%s/%s/node-%s-linux-x64.tar.xz" % (bs.NODE_DIST, version, version): blob}
+        return lambda url, timeout=60: files[url]
+
+    def no_fetch(self, url, timeout=60):
+        self.fail("nothing should be downloaded: %s" % url)
+
+    def test_the_newest_lts_or_the_release_asked_for(self):
+        fetch = self.fetcher()
+        self.assertEqual(bs.node_release("", fetch), "v24.11.1")
+        self.assertEqual(bs.node_release("22", fetch), "v22.21.1")
+        self.assertEqual(bs.node_release("v25.2.0", fetch), "v25.2.0")
+        self.assertEqual(bs.node_release("18", fetch), "")
+
+    def test_a_node_20_or_newer_is_kept(self):
+        with mock.patch.object(bs.shutil, "which", return_value="/usr/bin/node"), \
+                mock.patch.object(bs, "node_major", return_value=22), Quiet():
+            self.assertEqual(bs.ensure_node(self.s, fetch=self.no_fetch), ("kept", "/usr/bin/node"))
+
+    def test_installed_from_a_checked_tarball_and_linked(self):
+        with mock.patch.object(bs.shutil, "which", return_value=None), Quiet():
+            self.assertEqual(bs.ensure_node(self.s, fetch=self.fetcher()), ("installed", "v24.11.1"))
+        dest = self.tmp / "node" / "v24.11.1"
+        for tool in ("node", "npm", "npx"):
+            self.assertEqual(os.readlink(self.tmp / "bin" / tool), str(dest / "bin" / tool))
+        self.assertEqual(bs.node_major(str(self.tmp / "bin" / "node")), 24)
+        self.assertFalse((self.tmp / "node" / "v24.11.1.partial").exists())
+        with mock.patch.object(bs.shutil, "which", return_value=str(self.tmp / "bin" / "node")), Quiet():
+            self.assertEqual(bs.ensure_node(self.s, fetch=self.no_fetch)[0], "kept")
+
+    def test_a_checksum_mismatch_installs_nothing(self):
+        with mock.patch.object(bs.shutil, "which", return_value=None), Quiet() as q:
+            self.assertEqual(bs.ensure_node(self.s, fetch=self.fetcher(tamper=True)), ("failed", "v24.11.1"))
+        self.assertIn("checksum", q.err.getvalue())
+        self.assertFalse((self.tmp / "node" / "v24.11.1").exists())
+        self.assertFalse(os.path.lexists(self.tmp / "bin" / "node"))
+
+    def test_another_node_at_the_link_is_left_alone(self):
+        old = make_exe(self.tmp / "bin" / "node")
+        with mock.patch.object(bs.shutil, "which", return_value=str(old)), \
+                mock.patch.object(bs, "node_major", side_effect=lambda p: 18 if p == str(old) else 24), Quiet() as q:
+            self.assertEqual(bs.ensure_node(self.s, fetch=self.fetcher())[0], "skipped")
+        self.assertIn("left as it is", q.err.getvalue())
+        self.assertEqual(old.read_text(), "#!/bin/sh\n")
+
+
+class CursorCliTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        self.s = dict(S(tmp.name, HOME=tmp.name), link_dir=str(self.tmp / "bin"))
+
+    def test_one_already_there_is_kept(self):
+        exe = make_exe(self.tmp / ".local" / "bin" / "agent")
+        with mock.patch.object(bs.shutil, "which", return_value=None), mock.patch.object(bs, "_run") as run, Quiet():
+            self.assertEqual(bs.ensure_cursor_cli(self.s), ("kept", str(exe)))
+        run.assert_not_called()
+
+    def test_missing_is_installed_with_the_official_installer(self):
+        def install(cmd, shell=False):
+            make_exe(self.tmp / ".cursor" / "bin" / "agent")
+            return OK
+        with mock.patch.object(bs.shutil, "which", return_value=None), mock.patch.object(bs, "_has", return_value=True), \
+                mock.patch.object(bs, "_run", side_effect=install) as run, Quiet():
+            status, path = bs.ensure_cursor_cli(self.s)
+        self.assertEqual(status, "installed")
+        self.assertIn(bs.CURSOR_INSTALL, run.call_args[0][0])
+        self.assertTrue(run.call_args[1].get("shell"))
+        self.assertEqual(os.readlink(self.tmp / "bin" / "agent"), path, "linked where PATH finds it")
+
+    def test_a_failed_installer_is_reported(self):
+        with mock.patch.object(bs.shutil, "which", return_value=None), mock.patch.object(bs, "_has", return_value=True), \
+                mock.patch.object(bs, "_run", return_value=SimpleNamespace(returncode=1)), Quiet() as q:
+            self.assertEqual(bs.ensure_cursor_cli(self.s)[0], "failed")
+        self.assertIn("cursorapi.com", q.err.getvalue())
+
+    def test_logged_in_by_key_or_by_status(self):
+        self.assertTrue(bs.cursor_logged_in("", {"CURSOR_API_KEY": "k"}))
+        self.assertFalse(bs.cursor_logged_in("", {}))
+        with mock.patch.object(bs, "_out", return_value=(0, "Logged in as someone@example.com", "")):
+            self.assertTrue(bs.cursor_logged_in("/x/agent", {}))
+        with mock.patch.object(bs, "_out", return_value=(0, "Not logged in", "")):
+            self.assertFalse(bs.cursor_logged_in("/x/agent", {}))
+
+
 class ReportTest(unittest.TestCase):
     def test_check_environment(self):
         with tempfile.TemporaryDirectory() as d:
@@ -964,17 +1086,39 @@ class ReportTest(unittest.TestCase):
             self.assertNotIn("API access", unchecked, "--claude-only runs no checks; the keys file still counts")
 
 
+class CursorNextStepsTest(unittest.TestCase):
+    def test_the_next_steps_say_how_to_log_the_cursor_cli_in(self):
+        with tempfile.TemporaryDirectory() as d:
+            co = make_checkout(Path(d) / "workspace" / "inferpilot")
+            s = bs.settings({"PWD": "/", "HOME": d, "INFERPILOT_HOME": str(co)})
+            with mock.patch.object(bs, "in_container", return_value=True), \
+                    mock.patch.object(bs, "find_cursor_cli", return_value="/x/agent"):
+                with mock.patch.object(bs, "cursor_logged_in", return_value=False):
+                    fresh = bs.next_steps(s, {"cursor": "installed"}, {"api": True}, path_env="/usr/bin")
+                with mock.patch.object(bs, "cursor_logged_in", return_value=True):
+                    ready = bs.next_steps(s, {"cursor": "kept"}, {"api": True}, path_env="/usr/bin")
+                plain = bs.next_steps(s, {}, {"api": True}, path_env="/usr/bin")
+            self.assertIn("NO_OPEN_BROWSER=1 agent login", fresh)
+            self.assertIn("CURSOR_API_KEY", fresh)
+            self.assertIn("node runtime/run.mjs inferpilot.js --backend cursor", fresh)
+            self.assertNotIn("agent login", ready)
+            self.assertIn("--backend cursor", ready)
+            self.assertNotIn("--backend cursor", plain)
+
+
 class MainTest(unittest.TestCase):
     STEPS = ["ensure_checkout", "ensure_keys", "ensure_claude_code", "ensure_path", "ensure_claude_config",
              "ensure_git_trust", "ensure_git_identity", "ensure_shell_env", "ensure_framework", "ensure_evalscope"]
+    CURSOR_STEPS = ["ensure_node", "ensure_cursor_cli"]
 
-    def run_main(self, argv, container=False, root=False, failing=None, status=None):
-        env = {k: v for k, v in os.environ.items() if not k.startswith("INFERPILOT_")}
+    def run_main(self, argv, container=False, root=False, failing=None, status=None, env_extra=None):
+        env = dict({k: v for k, v in os.environ.items() if not k.startswith("INFERPILOT_")}, **(env_extra or {}))
         status = dict(status or {}, **({failing: "failed"} if failing else {}))
         with ExitStack() as stack:
             stack.enter_context(mock.patch.dict(os.environ, env, clear=True))
             m = {n: stack.enter_context(mock.patch.object(bs, n, return_value=(status.get(n, "kept"), "")))
-                 for n in self.STEPS}
+                 for n in self.STEPS + self.CURSOR_STEPS}
+            stack.enter_context(mock.patch.object(bs, "cursor_logged_in", return_value=False))
             m["check_environment"] = stack.enter_context(mock.patch.object(bs, "check_environment", return_value={"api": True}))
             stack.enter_context(mock.patch.object(bs, "in_container", return_value=container))
             stack.enter_context(mock.patch.object(bs, "is_root", return_value=root))
@@ -1002,6 +1146,17 @@ class MainTest(unittest.TestCase):
         self.assertFalse(m["check_environment"].called)
         rc, m = self.run_main(["--check"])
         self.assertTrue(m["check_environment"].called and not self.called(m))
+
+    def test_node_and_the_cursor_cli_only_when_asked(self):
+        rc, m = self.run_main([], container=True, root=True)
+        self.assertFalse(m["ensure_node"].called or m["ensure_cursor_cli"].called)
+        self.assertFalse(m["check_environment"].call_args[1].get("cursor"))
+        for argv, env in ((["--cursor"], None), ([], {"INFERPILOT_CURSOR": "1"})):
+            rc, m = self.run_main(argv, container=True, root=True, env_extra=env)
+            self.assertTrue(m["ensure_node"].called and m["ensure_cursor_cli"].called, argv or env)
+            self.assertTrue(m["check_environment"].call_args[1].get("cursor"))
+        rc, m = self.run_main(["--cursor", "--claude-only"], container=True, root=True)
+        self.assertFalse(m["ensure_node"].called, "--claude-only stays the Claude Code steps")
 
     def test_a_failed_step_sets_the_exit_code(self):
         self.assertEqual(self.run_main([], failing="ensure_framework")[0], 1)
