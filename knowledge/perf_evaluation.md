@@ -19,7 +19,8 @@ A feature usually spends a resource to save another. Hold the scarce resource eq
 The benchmark is the task's: its `client_script` and `workload` (`../templates/task_definition.md` §1.1),
 run unchanged, against servers started from its `server_script`. InferPilot never edits or retunes it.
 The table below is for the workloads a task lists beside it, and for choosing one with the user when a
-task has none. When the task lists no guard workload, the report says that none was measured.
+task has none. Guard workloads are the ones the task's `goal` names; InferPilot adds its own from the
+table only when the task sets `guards`. When there is none, the report says that none was measured.
 
 | Workload | Why |
 |---|---|
@@ -45,10 +46,12 @@ outputs never triggered it.
   every arm — attention, MoE and GEMM backends, graph capture, torch.compile, quantization, and any
   fallback or "disabling" warning in the log. A run that silently left the intended path measures a
   different system; it is not evidence for or against the change.
-- **Hold out an operating point before claiming a win.** A gain counts only if it also holds where
-  nobody tuned: the same workload with another seed (or another slice of a trace), at half the
-  concurrency (at least 1), through `CONCURRENCY` when the client reads it; otherwise the report says no
-  held-out point was measured. It is fixed with the workload at Setup and measured like the claim; the
+- **With `held_out` on, hold out an operating point before claiming a win.** It is off by default: the
+  claim is then judged on the task's workload alone, and the report says that no held-out point was
+  measured. When it is on, a gain counts only if it also holds where nobody tuned: the same workload
+  with another seed (or another slice of a trace), at half the concurrency (at least 1), through
+  `CONCURRENCY` when the client reads it; otherwise the report says no held-out point was measured. It
+  is fixed with the workload at Setup and measured like the claim; the
   change must still win beyond the noise band there, if not by as much. A gain that vanishes is fitted
   to the benchmark (`reward_hacks.md` P7), not evidence.
 - **Choose a feature's defaults on throughput, at one point.** When the task leaves a feature's knobs

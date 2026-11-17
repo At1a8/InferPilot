@@ -30,7 +30,7 @@ Inputs: `round`, `extra_gates`, `claim`, `verified_work_packages`, `known_issues
    instrumentation off by default; environment variables defined and named per its conventions.
 5. **Evidence.** Every number in the ledger points at an artifact; the gates ran against the
    same-pattern baseline; a performance claim was measured on the fixed workload with the same flags on
-   both arms and enough runs, and held at the held-out operating point; nothing was re-run until it
+   both arms and enough runs, and, with `held_out` on, held at the held-out operating point; nothing was re-run until it
    passed without saying so.
 6. **Reward hacks.** Start from `reward_hacks.md`: for every entry that applies to this diff and its
    evidence, check its tell, and check each hack the performance engineer suspected. A confirmed hack

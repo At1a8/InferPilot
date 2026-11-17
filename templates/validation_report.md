@@ -46,9 +46,9 @@
 | Workload | Budget | Reference arm | Feature arm | Delta | Runs | Artifact |
 |---|---|---|---|---|---|---|
 | claimed | | | | | | |
-| held-out (`perf_evaluation.md` §3) | | | | | | |
+| held-out (`perf_evaluation.md` §3; only with `held_out`) | | | | | | |
 
-<!-- Also: guard workloads where the feature should be neutral; out-of-memory / retraction checks; the
+<!-- Also: the guard workloads the task names (and InferPilot's own with `guards`); out-of-memory / retraction checks; the
      reward-hack checks (`knowledge/reward_hacks.md` P) with their result. -->
 
 ## Known issues encountered

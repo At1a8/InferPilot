@@ -25,9 +25,10 @@ Two rules hold across the dimensions:
 - **Engagement.** Every item that measures a feature also shows that the feature engaged: its counters,
   its log lines, its accept length or hit rate. Without that, a gate may have measured the baseline
   (`reward_hacks.md` C2).
-- **Sweeps.** Where an effect can turn around with length, concurrency or batch size, one point is not
-  evidence: speculative decoding is measured over concurrency, a long-context feature over length up to
-  the longest supported, a kernel over the batch sizes and shapes the models use.
+- **Sweeps** (`sweep`, off by default). Measurement covers the points of the task's workload; with
+  `sweep` on, more, since where an effect can turn around with length, concurrency or batch size, one
+  point is not evidence: speculative decoding is measured over concurrency, a long-context feature over
+  length up to the longest supported, a kernel over the batch sizes and shapes the models use.
 
 ### 1.1 Accuracy
 
@@ -59,8 +60,9 @@ Two rules hold across the dimensions:
   (requests per second that meet their TTFT and TPOT targets); memory and capacity (KV tokens, the
   concurrency the scheduler reached); startup time when the change touches loading or compilation.
 - **Gain items:** on the task's own workload (its `client_script`, run unchanged) at an equal budget, the change wins beyond the noise
-  band, and still wins at the held-out operating point (`perf_evaluation.md` §1, §3).
-- **Guard items:** workloads where the change should be neutral, or where it costs. The change stays
+  band, and, with `held_out` on, still wins at the held-out operating point (`perf_evaluation.md` §1, §3).
+- **Guard items**, the ones the task's `goal` names, and more of InferPilot's own only with `guards` on:
+  workloads where the change should be neutral, or where it costs. The change stays
   inside the noise band (a decode-side change at 100k in / 1k out, where prefill sets the total), or its
   cost is measured and stated.
 - **The resource held equal** is named in every item: HBM for a memory feature (`perf_evaluation.md`
@@ -107,7 +109,7 @@ extra items of its feature classes (§1.4).
 |---|---|---|---|---|---|
 | Correctness | required | required; the reproduction becomes a regression test | required; the failing test passes on every lane it failed on | required | required |
 | Accuracy | required: GSM8K, more sets only when the task asks (§1.1) | when the issue is an accuracy loss | no regression | required, as lossless | on the requester's data set |
-| Performance | when the feature claims a gain | when the issue is a performance problem: the reported number comes back | — | required: gain, guard and held-out point | the requester's SLA |
+| Performance | when the feature claims a gain | when the issue is a performance problem: the reported number comes back | — | required: the gain; a guard and a held-out point when the task asks (`guards`, `held_out`) | the requester's SLA |
 | Stability | required (G4) | when the issue is a crash or hang | a flaky test passes repeatedly (§4) | when the change touches memory or scheduling | required, with a soak |
 | Compatibility | required | required | required | required | the requester's platforms |
 | Engineering | required | required | required | required | when the change goes upstream |
@@ -158,7 +160,8 @@ this form after the fact:
   differing token fails the item.
 - **Two lanes at once** (two servers on one node): swap the arms between the lanes every round, and
   report the result both pooled and paired by round.
-- **Verdicts:** a gain counts when it exceeds the noise band and holds at the held-out point; a guard
+- **Verdicts:** a gain counts when it exceeds the noise band, and with `held_out` on when it also holds
+  at the held-out point; a guard
   holds when the change stays inside the band. Every run is reported, with its range, never only the
   best (`reward_hacks.md` P9).
 

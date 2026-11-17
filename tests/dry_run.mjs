@@ -524,15 +524,15 @@ const scenarios = [
     check(r.keys.includes('implementer:rollback'), 'change rolled back');
     check(r.result.handoffs.some((h) => h.owner === 'kernel_workflow'), 'kernel opportunity handed off');
   }],
-  ['perf: a gain that vanishes at the held-out operating point is dropped', async () => {
-    const r = await run({ mode: 'perf', task: 'p' }, {
+  ['perf: with held_out on, a gain that vanishes at the held-out operating point is dropped', async () => {
+    const r = await run({ mode: 'perf', task: 'p', held_out: true }, {
       'perf_engineer:perf_eval': () => ({ claim_reproduced: true, held_out_ok: false, guards_ok: true, workload_unchanged: true, path_ok: true,
         summary: '+9% at c64, -0.2% at the held-out c32 / seed 2' }),
     });
     check(r.result.status === 'dropped' && r.result.stopped_at === 'Performance', `status ${r.result.status}`);
     check(r.keys.includes('implementer:rollback'), 'the fitted change is rolled back');
     check(r.result.phases.some((p) => p.phase === 'Performance' && p.summary.includes('held-out')), 'the report says why');
-    const feature = await run({ mode: 'feature', task: 't' }, {
+    const feature = await run({ mode: 'feature', task: 't', held_out: true }, {
       'perf_engineer:perf_eval': () => ({ claim_reproduced: true, held_out_ok: false, guards_ok: true, workload_unchanged: true, path_ok: true }),
     });
     check(feature.result.status === 'blocked' && feature.result.stopped_at === 'Performance', `feature: ${feature.result.status}`);
@@ -542,6 +542,21 @@ const scenarios = [
     });
     check(noClaim.result.status === 'ready_for_review' && noClaim.keys.includes('perf_engineer:perf_eval'),
       `no claim, only guards: ${noClaim.result.status}`);
+  }],
+  ['perf: held_out, guards and sweep are off by default, and every role sees them', async () => {
+    const vanish = {
+      'perf_engineer:perf_eval': () => ({ claim_reproduced: true, held_out_ok: false, guards_ok: true, workload_unchanged: true, path_ok: true }),
+    };
+    const perf = await run({ mode: 'perf', task: 'p' }, vanish);
+    check(perf.result.status === 'ready_for_review', `perf, held_out off: ${perf.result.status}`);
+    const feature = await run({ mode: 'feature', task: 't' }, vanish);
+    check(feature.result.status === 'ready_for_review', `feature, held_out off: ${feature.result.status}`);
+    const pe = feature.calls.find((c) => c.key === 'perf_engineer:perf_eval');
+    check(pe && pe.ins.held_out === false && pe.ins.guards === false && pe.ins.sweep === false,
+      `off for the perf engineer: ${JSON.stringify(pe && [pe.ins.held_out, pe.ins.guards, pe.ins.sweep])}`);
+    const asked = await run({ mode: 'feature', task: 't', held_out: 'true', guards: true, sweep: true });
+    const sp = asked.calls.find((c) => c.key === 'director:spec');
+    check(sp && sp.ins.held_out === true && sp.ins.guards === true && sp.ins.sweep === true, 'on for the spec when the task sets them');
   }],
   ['perf: measured win to a PR', async () => {
     const r = await run({ mode: 'perf', task: 'p', apply_prs: ['#46329'] });
