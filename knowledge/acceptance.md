@@ -36,10 +36,13 @@ Two rules hold across the dimensions:
   logits is acceptable, a systematic difference is not); GSM8K on all 1319 questions, one run per arm
   (`scripts/eval_accuracy.sh`), at most 1 point below the baseline.
 - **Lossy changes** (relaxed draft verification, quantization, sparse attention, KV compression): GSM8K
-  as above by default; when the goal asks for more, the budget is declared before anything is measured — the suite, the metric and the largest acceptable
-  loss. It includes at least one set that is sensitive to the loss: a recall-heavy set such as
-  simple_qa for relaxed verification, a long-context set for KV compression. Run at least 3 times per
-  arm, since a single run of such a set moves by about ±0.5 points (`feature_skills/fly-dspark`).
+  as above by default, and nothing more unless the task asks: the matrix adds no set of its own, not
+  even a report-only one, and its risks say that GSM8K may not show the loss (`validation_doctrine.md`,
+  G2). When the goal asks for more, the budget is declared before anything is measured: the suite, the
+  metric and the largest acceptable loss. It includes at least one set that is sensitive to the loss: a
+  recall-heavy set such as simple_qa for relaxed verification, a long-context set for KV compression.
+  Run at least 3 times per arm, since a single run of such a set moves by about ±0.5 points
+  (`feature_skills/fly-dspark`).
 - **Capability suites**, for what the change touches: long context (needle-in-a-haystack, G3),
   reasoning (GPQA, AIME), tool calls, multimodal input.
 - **Parity with a reference**, for a new model, a new kernel or a refactor: logprobs or the KL
@@ -103,7 +106,7 @@ extra items of its feature classes (§1.4).
 | Dimension | Upstream feature | Issue fix | CI fix | Performance | Requirement |
 |---|---|---|---|---|---|
 | Correctness | required | required; the reproduction becomes a regression test | required; the failing test passes on every lane it failed on | required | required |
-| Accuracy | required; a lossy change declares its budget | when the issue is an accuracy loss | no regression | required, as lossless | on the requester's data set |
+| Accuracy | required: GSM8K, more sets only when the task asks (§1.1) | when the issue is an accuracy loss | no regression | required, as lossless | on the requester's data set |
 | Performance | when the feature claims a gain | when the issue is a performance problem: the reported number comes back | — | required: gain, guard and held-out point | the requester's SLA |
 | Stability | required (G4) | when the issue is a crash or hang | a flaky test passes repeatedly (§4) | when the change touches memory or scheduling | required, with a soak |
 | Compatibility | required | required | required | required | the requester's platforms |
@@ -132,7 +135,8 @@ Each item is one row of the acceptance matrix (`../templates/acceptance.md`):
 | Confirmed by | InferPilot (automatic), a human reviewer, or the requirement owner |
 | Result and evidence | filled at the end: the measured value, the verdict, the path of the logs and tables |
 
-Three items for FLy on DSPARK (`feature_skills/fly-dspark`), written in this form after the fact:
+Three items for FLy on DSPARK (`feature_skills/fly-dspark`), whose task asked for simple_qa too, written in
+this form after the fact:
 
 | ID | Item | Rule | Measured |
 |---|---|---|---|
@@ -145,8 +149,8 @@ Three items for FLy on DSPARK (`feature_skills/fly-dspark`), written in this for
 - **Noise band:** set from repeated baseline runs (their range, or the standard error of the mean) and
   stated next to every result.
 - **Runs:** GSM8K once per arm by default; failure rates at least 4 per configuration (`validation_doctrine.md`); performance at least
-  2 timed runs per arm after a warm-up, more when the spread is wide (`perf_evaluation.md` §3); a lossy
-  accuracy budget at least 3 runs per arm; a flaky test passes in every one of at least 10 runs.
+  2 timed runs per arm after a warm-up, more when the spread is wide (`perf_evaluation.md` §3); a
+  recall set the task asks for at least 3 runs per arm; a flaky test passes in every one of at least 10 runs.
 - **Distribution tests** (a sampler or a lossless verification change): per tested prompt, compare the
   sampled tokens with the target distribution using a stated test, sample size and significance level,
   e.g. a chi-square test on at least 10,000 samples at p = 0.01.
