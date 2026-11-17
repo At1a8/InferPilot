@@ -126,7 +126,7 @@ claude --version    # 装在这个容器里的 Claude Code
 | git | 信任宿主机挂载目录里的 checkout，它们属于你而不是 root（`safe.directory '*'`） |
 | git 身份 | root 以 key 文件（或环境变量）里的 `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` 提交，所以不会出现作者为 `root@<本机主机名>` 的提交；两者都没有时，它会提示，不会自己编一个 |
 | shell | 在 root 的 `~/.bashrc` 里设置 `PYTHONDONTWRITEBYTECODE=1`（宿主机挂载目录里的 checkout 不会出现 root 所有的 `__pycache__`）和 `DISABLE_AUTOUPDATER=1`，并加载 key 文件，之后才放进去的也会加载；设置了 `LLM_GATEWAY_KEY` 且没有 `ANTHROPIC_BASE_URL` 时，让 Claude Code 走 AMD LLM 网关 |
-| 框架 | 镜像里的 `/sgl-workspace/sglang` 如果还是镜像留下的样子（detached 在构建时的 commit 上或在 main 上，打包文件被改成了 ROCm 版，没有别的改动），就把它切到 main：丢弃这些打包改动，然后 `git checkout main`、`git pull`。之后不要在这里 `pip install -e`：这时它的 `pyproject.toml` 是上游默认的版本，会装进 CUDA 的包。干净的 main、在其他分支上、或者有其他改动的 checkout 原样保留，用指定的 `IMAGE` 启动的容器里的 checkout 也原样保留（任务的 Setup 会因为它的打包改动停下，直到你自己处理）；用 `--framework-dir` 可以改用宿主机上的 checkout（已有的原样使用，缺失时带完整历史克隆） |
+| 框架 | 镜像里的 `/sgl-workspace/sglang` 如果还是镜像留下的样子（detached 在构建时的 commit 上，打包文件被改成了 ROCm 版），就把它切到 main：丢弃这些打包改动，然后 `git checkout main`、`git pull`。之后不要在这里 `pip install -e`：这时它的 `pyproject.toml` 是上游默认的版本，会装进 CUDA 的包。已经在某个分支上、或者有其他改动的 checkout 原样保留，用指定的 `IMAGE` 启动的容器里的 checkout 也原样保留（任务的 Setup 会因为它的打包改动停下，直到你自己处理）；用 `--framework-dir` 可以改用宿主机上的 checkout（已有的原样使用，缺失时带完整历史克隆） |
 | evalscope | 供 `scripts/eval_accuracy.sh` 使用：装在单独的 venv `/opt/evalscope` 里（约一分钟、1.2 GB），并链接为 `/usr/local/bin/evalscope`。不装进镜像的 Python，否则会把 `datasets` 和 `fsspec` 降到比 sglang 自带的更低的版本；`PATH` 上已经有 `evalscope` 时保留原样 |
 | 检查 | GPU、sglang、evalscope、API 访问、`GITHUB_TOKEN`，key 文件里设置的也算（只检测） |
 

@@ -98,14 +98,6 @@ AMD_GATEWAY_URL = "https://llm-api.amd.com/Unified"
 # becomes the ROCm one) and leaves it detached at the commit it built.
 IMAGE_SGLANG = "/sgl-workspace/sglang"
 PACKAGING = re.compile(r"(^|/)pyproject[^/]*\.toml$")
-# Some daily images leave that checkout on main instead. There only the build's own edits are discarded,
-# recognised by content (docker/rocm.Dockerfile): each path maps to the file at HEAD it was copied from,
-# or to None when the build moved it away; any other edit may be a user's and stops Setup.
-IMAGE_MAIN_PACKAGING = {
-    "python/pyproject.toml": "python/pyproject_other.toml",
-    "python/sglang/kernels/aot/pyproject.toml": "python/sglang/kernels/aot/pyproject_rocm.toml",
-    "python/sglang/kernels/aot/pyproject_rocm.toml": None,
-}
 # scripts/eval_accuracy.sh reaches the server over HTTP, so evalscope needs nothing of sglang's Python, and
 # installed into it, it would change it: evalscope 1.15 downgrades datasets and fsspec below the image's.
 EVALSCOPE_VENV = "/opt/evalscope"
@@ -660,45 +652,31 @@ def installed_commit() -> str:
     return m.group(1) if m else ""
 
 
-def _is_image_main_edit(d: str, f: str) -> bool:
-    """Whether f's change on main is the image build's own (IMAGE_MAIN_PACKAGING), judged by content."""
-    if f not in IMAGE_MAIN_PACKAGING:
-        return False
-    src = IMAGE_MAIN_PACKAGING[f]
-    if src is None:
-        return not os.path.lexists(os.path.join(d, f))
-    _, have, _ = _out(["git", "-C", d, "hash-object", "--", f])
-    _, want, _ = _out(["git", "-C", d, "rev-parse", "--verify", "-q", "HEAD:" + src])
-    return bool(have) and have == want
-
-
 def follow_main(d: str) -> tuple[str, str]:
     """Put the image's checkout on main once: discard the build's packaging changes, check out main, pull.
     Only a checkout as the image left it is touched: detached at the commit sglang was installed at, with
-    nothing but packaging files changed, or on main with only the build's own edits. One on another
-    branch, or a clean main, is already past this (Setup takes it from there)."""
+    nothing but packaging files changed. One on a branch is already past this (Setup takes it from there)."""
     rc, branch, _ = _out(["git", "-C", d, "symbolic-ref", "-q", "--short", "HEAD"])
     _, head, _ = _out(["git", "-C", d, "log", "-1", "--format=%h %cs"])
-    _, changed, _ = _out(["git", "-C", d, "diff", "--name-only", "HEAD"])
-    files = [f for f in changed.splitlines() if f]
-    on_main = rc == 0 and branch == "main"
-    if rc == 0 and branch and not (on_main and files):
+    if rc == 0 and branch:
         log("framework: kept %s on %s (%s); the image's checkout, which tasks branch from" % (d, branch, head))
         return "kept", "%s on %s" % (d, branch)
     sha, built = (head.split() or [""])[0], installed_commit()
-    if not on_main and built and sha and not (sha.startswith(built) or built.startswith(sha)):
+    if built and sha and not (sha.startswith(built) or built.startswith(sha)):
         warn("framework: %s is detached at %s, not at the commit the image installed (%s); left as it is"
              % (d, head, built))
         return "skipped", "detached at %s" % head
-    other = [f for f in files if not (_is_image_main_edit(d, f) if on_main else PACKAGING.search(f))]
+    _, changed, _ = _out(["git", "-C", d, "diff", "--name-only", "HEAD"])
+    files = [f for f in changed.splitlines() if f]
+    other = [f for f in files if not PACKAGING.search(f)]
     if other:
-        warn("framework: %s has changes the image build did not make (%s); left as it is, and Setup "
+        warn("framework: %s has changes beyond the image's packaging files (%s); left as it is, and Setup "
              "stops on it" % (d, ", ".join(other[:5])))
         return "skipped", "changed: %s" % ", ".join(other[:5])
     if files and _run(["git", "-C", d, "checkout", "HEAD", "--"] + files).returncode != 0:
         warn("framework: could not discard the image's packaging changes in %s" % d)
         return "failed", "git checkout HEAD -- <packaging files>"
-    if not on_main and _run(["git", "-C", d, "checkout", "main"]).returncode != 0:
+    if _run(["git", "-C", d, "checkout", "main"]).returncode != 0:
         warn("framework: could not check out main in %s" % d)
         return "failed", "git checkout main"
     if _run(["git", "-C", d, "pull", "--ff-only"]).returncode != 0:

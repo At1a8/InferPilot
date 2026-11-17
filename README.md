@@ -190,9 +190,9 @@ every container on the host within the agents' reach.
   matching daily ROCm 10 `rocm/sgl-dev` build: `rocm10-mi30x` for gfx942 (MI300/MI308/MI325) and
   `rocm10-mi35x` for gfx950 (MI350/MI355); a GPU with no ROCm 10 image (on Docker Hub, or here when
   Docker Hub cannot be reached) takes ROCm 7.2.4, then 7.2.0. If detection is unavailable it warns and
-  falls back to MI35x ([`scripts/latest_image.py`](scripts/latest_image.py), e.g. `v0.5.23-rocm10-mi35x-20261103`; the
-  `miles` images on the same page are for reinforcement learning and are skipped). A new day's image is
-  pulled at its first use, about 43 GB. `IMAGE_VARIANT` overrides detection and fallback, for example
+  falls back to MI35x ([`scripts/latest_image.py`](scripts/latest_image.py), e.g.
+  `v0.5.23-rocm10-mi35x-20261103`; the `miles` images on the same page are for reinforcement learning
+  and are skipped). A new day's image is pulled at its first use, about 43 GB. `IMAGE_VARIANT` overrides detection and fallback, for example
   `IMAGE_VARIANT=rocm724-mi30x`; for a fixed image, use `IMAGE=rocm/sgl-dev:<tag>`, whose
   `/sgl-workspace/sglang` step 3 then leaves exactly as the image has it. A container keeps the
   image it started from: run_docker.sh says so when you come back to one whose image is no longer the
@@ -244,7 +244,7 @@ claude --version    # installed in this container
 | git | trusts checkouts on host mounts, which belong to you, not root (`safe.directory '*'`) |
 | git identity | root commits as `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` from the keys file (or the environment), so no commit reads `root@<this host>`; with neither it says so and sets nothing |
 | shell | root's `~/.bashrc` gets `PYTHONDONTWRITEBYTECODE=1` (no root-owned `__pycache__` in checkouts on host mounts) and `DISABLE_AUTOUPDATER=1`, and loads the keys file, also one put in place later; with `LLM_GATEWAY_KEY` and no `ANTHROPIC_BASE_URL`, it points Claude Code at the AMD LLM gateway |
-| framework | the image's `/sgl-workspace/sglang`, still as the image left it (detached at the commit it built, or on main, with its packaging files rewritten for ROCm and nothing else changed), is put on main: the packaging changes discarded, then `git checkout main` and `git pull`. Never `pip install -e` from it afterwards: its `pyproject.toml` is then upstream's, which would pull CUDA packages. A clean main, a checkout on another branch, or one with other changes is left as it is, and so is the checkout in a container started from a given `IMAGE` (a task's Setup then stops on its packaging changes until you deal with them); `--framework-dir` names a host checkout instead (used as it is, or cloned with its whole history when missing) |
+| framework | the image's `/sgl-workspace/sglang`, still as the image left it (detached at the commit it built, its packaging files rewritten for ROCm), is put on main: the packaging changes discarded, then `git checkout main` and `git pull`. Never `pip install -e` from it afterwards: its `pyproject.toml` is then upstream's, which would pull CUDA packages. A checkout already on a branch, or with other changes, is left as it is, and so is the checkout in a container started from a given `IMAGE` (a task's Setup then stops on its packaging changes until you deal with them); `--framework-dir` names a host checkout instead (used as it is, or cloned with its whole history when missing) |
 | evalscope | for `scripts/eval_accuracy.sh`: installed in a venv of its own, `/opt/evalscope` (about a minute and 1.2 GB), and linked as `/usr/local/bin/evalscope`. Not in the image's Python, where it would downgrade `datasets` and `fsspec` below what sglang ships with; an `evalscope` already on `PATH` is kept |
 | checks | GPUs, sglang, evalscope, API access, `GITHUB_TOKEN`, counting what the keys file sets (detect only) |
 
