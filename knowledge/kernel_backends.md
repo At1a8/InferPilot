@@ -13,8 +13,7 @@ Verify:
 | Back end | What runs | Needs |
 |---|---|---|
 | `none` (default) | nothing: the hand-off package is written and listed in the report | — |
-| `geak` | GEAK's single-language kernel lane `kernel_workflow/kernel_lane.js`, nested once, the way GEAK's own `e2e_workflow` calls it | `kernel_backend_dir`, the GEAK checkout; GPUs from `gpu_ids`; `kernel_budget` optimization rounds (default 6) |
-| `command` | any other CLI: the kernel liaison runs `kernel_backend_command` with `{task_dir}`, `{out_dir}` and `{gpu_ids}` substituted and reads the JSON result it writes | `kernel_backend_command` |
+| `command` | a kernel agent's CLI: the kernel liaison runs `kernel_backend_command` with `{task_dir}`, `{out_dir}`, `{gpu_ids}` and `{budget}` (`kernel_budget` optimization rounds, default 6) substituted and reads the JSON result it writes | `kernel_backend_command` |
 
 Adding a back end: a CLI needs no code (`command`); a native one is one branch in `kernelStage()` of
 `inferpilot.js` plus a row here.
@@ -31,17 +30,14 @@ The implementer (functional kernel) or the architect (performance opportunity) w
 - a unit test the reference passes;
 - the plug-in point (file : function) and how the kernel is built (JIT, AOT, Triton).
 
-The kernel liaison turns it into the back end's task format. For GEAK
-(`<kernel_backend_dir>/kernel_workflow/README.md`):
+The kernel liaison turns it into a task directory, `RUN_DIR/kernel/<id>/task`, in this layout unless the
+command documents one of its own:
 
-- `mode: "optimize"` — `kernel_path` holds the kernel source to edit and its test;
-- `mode: "author"` — `kernel_path` is an op task dir with the immutable oracle (`meta.json`,
-  `unittest.py`, frozen `baseline_src/`), plus `op_spec` `{op_kind, shapes, dtype, math_contract,
-  regime}` and `target_language` (triton | flydsl | hip | ck). GEAK's
-  `e2e_workflow/roles/kernel_extractor.md` shows how an op is extracted from a serving stack into this
-  layout;
-- InferPilot always passes `apply_to_original: "false"`: the back end never writes into the framework; its
-  result comes back as a patch.
+- `mode: "optimize"` — the task directory holds the kernel source to edit and its test;
+- `mode: "author"` — it holds the immutable oracle (`meta.json`, `unittest.py`, frozen `baseline_src/`),
+  plus `op_spec` `{op_kind, shapes, dtype, math_contract, regime}` and `target_language` (triton | flydsl
+  | hip | ck);
+- the back end never writes into the framework: its result comes back as a patch.
 
 ## 2. Results
 

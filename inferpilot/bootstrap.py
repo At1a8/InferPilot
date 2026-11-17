@@ -1,8 +1,8 @@
 """InferPilot bootstrap: set up InferPilot where it runs; safe to run again at any time.
 
-InferPilot runs inside a ROCm container as root, the way GEAK does: InferPilot, its runs and the code they
-change live in the container's /workspace, one copy per container. As in GEAK's CI and Hyperloom,
-Claude Code is installed in the container and its first-start questions are answered in its config,
+InferPilot runs inside a ROCm container as root: InferPilot, its runs and the code they change live in the
+container's /workspace, one copy per container. Claude Code is installed in the container and its
+first-start questions are answered in its config,
 and your keys come in as one file: scripts/run_docker.sh mounts your ~/.inferpilot_env read-only as root's
 ~/.inferpilot_env, and not your home. Run this once in every new container (README step 3).
 
@@ -536,7 +536,7 @@ def _update_json(path: str, change) -> str:
 def ensure_claude_config(s: dict, env=None) -> tuple[str, str]:
     """Root's Claude Code is new in every container, and its first start would ask for the onboarding,
     trust in the folder, bypass permissions mode and, for an Anthropic API key, whether to use it. Its
-    config answers them ahead, as GEAK's CI and Hyperloom write it; anything else in it is kept. The
+    config answers them ahead; anything else in it is kept. The
     bypass permissions answer lives in the user settings, the others in the global config."""
     env = os.environ if env is None else env
     config_dir = env.get("CLAUDE_CONFIG_DIR") or ""

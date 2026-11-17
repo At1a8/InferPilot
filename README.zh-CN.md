@@ -29,8 +29,7 @@ kernel 级的工作——调优 InferPilot 为某个特性写的 kernel，或者
 | `kernel_backend` | hand-off 的处理方式 |
 |---|---|
 | `none`（默认） | 连同其材料一起记录在报告里，不运行任何东西 |
-| `geak` | 由 GEAK 的 `kernel_workflow/kernel_lane.js` 从 `kernel_backend_dir` 指定的 GEAK checkout 运行（嵌套一层，与 GEAK 的 e2e_workflow 做法相同） |
-| `command` | 由 `kernel_backend_command` 指定的任意其他命令行工具运行 |
+| `command` | 由 `kernel_backend_command` 指定的 kernel agent 命令行工具运行 |
 
 收益会以工作包的形式回来：由 implementer 集成，再由 InferPilot 自己的门禁评判。后端失败或者没有找到收益，都不会阻塞任务。集成后的 kernel 如果在 Verify 失败，会先退回功能版 kernel，再带着这个失败用例作为新增测试交给后端重跑一次；只有通过了，才会再次集成。
 
@@ -65,7 +64,7 @@ kernel 级的工作——调优 InferPilot 为某个特性写的 kernel，或者
 
 ## 安装
 
-InferPilot 像 GEAK 一样，以 root 身份运行在 ROCm 容器里：Claude Code、InferPilot、git 以及框架的服务和测试都在容器里运行，紧挨着 GPU 和框架的 Python 环境。每个任务用一个自己的容器，任务用到的一切都在这个容器里：`/workspace` 里的 InferPilot checkout 和它的运行目录，以及镜像自带的 sglang `/sgl-workspace/sglang`，任务在它上面开自己的分支修改。容器之间不共享这些，所以互不干扰；它们随所在的容器保留，容器删除时一起删除。Claude Code 也装在每个容器里，并预先回答好首次启动的问题，和 GEAK 的 CI、Hyperloom 的做法一样。容器只从你宿主机的 home 里拿一个文件：保存 key 的 `~/.inferpilot_env`，以只读方式挂载；home 的其余部分不挂进来，因为 agent 以 root 身份、自动批准权限运行，而 home 里有它们用不着的凭据。
+InferPilot 以 root 身份运行在 ROCm 容器里：Claude Code、InferPilot、git 以及框架的服务和测试都在容器里运行，紧挨着 GPU 和框架的 Python 环境。每个任务用一个自己的容器，任务用到的一切都在这个容器里：`/workspace` 里的 InferPilot checkout 和它的运行目录，以及镜像自带的 sglang `/sgl-workspace/sglang`，任务在它上面开自己的分支修改。容器之间不共享这些，所以互不干扰；它们随所在的容器保留，容器删除时一起删除。Claude Code 也装在每个容器里，并预先回答好首次启动的问题。容器只从你宿主机的 home 里拿一个文件：保存 key 的 `~/.inferpilot_env`，以只读方式挂载；home 的其余部分不挂进来，因为 agent 以 root 身份、自动批准权限运行，而 home 里有它们用不着的凭据。
 
 每一步都可以重复执行：先检查，保留已有的，只补缺的；再次运行 run_docker.sh 会回到原来的容器。命令里的 `检查 || 动作` 表示只有检查不通过时才执行动作：在新机器上每个动作都会执行，再运行一次则全部跳过。除了第 3 步丢弃镜像构建对 `/sgl-workspace/sglang` 打包文件的改动，不会删除、覆盖或重新克隆任何东西。
 
@@ -122,7 +121,7 @@ claude --version    # 装在这个容器里的 Claude Code
 |---|---|
 | key | root 的 `~/.inferpilot_env`（run_docker.sh 从你的 home 挂进来），或者 `INFERPILOT_KEYS` 指定的文件。在挂载了 `/home` 的容器里，也用你 home 里的那份：先看 `INFERPILOT_HOST_HOME`，没有时发出警告，改用容器名对应的那个用户的 home（`<you>`、`<you>-0116`）。没有 key 文件时其余步骤照常完成，"下一步"会说明 key 该放在哪里 |
 | `claude` | 用 Claude Code 的原生安装器装在容器里（`~/.local/bin/claude`，并加到 `PATH`）：装的是最新版本，下载量较大（网速慢时几分钟没有输出，是在下载）。容器存在期间一直保持这个版本（`DISABLE_AUTOUPDATER=1`）；新容器会装最新的 |
-| Claude Code 配置 | 在 root 的 `~/.claude.json` 里预先回答首次启动的问题，和 GEAK 的 CI、Hyperloom 的做法一样：完成引导、信任 `/workspace/inferpilot`、接受 bypass permissions 模式，用 `ANTHROPIC_API_KEY` 时还批准使用这个 key。文件里的其他内容保留；和 root 的其他东西一样，它随容器删除 |
+| Claude Code 配置 | 在 root 的 `~/.claude.json` 里预先回答首次启动的问题：完成引导、信任 `/workspace/inferpilot`、接受 bypass permissions 模式，用 `ANTHROPIC_API_KEY` 时还批准使用这个 key。文件里的其他内容保留；和 root 的其他东西一样，它随容器删除 |
 | git | 信任宿主机挂载目录里的 checkout，它们属于你而不是 root（`safe.directory '*'`） |
 | git 身份 | root 以 key 文件（或环境变量）里的 `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` 提交，所以不会出现作者为 `root@<本机主机名>` 的提交；两者都没有时，它会提示，不会自己编一个 |
 | shell | 在 root 的 `~/.bashrc` 里设置 `PYTHONDONTWRITEBYTECODE=1`（宿主机挂载目录里的 checkout 不会出现 root 所有的 `__pycache__`）和 `DISABLE_AUTOUPDATER=1`，并加载 key 文件，之后才放进去的也会加载；设置了 `LLM_GATEWAY_KEY` 且没有 `ANTHROPIC_BASE_URL` 时，让 Claude Code 走 AMD LLM 网关 |
@@ -205,7 +204,7 @@ docker cp <name>:/workspace/inferpilot/exp/<run> ~/
 
 ### 重复执行与选项
 
-`inferpilot.bootstrap` 的每一步都会报告 `kept`、`installed`、`updated`、`added`、`created`、`skipped` 或 `failed`；最后有一份汇总，"下一步"只列出仍然缺少的内容，任何一步失败时退出码为 1。在新容器里，它会安装 Claude Code 和 evalscope（各需要一两分钟），并写好 Claude Code 的配置以及 git 和 shell 的设置。`--claude-only` 只运行 key 和 Claude Code 相关的步骤，`--check` 只运行检查。在容器里，`cd /workspace && pip install -v git+https://github.com/At1a8/inferpilot` 会按 GEAK 的方式执行第 3 步，把 InferPilot 克隆到 `/workspace/inferpilot`（加 `-v` 时 pip 才显示输出；用了缓存的 wheel 时会跳过）。
+`inferpilot.bootstrap` 的每一步都会报告 `kept`、`installed`、`updated`、`added`、`created`、`skipped` 或 `failed`；最后有一份汇总，"下一步"只列出仍然缺少的内容，任何一步失败时退出码为 1。在新容器里，它会安装 Claude Code 和 evalscope（各需要一两分钟），并写好 Claude Code 的配置以及 git 和 shell 的设置。`--claude-only` 只运行 key 和 Claude Code 相关的步骤，`--check` 只运行检查。在容器里，`cd /workspace && pip install -v git+https://github.com/At1a8/inferpilot` 同样会执行第 3 步，把 InferPilot 克隆到 `/workspace/inferpilot`（加 `-v` 时 pip 才显示输出；用了缓存的 wheel 时会跳过）。
 
 | 变量 | 使用者 | 默认值 |
 |---|---|---|
@@ -229,12 +228,14 @@ docker cp <name>:/workspace/inferpilot/exp/<run> ~/
 
 ## 运行
 
-InferPilot 是一个 GEAK 风格的工作流：`inferpilot.js` 负责控制流，`roles/` 是 agent 的指令，`knowledge/` 是方法，`templates/` 是产物模板。在 Claude Code 里，用一句话说出 `inferpilot.js` 和它的参数即可，就像 [第 4 步](#4-启动-claude-code-并交给它任务容器内)那样。只有两种情况需要 GEAK：使用 `geak` kernel 后端（`kernel_backend_dir`），以及在 Claude Code 之外运行 `inferpilot.js`，这时要用 GEAK 的工作流运行时（Node 20+；dry run 用的也是它）：
+InferPilot 是一个工作流：`inferpilot.js` 负责控制流，`roles/` 是 agent 的指令，`knowledge/` 是方法，`templates/` 是产物模板。在 Claude Code 里，用一句话说出 `inferpilot.js` 和它的参数即可，就像 [第 4 步](#4-启动-claude-code-并交给它任务容器内)那样，由它的 Workflow 工具执行。在其他地方，由 InferPilot 自带的 runner `runtime/run.mjs`（Node 20+）执行，每个角色交给一个命令行 agent：`--backend claude` 运行 `claude -p`，`--backend cursor` 运行 Cursor CLI（`agent -p`），用 `agent login` 登录的账号或 `CURSOR_API_KEY`。dry run 用的也是这个 runner。
 
 ```bash
-node /path/to/GEAK/interface/runtime/engine/run_workflow.mjs inferpilot.js --agent codex \
+node runtime/run.mjs inferpilot.js --backend cursor \
   --args '{"mode":"scan","inferpilot_dir":"'"$PWD"'","framework_dir":"/path/to/sglang"}'
 ```
+
+`--model`、`--args-file`、`--result-file`、`--concurrency`、`--agent-timeout-ms` 和 `--schema-retries` 的说明在 `runtime/run.mjs` 开头。
 
 | 参数 | 含义 |
 |---|---|
@@ -252,10 +253,9 @@ node /path/to/GEAK/interface/runtime/engine/run_workflow.mjs inferpilot.js --age
 | `client_script` | 你自己的压测脚本，对 `PORT` 上的 server 跑负载，日志写到 `OUT_DIR`；它就是基准，原样运行；`perf` 必填，给了 `workload` 的 feature 也必填 |
 | `container` | 只在 InferPilot 运行在宿主机上时使用：框架所在的容器，通过 `docker exec` 访问 |
 | `exp_root` | 运行目录放在哪里（默认 `<inferpilot_dir>/exp`，git 会忽略它） |
-| `kernel_backend` | `none`（默认）\| `geak` \| `command`：kernel hand-off 交给谁 |
-| `kernel_backend_dir` | `geak` 后端：提供 `kernel_workflow/kernel_lane.js` 的 GEAK checkout |
-| `kernel_backend_command` | `command` 后端：带 `{task_dir}`、`{out_dir}`、`{gpu_ids}` 占位符的 shell 命令 |
-| `kernel_budget` | kernel 后端的优化轮数（默认 6） |
+| `kernel_backend` | `none`（默认）\| `command`：kernel hand-off 交给谁 |
+| `kernel_backend_command` | `command` 后端：带 `{task_dir}`、`{out_dir}`、`{gpu_ids}`、`{budget}` 占位符的 shell 命令 |
+| `kernel_budget` | kernel 后端的优化轮数（默认 6），即命令里的 `{budget}` |
 | `apply_prs` | `perf`：要应用并做 A/B 的候选 PR |
 | `sources`、`since` | `scan`：`ci`、`issues`、`upstream`（默认）以及 `hardware`、`perf` 中的任意几个；时间窗口的起点（默认为上一份日报） |
 | `image`、`image_ok` | 任务必须运行的镜像（默认是容器对应 ROCm 和 GPU 下最新的每日镜像；不是的话 Setup 会停下来问）；为 `true` 时仍在容器现有的镜像上运行 |
@@ -265,7 +265,7 @@ node /path/to/GEAK/interface/runtime/engine/run_workflow.mjs inferpilot.js --age
 | `resume_from`、`run_dir` | `feature`：人审阅通过 `design.md` 后，用 `implement` 继续一个停在 Design 的运行 |
 | `auto_approve_design` | `feature`，默认 `true`：architect 标记需要人审的设计和 L3 任务直接进入 Implement，报告会写明设计没有经过人审。设为 `false` 时，这样的设计会停在 Design 等人审（`awaiting_design_review`）。`stop_after` 仍然生效 |
 | `held_out`、`guards`、`sweep` | 任务 workload 和 goal 之外的性能检查，默认都不开启：`held_out` 在 held-out 工作点（一半并发）上再测一次收益，并要求收益在那里同样成立；`guards` 在 goal 指定的守护负载之外，再加 InferPilot 自己选的守护负载；`sweep` 测 workload 之外的点（更多并发或长度） |
-| `review_model` | reviewer 使用的模型，随它的 agent 调用一起传入（GEAK 运行时支持按调用指定模型；其他运行时视其能力而定） |
+| `review_model` | reviewer 使用的模型，随它的 agent 调用一起传入（InferPilot 的 runner 把它作为命令行工具的 `--model` 传入；在 Claude Code 里取决于它的 Workflow 工具） |
 | `max_fix_rounds`、`max_investigate_rounds`、`max_review_rounds`、`max_work_packages` | 预算 |
 | `agent_retries`、`agent_timeout_ms` | agent 调用出错时会重试（重试前先检查失败的那次留下了什么），超时则不重试：超时的 agent 可能还在运行，会被记入报告里的待人工处理清单，它所在的工作包也不再开新一轮、不做 rollback。默认超时 3 小时，verify engineer、performance engineer 和 investigator 为 6 小时 |
 
@@ -300,7 +300,8 @@ python3 scripts/run_lock.py release --force   # 那个运行已经中断时，�
 ## 测试
 
 ```bash
-GEAK_HOME=/path/to/GEAK node tests/dry_run.mjs   # 在 GEAK 运行时上走遍 inferpilot.js 的每条控制路径，不需要 GPU
+node tests/dry_run.mjs                            # 在 InferPilot 的 runner 上走遍 inferpilot.js 的每条控制路径，不需要 GPU
+node tests/runtime_selftest.mjs                   # runner 本身：schema 检查、全局函数、命令行 backend；离线运行
 python3 -m unittest discover -s tests             # 脚本的解析与规则、bootstrap、Claude Code 对 workflow 的规则、两份 README 的一致性；离线运行
 ```
 
@@ -309,6 +310,7 @@ python3 -m unittest discover -s tests             # 脚本的解析与规则、b
 ```
 inferpilot/
 ├── inferpilot.js            # 编排：五种模式、门禁、预算、回滚、kernel 后端
+├── runtime/                 # 在 Claude Code 之外执行 inferpilot.js 的 runner：引擎和命令行 backend
 ├── roles/                   # intake, director, scout, dispatcher, analyst, architect, implementer,
 │                            # test_engineer, verify_engineer, investigator, perf_engineer, issue_triager,
 │                            # ci_guardian, kernel_liaison, reviewer, pr_engineer, curator
@@ -329,16 +331,16 @@ inferpilot/
 │                            # restore_owner.sh、run_in_tmux.sh
 ├── inferpilot/bootstrap.py  # 第 3 步的配置脚本，在容器内运行；可以重复执行
 ├── setup.py, pyproject.toml # 打包；pip 构建 wheel 时 setup.py 会运行 bootstrap
-├── tests/                   # inferpilot.js 的 dry run，脚本、bootstrap、Claude Code workflow 规则和 README 的单元测试
+├── tests/                   # inferpilot.js 的 dry run，runner 的自测，脚本、bootstrap、Claude Code workflow 规则和 README 的单元测试
 ├── README.md, README.zh-CN.md
 └── docs/design.md
 ```
 
-## 与 GEAK 和 Hyperloom 的关系
+## 与 kernel 工作流和 Hyperloom 的关系
 
-- kernel 的速度是 kernel 工作流的事，无论选的是哪个后端（GEAK 的 kernel lane 是其中之一）：InferPilot 写出带单元测试的功能性 kernel，把算子规格连同作为判定标准的参考实现一起移交，再集成验证过的收益。
-- 针对某个负载搜索 flag 和 backend 属于 Hyperloom 和 GEAK `e2e_workflow` 的工作；它们发现的上游候选是 InferPilot 的输入，InferPilot 落地的特性又成为它们的可选项。
+- kernel 的速度是 kernel 工作流的事，无论选的是哪个后端：InferPilot 写出带单元测试的功能性 kernel，把算子规格连同作为判定标准的参考实现一起移交，再集成验证过的收益。
+- 针对某个负载搜索 flag 和 backend 属于 Hyperloom 的工作；它发现的上游候选是 InferPilot 的输入，InferPilot 落地的特性又成为它的可选项。
 
 ## 来源
 
-方法论、验证准则、已知问题登记表、模板和 HiSparse V2 特性 skill 来自 GEAK 的 `framework_workflow`（分支 `fangyuan/framework_agent_init`，commit `fc857c9`），当时它处在以知识库为主的阶段。InferPilot 在此基础上补上了当时计划中的编排、各个角色、设计中的 issue / CI / 性能 / scan 入口，以及任务收集脚本。
+方法论、验证准则、已知问题登记表、模板和 HiSparse V2 特性 skill 来自 GEAK 的 `framework_workflow`（分支 `fangyuan/framework_agent_init`，commit `fc857c9`），当时它处在以知识库为主的阶段。InferPilot 在此基础上补上了当时计划中的编排、各个角色、设计中的 issue / CI / 性能 / scan 入口，以及任务收集脚本。它的运行不依赖 GEAK：由 Claude Code 的 Workflow 工具或 InferPilot 自带的 runner（`runtime/`）执行。

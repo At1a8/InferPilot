@@ -1,36 +1,18 @@
-// Dry run of inferpilot.js on GEAK's workflow runtime with a scripted fake backend:
-// no GPU, no network, no model. Each scenario scripts what the roles answer and
+// Dry run of inferpilot.js on InferPilot's own workflow runner (runtime/engine.mjs) with a scripted
+// fake backend: no GPU, no network, no model. Each scenario scripts what the roles answer and
 // asserts the phases InferPilot walks through, the roles it calls and the final status.
 //
-//   GEAK_HOME=/path/to/GEAK node tests/dry_run.mjs
-//
-// GEAK_HOME defaults to ../geak/GEAK next to this checkout.
+//   node tests/dry_run.mjs
 import path from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
-import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { createRuntime } from '../runtime/engine.mjs';
 
 const INFERPILOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const GEAK_HOME = process.env.GEAK_HOME || path.resolve(INFERPILOT, '..', 'geak', 'GEAK');
-const ENGINE = path.join(GEAK_HOME, 'interface', 'runtime', 'engine', 'run_workflow.mjs');
-if (!existsSync(ENGINE)) {
-  console.error(`GEAK runtime not found at ${ENGINE}; set GEAK_HOME`);
-  process.exit(2);
-}
-const { createRuntime } = await import(pathToFileURL(ENGINE).href);
 const SCRIPT = path.join(INFERPILOT, 'inferpilot.js');
 const RUN = '/tmp/inferpilot_dry_run';
-
-// A stand-in for GEAK's kernel_lane.js: echoes the arguments InferPilot passed (in `note`, a field InferPilot
-// keeps) and fails when the steer says FAIL.
-const FAKE_GEAK = '/tmp/inferpilot_dry_run_geak';
-mkdirSync(path.join(FAKE_GEAK, 'kernel_workflow'), { recursive: true });
-writeFileSync(path.join(FAKE_GEAK, 'kernel_workflow', 'kernel_lane.js'), `export const meta = { name: 'fake-kernel-lane', description: 'dry-run stub', phases: [] };
-if (String(args.task || '').includes('FAIL')) throw new Error('lane failed');
-return { validation_status: 'pass', final_speedup: 1.37, final_patch: args.exp_root + '/best.diff', eval_dir: args.exp_root + '/eval',
-  note: JSON.stringify({ kernel_path: args.kernel_path, workflow_dir: args.workflow_dir, mode: args.mode, budget: args.budget,
-    gpu_ids: args.gpu_ids, apply_to_original: args.apply_to_original }),
-  agent_timeline: { events: ['large record InferPilot must not forward'] } };
-`);
+// A kernel back end the kernel liaison runs; a hand-off whose reason is FAIL makes it fail.
+const CMD = { kernel_backend: 'command', kernel_backend_command: 'my-kernel-agent --task {task_dir} --out {out_dir} --gpus {gpu_ids}' };
 
 const WP = (id, extra) => ({ id, goal: `goal of ${id}`, kind: 'framework', files: ['x.py'], test: `test ${id}`, depends_on: [], ...(extra || {}) });
 
@@ -65,7 +47,9 @@ const DEFAULTS = {
   'dispatcher:dispatch': () => ({ queue_path: `${RUN}/task_queue.md`, top: [{ rank: 1, task: 'GLM-5.3 DCP crash', type: 'bug', level: 'L1', priority: 'P0', source: 'issues' }], matrix_changes: 2 }),
   'kernel_liaison:package': (ins) => ({ task_dir: `${RUN}/kernel/${ins.handoff.id}/task`, mode: 'optimize', target_language: 'hip',
     op_spec: { op_kind: 'swap_in' }, task: ins.handoff.reason === 'FAIL' ? 'FAIL on purpose' : 'decode, M <= 64' }),
-  'kernel_liaison:run': () => ({ exit_code: 0, result_path: `${RUN}/kernel/out/result.json` }),
+  'kernel_liaison:run': (ins) => (ins.handoff.reason === 'FAIL'
+    ? { exit_code: 1, result_path: '', error: 'the kernel agent failed' }
+    : { exit_code: 0, result_path: `${RUN}/kernel/out/result.json` }),
   'kernel_liaison:collect': (ins) => ((ins.backend_result || {}).error
     ? { status: 'failed', notes: ins.backend_result.error }
     : { status: 'improved', speedup: 1.37, evidence: 'eval dir', integrate_wp: WP(`K-${ins.handoff.id}`, { kind: 'kernel' }) }),
@@ -634,23 +618,23 @@ const scenarios = [
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
     check(r.result.handoffs.length === 1 && r.result.handoffs[0].status === 'recorded', `handoffs ${JSON.stringify(r.result.handoffs)}`);
     check(!r.keys.some((k) => k.startsWith('kernel_liaison')) && !r.phases.includes('Kernel'), 'no liaison, no Kernel phase');
-    check(r.calls.every((c) => !('geak_home' in c.ins) && !c.ins.kernel_backend_dir), 'no GEAK path reaches any agent');
+    check(r.calls.filter((c) => !c.key.startsWith('intake')).every((c) => c.ins.kernel_backend === 'none'), 'every role sees the back end');
   }],
-  ['kernel: the geak back end runs GEAK kernel_lane and the gain is integrated', async () => {
-    const r = await run({ mode: 'feature', task: 't', kernel_backend: 'geak', kernel_backend_dir: FAKE_GEAK, gpu_ids: '3' }, withKernelHandoff('decode hot path'));
+  ['kernel: a command back end runs the hand-off through the liaison and the gain is integrated', async () => {
+    const r = await run({ mode: 'feature', task: 't', ...CMD, gpu_ids: '3' }, withKernelHandoff('decode hot path'));
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
     check(eqList(r.phases.slice(4, 8), ['Implement', 'Kernel', 'Implement', 'Verify']), `phases ${r.phases}`);
     const h = r.result.handoffs[0];
     check(h && h.id === 'K-WP1' && h.status === 'integrated', `handoff ${JSON.stringify(h)}`);
+    const runCall = r.calls.find((c) => c.key === 'kernel_liaison:run');
+    check(runCall && runCall.ins.task_dir === `${RUN}/kernel/K-WP1/task` && runCall.ins.kernel_backend_command.includes('{task_dir}')
+      && String(runCall.ins.gpu_ids) === '3', `the liaison gets the task, the command and the GPUs: ${runCall && JSON.stringify(runCall.ins)}`);
     const col = r.calls.find((c) => c.key === 'kernel_liaison:collect');
-    const lane = col ? JSON.parse(col.ins.backend_result.note) : {};
-    check(lane.kernel_path === `${RUN}/kernel/K-WP1/task` && lane.workflow_dir === `${FAKE_GEAK}/kernel_workflow`, `lane args ${JSON.stringify(lane)}`);
-    check(lane.apply_to_original === 'false' && lane.gpu_ids === '3' && lane.mode === 'optimize' && lane.budget === '6', 'lane never writes into the framework; GPUs, mode, budget passed');
-    check(col && col.ins.backend_result.agent_timeline === undefined, 'back-end result trimmed before the liaison sees it');
+    check(col && col.ins.backend_result.exit_code === 0, 'the run record reaches collect');
     check(r.result.done.map((d) => d.wp).includes('K-K-WP1'), 'integration package verified by the test engineer');
   }],
   ['kernel: an integrated kernel that fails Verify goes back to the functional kernel and is retried once with the failing case', async () => {
-    const r = await run({ mode: 'feature', task: 't', kernel_backend: 'geak', kernel_backend_dir: FAKE_GEAK, gpu_ids: '3' }, {
+    const r = await run({ mode: 'feature', task: 't', ...CMD, gpu_ids: '3' }, {
       ...withKernelHandoff('decode hot path'),
       'verify_engineer:verify': (ins, n) => (n === 1 ? { all_pass: false, failures: [{ gate: 'G3' }] } : { all_pass: true, failures: [] }),
       'investigator:investigate': () => ({ verdict: 'kernel_regression', kernel_handoffs: ['K-WP1'],
@@ -669,7 +653,7 @@ const scenarios = [
     check(r.keys.filter((k) => k === 'verify_engineer:verify').length === 2, 'verified again after the retry');
   }],
   ['kernel: a kernel that fails Verify again after its retry is rejected; the functional kernel stays', async () => {
-    const r = await run({ mode: 'feature', task: 't', kernel_backend: 'geak', kernel_backend_dir: FAKE_GEAK, gpu_ids: '3' }, {
+    const r = await run({ mode: 'feature', task: 't', ...CMD, gpu_ids: '3' }, {
       ...withKernelHandoff('decode hot path'),
       'verify_engineer:verify': (ins, n) => (n <= 2 ? { all_pass: false, failures: [{ gate: 'G3' }] } : { all_pass: true, failures: [] }),
       'investigator:investigate': () => ({ verdict: 'kernel_regression', kernel_handoffs: ['K-WP1'], counterexample: 'G3 needle at 128k' }),
@@ -701,34 +685,30 @@ const scenarios = [
     check(h && h.status === 'recorded', `the fix's hand-off reached the Kernel phase: ${JSON.stringify(h)}`);
   }],
   ['kernel: a failing back end does not block the task', async () => {
-    const r = await run({ mode: 'feature', task: 't', kernel_backend: 'geak', kernel_backend_dir: FAKE_GEAK }, withKernelHandoff('FAIL'));
+    const r = await run({ mode: 'feature', task: 't', ...CMD }, withKernelHandoff('FAIL'));
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
     check(r.result.handoffs[0].status === 'failed', `handoff ${JSON.stringify(r.result.handoffs[0])}`);
     check(!r.result.done.some((d) => d.wp.startsWith('K-')), 'nothing integrated');
-  }],
-  ['kernel: a command back end runs through the liaison', async () => {
-    const r = await run({ mode: 'feature', task: 't', kernel_backend: 'command', kernel_backend_command: 'my-kernel-agent --task {task_dir} --out {out_dir} --gpus {gpu_ids}' },
-      withKernelHandoff('decode hot path'));
-    check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
-    const runCall = r.calls.find((c) => c.key === 'kernel_liaison:run');
-    check(runCall && runCall.ins.kernel_backend_command.includes('{task_dir}'), 'command reaches the liaison');
-    check(r.result.handoffs[0].status === 'integrated', 'gain integrated');
+    const silent = await run({ mode: 'feature', task: 't', ...CMD }, { ...withKernelHandoff('decode hot path'), 'kernel_liaison:run': () => null });
+    const col = silent.calls.find((c) => c.key === 'kernel_liaison:collect');
+    check(silent.result.status === 'ready_for_review' && col && /did not run/.test(col.ins.backend_result.error),
+      `a run that returns nothing is a back end that did not run: ${silent.result.status}`);
   }],
   ['kernel: a perf plan with only kernel hand-offs runs on the selected back end', async () => {
     const plan = { 'architect:perf_plan': () => ({ work_packages: [], handoffs: [{ id: 'O2', owner: 'kernel_workflow', spec_path: `${RUN}/handoffs/O2/op_spec.md` },
       { id: 'O3', owner: 'hyperloom' }], perf_claim: '-6% TPOT', gate_ok: true }) };
-    const r = await run({ mode: 'perf', task: 'p', kernel_backend: 'geak', kernel_backend_dir: FAKE_GEAK }, plan);
+    const r = await run({ mode: 'perf', task: 'p', ...CMD }, plan);
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
     check(eqList(r.phases, ['Setup', 'Profile', 'Plan', 'Kernel', 'Implement', 'Verify', 'Performance', 'Review', 'PR', 'Report']), `phases ${r.phases}`);
     const byId = Object.fromEntries(r.result.handoffs.map((h) => [h.id, h.status]));
     check(byId.O2 === 'integrated' && byId.O3 === 'recorded', `statuses ${JSON.stringify(byId)}`);
-    const none = await run({ mode: 'perf', task: 'p', kernel_backend: 'geak', kernel_backend_dir: FAKE_GEAK },
+    const none = await run({ mode: 'perf', task: 'p', ...CMD },
       { ...plan, 'kernel_liaison:collect': () => ({ status: 'no_gain', speedup: 1.01, integrate_wp: null }) });
     check(none.result.status === 'no_gain' && none.result.stopped_at === 'Kernel', `no gain: ${none.result.status}`);
   }],
   ['kernel: back-end arguments are checked before anything starts', async () => {
     check(asks(await run({ mode: 'feature', task: 't', kernel_backend: 'triton-magic' }), 'kernel_backend'), 'unknown back end asked');
-    check(asks(await run({ mode: 'feature', task: 't', kernel_backend: 'geak' }), 'kernel_backend_dir'), 'geak without its checkout asked');
+    check(asks(await run({ mode: 'feature', task: 't', kernel_backend: 'geak' }), 'kernel_backend'), 'geak is no back end');
     check(asks(await run({ mode: 'feature', task: 't', kernel_backend: 'command' }), 'kernel_backend_command'), 'command without a command asked');
   }],
   ['review: requested changes are implemented, verified, measured and reviewed again', async () => {

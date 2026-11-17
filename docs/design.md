@@ -69,7 +69,7 @@ Where that stands, from sglang's history and issues (October 2026):
 | upstream code scan, ecosystem matrix (feature × model × platform: available / unavailable) | `scout` (collect), `scripts/scan_upstream.py`, `knowledge/composability.md` §3 |
 | dispatch: gap type, CUDA dependencies and AMD counterparts, effort, priority by customer workload | `dispatcher`, `knowledge/dispatch.md` |
 | analysis: upstream design, do its assumptions hold on ROCm | `analyst` (recon: code map + assumption table) |
-| implementation (framework / kernel / communication), isolated, feature off = untouched; kernels to the kernel workflow | `architect` + `implementer` (worktree per task), `test_engineer`; kernel hand-offs through `kernel_liaison` to the selected back end (`kernel_backend`: none, geak, command; `knowledge/kernel_backends.md`) |
+| implementation (framework / kernel / communication), isolated, feature off = untouched; kernels to the kernel workflow | `architect` + `implementer` (worktree per task), `test_engineer`; kernel hand-offs through `kernel_liaison` to the selected back end (`kernel_backend`: none, command; `knowledge/kernel_backends.md`) |
 | issue handling: reproduce, locate, minimal fix PR | `issue_triager`, `investigator` (diagnose), `knowledge/issue_triage.md` |
 | CI failures: flaky / infrastructure / regression, culprit, fix PR | `ci_guardian`, `knowledge/ci_triage.md` |
 | performance optimization: bubbles, H2D/D2H copies, overlap; kernels to the kernel agent | `perf_engineer` (profile), `architect` (perf_plan), `knowledge/system_perf.md`, `scripts/audit_host_syncs.py`; kernel-level opportunities as kernel hand-offs |
@@ -83,7 +83,7 @@ Where that stands, from sglang's history and issues (October 2026):
 
 ## 5. Orchestration
 
-`inferpilot.js` follows GEAK's rule: control flow is deterministic code; agents are called only for
+In `inferpilot.js`, control flow is deterministic code; agents are called only for
 judgement and for the work, and return structured JSON whose gate fields the script reads.
 
 ```
@@ -102,19 +102,18 @@ win over the user's answers, answers over what the intake inferred; a determinis
 mode needs runs on every definition, so an intake that calls a definition ready cannot start a run
 that lacks its model or its workload.
 
-Kernel back ends (`kernel_backend`): `none` records hand-offs (default), `geak` nests GEAK's single-
-language kernel lane once from the checkout `kernel_backend_dir` (as GEAK's e2e_workflow does),
-`command` runs any other CLI. A gain is integrated by the implementer and judged by InferPilot's own gates;
+Kernel back ends (`kernel_backend`): `none` records hand-offs (default), `command` runs a kernel agent's
+CLI. A gain is integrated by the implementer and judged by InferPilot's own gates;
 a failing back end never blocks a task. An integrated kernel that fails Verify is reverted to the
-functional kernel and handed back once with the failing case as a test (`kernel_backends.md`). The
-`geak` back end is the only place a run uses GEAK;
-outside Claude Code, GEAK's workflow runtime is what executes `inferpilot.js` (other CLIs, the dry run).
+functional kernel and handed back once with the failing case as a test (`kernel_backends.md`).
+Outside Claude Code, InferPilot's own runner (`runtime/`) executes `inferpilot.js`, each role on a
+command-line agent (`claude -p`, the Cursor CLI); the dry run uses it too.
 
-InferPilot runs inside the framework's ROCm container as root, as GEAK does, next to the GPUs and the
+InferPilot runs inside the framework's ROCm container as root, next to the GPUs and the
 framework's Python environment. Each task gets its own container, and what it works on lives in that
 container, apart from every other container's: InferPilot's checkout and the run directories in `/workspace`,
 and the image's own sglang checkout. `scripts/run_docker.sh` takes the user back into an existing container and never
-removes one. As in GEAK's CI and Hyperloom, Claude Code is installed in each container, its first-start
+removes one. Claude Code is installed in each container, its first-start
 questions answered in its config. `/home` is mounted at the same paths, so the user's scripts and files
 are at hand; since the agents run as root with permissions auto-approved and can then read every home,
 credentials included, `MOUNT_HOME=0` leaves it out for a task that must not see them. The keys file,
@@ -205,7 +204,7 @@ See `knowledge/guardrails.md`.
 |---|---|
 | short (~1 month) | shared scripts, roles and workflow orchestration validated on real features (candidate: HiSparse V2-class roadmap items), with agent vs human development time compared; applying existing PRs to raise system performance |
 | mid (~3 months) | feature scanning: a feasibility verdict within one working day of a CUDA-first upstream feature, a gate-passing draft PR within a week for framework/kernel-level gaps; fixing poorly defined problems (unexplained core dumps or accuracy loss) in 2–3 weeks; CI-failure and user-issue entry points |
-| long (~6 months) | Day-0 support with CUDA graphs, MTP/DSpark, EP/CP/DP and PD available together; nightly tests of the main combinations; pure performance work without a new feature; vLLM and ATOM; a closed loop with GEAK e2e_workflow and Hyperloom; a knowledge base that makes every port at least as fast as the last |
+| long (~6 months) | Day-0 support with CUDA graphs, MTP/DSpark, EP/CP/DP and PD available together; nightly tests of the main combinations; pure performance work without a new feature; vLLM and ATOM; a closed loop with Hyperloom and the kernel workflows; a knowledge base that makes every port at least as fast as the last |
 
 Metric definitions (targets are kept in the internal design page): start delay (NV merge → AMD PR,
 framework-level, median); issue report → fix PR by someone else (median) and the share never answered;
@@ -214,10 +213,11 @@ CI pass rate, review rounds).
 
 ## 10. Status
 
-Implemented: the orchestration with five modes and pluggable kernel back ends (none, geak, command), an
+Implemented: the orchestration with five modes and pluggable kernel back ends (none, command), an
 intake from plain-words requests, 17 roles, the migrated knowledge base and templates, the framework's own skills referenced in place with
 ROCm notes,
-the task-collection and audit scripts, a dry run of every control path on GEAK's runtime, offline unit
+the task-collection and audit scripts, InferPilot's own runner for use outside Claude Code (Claude and
+Cursor CLI backends), a dry run of every control path on it, offline unit
 tests. Not yet: shared server control and A/B runners (the director writes a launch script per run), a
 persistent ecosystem-matrix store, queue → run automation, resume for modes other than `feature`,
 framework maps for vLLM and ATOM, and validation of the workflow itself on a real port against the

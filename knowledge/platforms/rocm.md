@@ -2,8 +2,7 @@
 
 Behaviours that differ from the CUDA path and matter when a feature touches scheduling, memory or
 kernels. Verified on gfx950 (MI355X class) with sglang `main` around `b057d5b3f1`; re-check on other
-generations. Hardware tables for kernel work belong to the kernel back end (GEAK keeps them in
-`kernel_workflow/knowledge/amd_instinct.md`).
+generations. Hardware tables for kernel work belong to the kernel back end.
 
 ## Scheduling and synchronization
 
