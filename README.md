@@ -397,6 +397,7 @@ node /path/to/GEAK/interface/runtime/engine/run_workflow.mjs inferpilot.js --age
 | `rescan`, `upstream_repos` | `scan`: `true` scans again although a report from the last 24 hours exists; more repositories to follow upstream, as `[{"name": "vllm", "url": "https://github.com/vllm-project/vllm"}]` |
 | `stop_after` | stop after the named phase of the mode (e.g. `Design`, `Reproduce`); a phase the mode does not run comes back as a question |
 | `resume_from`, `run_dir` | `feature`: `implement` continues a run that stopped at Design once a human approved `design.md` |
+| `auto_approve_design` | `feature`: `true` lets a design the architect flags, or L3 work, go on to Implement instead of waiting at Design, for runs no one watches; the report says no human approved the design. `stop_after` still stops |
 | `review_model` | the reviewer's model, passed with its agent call (GEAK's runtime takes a model per call; elsewhere it depends on the runtime) |
 | `max_fix_rounds`, `max_investigate_rounds`, `max_review_rounds`, `max_work_packages` | budgets |
 | `agent_retries`, `agent_timeout_ms` | an agent call is retried after an error (the retry checks what the failed attempt left), never after a timeout: the timed-out agent may still be running, so it goes on the report's attention list. Default timeout 3 h, 6 h for the verify and performance engineers and the investigator |
@@ -406,7 +407,7 @@ definition; the result of every run that started records the definition it used 
 each field came from (`provenance`) and the intake's `assumptions`.
 
 Human checkpoints: questions from the Intake (`needs_input`); any `stop_after`; L3 tasks and designs
-the architect flags stop at Design (`awaiting_design_review`); a review the reviewer marks `blocked`
+the architect flags stop at Design (`awaiting_design_review`) unless `auto_approve_design` is `true`; a review the reviewer marks `blocked`
 stops before the PR; the PR engineer returns the exact `git push` instead of pushing; issue replies
 are drafts in the run directory. A run that has its run directory ends with a report, whatever its
 status; one that ends at the Intake (questions, a rejection) or before Setup created its directory

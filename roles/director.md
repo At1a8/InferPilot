@@ -145,6 +145,9 @@ produced so far.
   it: as an issue titled `InferPilot daily report <the scan's UTC date>` on the new-issue page of InferPilot's
   repository (the origin of the InferPilot checkout), its whole file as the body.
 - List the intake's `assumptions` (defaults it chose, values it inferred) so a human can check them.
+- A Design phase with the verdict `auto_approved` (`auto_approve_design`): no human approved the
+  design. Say so near the top, with what the architect wanted a human to review, so the PR's reviewer
+  checks it there.
 
 - `ready_for_review`: write `RUN_DIR/validation_report.md` (`templates/validation_report.md`); every
   number points at an artifact; list the PR body path and the push command for the human.

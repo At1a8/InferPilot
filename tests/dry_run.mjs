@@ -220,6 +220,29 @@ const scenarios = [
     const r = await run({ mode: 'feature', task: 't', stop_after: 'Design' });
     check(r.result.status === 'stopped' && r.result.stopped_at === 'Design', `status ${r.result.status}`);
   }],
+  ['feature: auto_approve_design goes on past a design that would wait', async () => {
+    const flagged = {
+      'architect:design': () => ({ design_path: `${RUN}/design.md`, work_packages: [WP('WP1')], gate_ok: true,
+        needs_human_review: true, perf_claim: '+20% output tok/s at equal HBM', summary: 'S4 path decision' }),
+    };
+    const waits = await run({ mode: 'feature', task: 't' }, flagged);
+    check(waits.result.status === 'awaiting_design_review' && !waits.keys.includes('implementer:implement'),
+      `a flagged design waits: ${waits.result.status}`);
+    const r = await run({ mode: 'feature', task: 't', auto_approve_design: true }, flagged);
+    check(r.result.status === 'ready_for_review' && r.keys.includes('implementer:implement'), `status ${r.result.status}`);
+    const d = r.result.phases.find((p) => p.phase === 'Design' && p.verdict === 'auto_approved');
+    check(d && d.summary.includes('the architect asked for a human review') && d.summary.includes('S4 path decision'),
+      `the auto-approval is on record: ${JSON.stringify(d)}`);
+    const l3 = await run({ mode: 'feature', task: 't', auto_approve_design: 'true' }, {
+      'analyst:recon': () => ({ design_path: `${RUN}/design.md`, unmapped: [], level: 'L3', gap_type: 'framework-only' }),
+    });
+    check(l3.result.status === 'ready_for_review'
+      && l3.result.phases.some((p) => p.verdict === 'auto_approved' && p.summary.includes('L3 work')), `L3: ${l3.result.status}`);
+    const stop = await run({ mode: 'feature', task: 't', auto_approve_design: true, stop_after: 'Design' }, flagged);
+    check(stop.result.status === 'stopped' && stop.result.stopped_at === 'Design', `stop_after still stops: ${stop.result.status}`);
+    const plain = await run({ mode: 'feature', task: 't', auto_approve_design: true });
+    check(!plain.result.phases.some((p) => p.verdict === 'auto_approved'), 'a design that needs no review is not marked');
+  }],
   ['feature: resume_from implement after review', async () => {
     const r = await run({ mode: 'feature', task: 't', resume_from: 'implement', run_dir: RUN });
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
