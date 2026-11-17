@@ -29,6 +29,7 @@ kernel 级的工作——调优 InferPilot 为某个特性写的 kernel，或者
 | `kernel_backend` | hand-off 的处理方式 |
 |---|---|
 | `none`（默认） | 连同其材料一起记录在报告里，不运行任何东西 |
+| `geak` | 接入 GEAK 的接口：由 `kernel_backend_dir` 指定的 GEAK checkout 里的 kernel lane 作为外部程序运行；InferPilot 本身不带任何 GEAK 的东西 |
 | `command` | 由 `kernel_backend_command` 指定的 kernel agent 命令行工具运行 |
 
 收益会以工作包的形式回来：由 implementer 集成，再由 InferPilot 自己的门禁评判。后端失败或者没有找到收益，都不会阻塞任务。集成后的 kernel 如果在 Verify 失败，会先退回功能版 kernel，再带着这个失败用例作为新增测试交给后端重跑一次；只有通过了，才会再次集成。
@@ -253,8 +254,9 @@ node runtime/run.mjs inferpilot.js --backend cursor \
 | `client_script` | 你自己的压测脚本，对 `PORT` 上的 server 跑负载，日志写到 `OUT_DIR`；它就是基准，原样运行；`perf` 必填，给了 `workload` 的 feature 也必填 |
 | `container` | 只在 InferPilot 运行在宿主机上时使用：框架所在的容器，通过 `docker exec` 访问 |
 | `exp_root` | 运行目录放在哪里（默认 `<inferpilot_dir>/exp`，git 会忽略它） |
-| `kernel_backend` | `none`（默认）\| `command`：kernel hand-off 交给谁 |
-| `kernel_backend_command` | `command` 后端：带 `{task_dir}`、`{out_dir}`、`{gpu_ids}`、`{budget}` 占位符的 shell 命令 |
+| `kernel_backend` | `none`（默认）\| `geak` \| `command`：kernel hand-off 交给谁 |
+| `kernel_backend_dir` | `geak` 后端：GEAK checkout，其中的 kernel lane 作为外部程序运行 |
+| `kernel_backend_command` | `command` 后端：带 `{task_dir}`、`{out_dir}`、`{gpu_ids}`、`{budget}` 占位符的 shell 命令；用于 `geak` 时替换默认命令 |
 | `kernel_budget` | kernel 后端的优化轮数（默认 6），即命令里的 `{budget}` |
 | `apply_prs` | `perf`：要应用并做 A/B 的候选 PR |
 | `sources`、`since` | `scan`：`ci`、`issues`、`upstream`（默认）以及 `hardware`、`perf` 中的任意几个；时间窗口的起点（默认为上一份日报） |

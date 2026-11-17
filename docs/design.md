@@ -69,7 +69,7 @@ Where that stands, from sglang's history and issues (October 2026):
 | upstream code scan, ecosystem matrix (feature × model × platform: available / unavailable) | `scout` (collect), `scripts/scan_upstream.py`, `knowledge/composability.md` §3 |
 | dispatch: gap type, CUDA dependencies and AMD counterparts, effort, priority by customer workload | `dispatcher`, `knowledge/dispatch.md` |
 | analysis: upstream design, do its assumptions hold on ROCm | `analyst` (recon: code map + assumption table) |
-| implementation (framework / kernel / communication), isolated, feature off = untouched; kernels to the kernel workflow | `architect` + `implementer` (worktree per task), `test_engineer`; kernel hand-offs through `kernel_liaison` to the selected back end (`kernel_backend`: none, command; `knowledge/kernel_backends.md`) |
+| implementation (framework / kernel / communication), isolated, feature off = untouched; kernels to the kernel workflow | `architect` + `implementer` (worktree per task), `test_engineer`; kernel hand-offs through `kernel_liaison` to the selected back end (`kernel_backend`: none, geak, command; `knowledge/kernel_backends.md`) |
 | issue handling: reproduce, locate, minimal fix PR | `issue_triager`, `investigator` (diagnose), `knowledge/issue_triage.md` |
 | CI failures: flaky / infrastructure / regression, culprit, fix PR | `ci_guardian`, `knowledge/ci_triage.md` |
 | performance optimization: bubbles, H2D/D2H copies, overlap; kernels to the kernel agent | `perf_engineer` (profile), `architect` (perf_plan), `knowledge/system_perf.md`, `scripts/audit_host_syncs.py`; kernel-level opportunities as kernel hand-offs |
@@ -102,8 +102,9 @@ win over the user's answers, answers over what the intake inferred; a determinis
 mode needs runs on every definition, so an intake that calls a definition ready cannot start a run
 that lacks its model or its workload.
 
-Kernel back ends (`kernel_backend`): `none` records hand-offs (default), `command` runs a kernel agent's
-CLI. A gain is integrated by the implementer and judged by InferPilot's own gates;
+Kernel back ends (`kernel_backend`): `none` records hand-offs (default), `geak` is an interface to GEAK
+that runs the kernel lane of a GEAK checkout as an outside program (InferPilot ships nothing of GEAK),
+`command` runs a kernel agent's CLI. A gain is integrated by the implementer and judged by InferPilot's own gates;
 a failing back end never blocks a task. An integrated kernel that fails Verify is reverted to the
 functional kernel and handed back once with the failing case as a test (`kernel_backends.md`).
 Outside Claude Code, InferPilot's own runner (`runtime/`) executes `inferpilot.js`, each role on a
@@ -213,7 +214,7 @@ CI pass rate, review rounds).
 
 ## 10. Status
 
-Implemented: the orchestration with five modes and pluggable kernel back ends (none, command), an
+Implemented: the orchestration with five modes and pluggable kernel back ends (none, geak as an outside program, command), an
 intake from plain-words requests, 17 roles, the migrated knowledge base and templates, the framework's own skills referenced in place with
 ROCm notes,
 the task-collection and audit scripts, InferPilot's own runner for use outside Claude Code (Claude and

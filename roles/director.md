@@ -165,8 +165,8 @@ produced so far.
   that would.
 - Always list hand-offs with their status (`recorded`, `integrated`, `no_gain`, `failed`,
   `integration_failed`) and package paths. For kernel hand-offs that were only recorded, give the
-  arguments that would run them later (`kernel_backend=command` with `kernel_backend_command`;
-  `knowledge/kernel_backends.md`). List reply
+  arguments that would run them later (`kernel_backend=geak` with `kernel_backend_dir`, or
+  `kernel_backend=command` with `kernel_backend_command`; `knowledge/kernel_backends.md`). List reply
   drafts. State the timezone of every time.
 - Remove the baseline worktree if there is one (`git -C <framework_dir> worktree remove --force
   RUN_DIR/base`): the run directory keeps what the run found, not a copy of the code.

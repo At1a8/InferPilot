@@ -13,6 +13,7 @@ Verify:
 | Back end | What runs | Needs |
 |---|---|---|
 | `none` (default) | nothing: the hand-off package is written and listed in the report | — |
+| `geak` | an interface to GEAK: the kernel lane of a GEAK checkout, which the kernel liaison runs as an outside program through GEAK's own workflow CLI ("The GEAK interface" below); InferPilot ships nothing of GEAK | `kernel_backend_dir`, the GEAK checkout; `kernel_backend_command` replaces the default command when GEAK's entry points move |
 | `command` | a kernel agent's CLI: the kernel liaison runs `kernel_backend_command` with `{task_dir}`, `{out_dir}`, `{gpu_ids}` and `{budget}` (`kernel_budget` optimization rounds, default 6) substituted and reads the JSON result it writes | `kernel_backend_command` |
 
 Adding a back end: a CLI needs no code (`command`); a native one is one branch in `kernelStage()` of
@@ -38,6 +39,25 @@ command documents one of its own:
   plus `op_spec` `{op_kind, shapes, dtype, math_contract, regime}` and `target_language` (triton | flydsl
   | hip | ck);
 - the back end never writes into the framework: its result comes back as a patch.
+
+### The GEAK interface
+
+`kernel_backend=geak` runs GEAK from its checkout, as any other program; nothing of GEAK is in InferPilot,
+and a run that does not choose it never touches GEAK. The default command:
+
+```
+node <kernel_backend_dir>/interface/runtime/engine/run_workflow.mjs <kernel_backend_dir>/kernel_workflow/kernel_lane.js
+  --args-file {task_dir}/lane_args.json --result-file {out_dir}/result.json
+```
+
+- `lane_args.json`, written by the kernel liaison with the task directory: `kernel_path` (the task
+  directory), `workflow_dir` (`<kernel_backend_dir>/kernel_workflow`), `mode`, `budget` (`kernel_budget`),
+  `gpu_ids`, `task`, `exp_root` (`{out_dir}`), `apply_to_original: "false"`, and `target_language`,
+  `op_spec`, `workload_spec_path` when they are set. GEAK's `kernel_workflow/README.md` is the reference.
+- `result.json`, the lane's return value: `validation_status`, `final_speedup` / `final_weighted` /
+  `final_geomean`, `final_patch`, `eval_dir`.
+- GEAK needs Node 20+ and picks its own agent from its settings (`GEAK_AGENT_PROFILE`,
+  `GEAK_AGENT_BACKEND`). When its entry points move, `kernel_backend_command` replaces the command.
 
 ## 2. Results
 

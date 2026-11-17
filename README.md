@@ -53,6 +53,7 @@ Verify ([`knowledge/kernel_backends.md`](knowledge/kernel_backends.md)):
 | `kernel_backend` | What happens to a hand-off |
 |---|---|
 | `none` (default) | recorded in the report with its package; nothing runs |
+| `geak` | an interface to GEAK: the kernel lane of the GEAK checkout given as `kernel_backend_dir` runs it, as an outside program; InferPilot ships nothing of GEAK |
 | `command` | a kernel agent's CLI, given as `kernel_backend_command`, runs it |
 
 A gain comes back as a work package: the implementer integrates it and InferPilot's own gates judge it. A
@@ -415,8 +416,9 @@ described at the top of `runtime/run.mjs`.
 | `client_script` | your script that runs the workload against `PORT` and writes its logs to `OUT_DIR`: the benchmark, run unchanged; required for `perf` and for a feature with a `workload` |
 | `container` | only when InferPilot runs on the host: the framework's container, reached with `docker exec` |
 | `exp_root` | where run directories go (default `<inferpilot_dir>/exp`, which git ignores) |
-| `kernel_backend` | `none` (default) \| `command`: where kernel hand-offs go |
-| `kernel_backend_command` | `command` back end: shell command with `{task_dir}`, `{out_dir}`, `{gpu_ids}`, `{budget}` |
+| `kernel_backend` | `none` (default) \| `geak` \| `command`: where kernel hand-offs go |
+| `kernel_backend_dir` | `geak` back end: the GEAK checkout whose kernel lane runs as an outside program |
+| `kernel_backend_command` | `command` back end: shell command with `{task_dir}`, `{out_dir}`, `{gpu_ids}`, `{budget}`; for `geak` it replaces the default command |
 | `kernel_budget` | optimization rounds for the kernel back end (default 6), its `{budget}` |
 | `apply_prs` | `perf`: candidate PRs to apply and A/B |
 | `sources`, `since` | `scan`: any of `ci`, `issues`, `upstream` (the default) and `hardware`, `perf`; the start of the window (default: the previous report) |

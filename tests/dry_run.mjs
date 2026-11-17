@@ -633,6 +633,22 @@ const scenarios = [
     check(col && col.ins.backend_result.exit_code === 0, 'the run record reaches collect');
     check(r.result.done.map((d) => d.wp).includes('K-K-WP1'), 'integration package verified by the test engineer');
   }],
+  ['kernel: the geak interface runs a GEAK checkout as an outside program through the liaison', async () => {
+    const r = await run({ mode: 'feature', task: 't', kernel_backend: 'geak', kernel_backend_dir: '/opt/GEAK/', gpu_ids: '3' },
+      withKernelHandoff('decode hot path'));
+    check(r.result.status === 'ready_for_review' && r.result.handoffs[0].status === 'integrated', `status ${r.result.status}`);
+    const pkg = r.calls.find((c) => c.key === 'kernel_liaison:package');
+    check(pkg && pkg.ins.kernel_backend === 'geak' && pkg.ins.kernel_backend_dir === '/opt/GEAK', 'the package phase writes GEAK lane arguments');
+    const runCall = r.calls.find((c) => c.key === 'kernel_liaison:run');
+    check(runCall && runCall.ins.kernel_backend_command === 'node /opt/GEAK/interface/runtime/engine/run_workflow.mjs '
+      + '/opt/GEAK/kernel_workflow/kernel_lane.js --args-file {task_dir}/lane_args.json --result-file {out_dir}/result.json',
+    `the default GEAK command: ${runCall && runCall.ins.kernel_backend_command}`);
+    const own = await run({ mode: 'feature', task: 't', kernel_backend: 'geak', kernel_backend_dir: '/opt/GEAK', kernel_backend_command: 'geak-lane {task_dir} {out_dir}' },
+      withKernelHandoff('decode hot path'));
+    check(own.calls.find((c) => c.key === 'kernel_liaison:run').ins.kernel_backend_command === 'geak-lane {task_dir} {out_dir}', 'a given command replaces it');
+    const plain = await run({ mode: 'feature', task: 't', ...CMD }, withKernelHandoff('decode hot path'));
+    check(plain.calls.every((c) => !c.ins.kernel_backend_dir), 'no GEAK path reaches a role unless geak is chosen');
+  }],
   ['kernel: an integrated kernel that fails Verify goes back to the functional kernel and is retried once with the failing case', async () => {
     const r = await run({ mode: 'feature', task: 't', ...CMD, gpu_ids: '3' }, {
       ...withKernelHandoff('decode hot path'),
@@ -708,7 +724,7 @@ const scenarios = [
   }],
   ['kernel: back-end arguments are checked before anything starts', async () => {
     check(asks(await run({ mode: 'feature', task: 't', kernel_backend: 'triton-magic' }), 'kernel_backend'), 'unknown back end asked');
-    check(asks(await run({ mode: 'feature', task: 't', kernel_backend: 'geak' }), 'kernel_backend'), 'geak is no back end');
+    check(asks(await run({ mode: 'feature', task: 't', kernel_backend: 'geak' }), 'kernel_backend_dir'), 'geak without its checkout asked');
     check(asks(await run({ mode: 'feature', task: 't', kernel_backend: 'command' }), 'kernel_backend_command'), 'command without a command asked');
   }],
   ['review: requested changes are implemented, verified, measured and reviewed again', async () => {
