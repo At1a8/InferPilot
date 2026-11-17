@@ -17,7 +17,7 @@ Which of these gates a task needs, how its acceptance criteria are written and w
 | G2 accuracy | short-context quality is unchanged | GSM8K, all 1319 questions, once per arm (`scripts/eval_accuracy.sh`); more suites or runs only when the task asks |
 | G3 long context | the feature's own data path is exercised and correct | needle-in-a-haystack: single and multi-needle |
 | G4 stability | no crash / hang / collapse under capacity pressure | many long prompts at high concurrency |
-| G5 performance | the claimed benefit exists, guards hold | see `perf_evaluation.md` |
+| G5 performance | the claimed benefit exists on the task's workload; the guards the task names hold | see `perf_evaluation.md`; a held-out point, more guards and sweeps only when the task asks (`held_out`, `guards`, `sweep`) |
 
 Notes per gate:
 

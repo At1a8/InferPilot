@@ -108,10 +108,12 @@ practice. Artifacts live in the run's working directory; the templates are in `.
 
 ### 6. Performance
 
-- Follow `perf_evaluation.md`: equal memory budget, workloads where the feature should matter plus guard
-  workloads, repeated runs, admission and out-of-memory checks under decode-heavy load.
+- Follow `perf_evaluation.md`: equal memory budget, the task's workload plus the guard workloads its goal
+  names (more only with `guards`), repeated runs, admission and out-of-memory checks under decode-heavy
+  load.
 - **Artifact:** performance section of `validation_report.md`.
-- **Gate:** the claimed benefit reproduces; no guard workload regresses beyond the noise band.
+- **Gate:** the claimed benefit reproduces; no guard workload the task names regresses beyond the noise
+  band.
 
 ### 7. Review — an independent read before the PR
 

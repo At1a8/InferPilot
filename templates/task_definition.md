@@ -24,6 +24,7 @@ of it.
 | `stop_after` | stop after this phase | optional | optional | optional | optional | optional |
 | `resume_from`, `run_dir` | `implement`: continue after a human approved the design | optional | | | | |
 | `auto_approve_design` | default `true`: a design the architect flags goes on to Implement and the report says so; `false`: it waits for a human review | optional | | | | |
+| `held_out`, `guards`, `sweep` | performance checks beyond the task's workload and goal, each off by default: a held-out operating point the gain must also hold at, guard workloads of InferPilot's choosing, points beyond the workload's own | optional | optional | | optional | |
 | `kernel_backend` with `kernel_backend_dir` or `kernel_backend_command` | where kernel hand-offs go | optional | optional | optional | optional | |
 
 `inferpilot.js` checks the required fields (and a back end's own field) for every definition; one that
@@ -41,7 +42,7 @@ launched and measured the way the user runs the model, not the way an agent gues
   neither `HIP_VISIBLE_DEVICES` nor `PYTHONPATH` itself.
 - **`client_script`** runs the fixed workload against `PORT` and writes its logs to `OUT_DIR`. It is the
   benchmark: InferPilot runs it unchanged and never edits it. If it reads `CONCURRENCY` (a
-  space-separated list), the held-out point can be measured at half the concurrency.
+  space-separated list), the held-out point (`held_out`) can be measured at half the concurrency.
 - **Accuracy** needs no client of the user's: InferPilot's `scripts/eval_accuracy.sh` measures GSM8K on
   all 1319 questions, once, by default; a task that needs other suites or more runs says so in `goal`.
 

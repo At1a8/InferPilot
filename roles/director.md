@@ -89,8 +89,8 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
      the recorded spread.
    - `perf`, and a feature with a workload: the `client_script` and `workload` are the task's fixed
      benchmark. Record them in `RUN_DIR/run.json` as given; every later measurement runs them unchanged.
-     Record the held-out operating point next to them (`perf_evaluation.md` §3: half the concurrency,
-     when the client reads `CONCURRENCY`), before any number is seen.
+     With `held_out` on, record the held-out operating point next to them (`perf_evaluation.md` §3:
+     half the concurrency, when the client reads `CONCURRENCY`), before any number is seen.
    - `issue`, `ci`: prepare the environment the reproduction needs; run a baseline only if the task
      needs one now. Report `baseline_status: "skip"` with the reason otherwise.
 5. **Artifact:** the environment and baseline sections of `RUN_DIR/experiment_ledger.md`
@@ -117,8 +117,11 @@ Return:
    acceptance criteria per gate with a named suite and a threshold relative to the same-pattern
    baseline, non-goals, unsupported combinations (each with a startup rejection), constraints, time-box.
 4. `perf_claim`: the measurable performance benefit the feature promises (workload, budget, metric,
-   size), or empty when it claims none; guard workloads are always run. A claim also names its held-out
-   operating point (`perf_evaluation.md` §3), fixed here with the workload.
+   size), or empty when it claims none. Performance is measured on the task's workload and the guard
+   workloads its `goal` names, nothing more by default: with `guards` on, add guard workloads of your
+   own (`perf_evaluation.md` §2); with `sweep` on, points beyond the workload's own (more concurrencies
+   or lengths, `acceptance.md` §1); with `held_out` on, the claim also names its held-out operating
+   point (`perf_evaluation.md` §3), fixed here with the workload.
 5. Accuracy is the task's: GSM8K 1319 once per arm unless the task asks for more. A lossy feature adds
    no set of its own; its risks say that GSM8K may not show the loss (`validation_doctrine.md`, G2).
    Defaults the task leaves to be measured follow `perf_evaluation.md` §3 ("Choose a feature's defaults").
