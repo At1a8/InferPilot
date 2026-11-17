@@ -14,7 +14,7 @@ Which of these gates a task needs, how its acceptance criteria are written and w
 |---|---|---|
 | G0 feature off | the change is inert when disabled | baseline suites on the feature branch with the switch off |
 | G1 unit / oracle | each new kernel or data structure does what it claims | standalone tests vs a reference implementation, each able to fail: on the parent commit when the change alters behaviour, on a copy of the change broken in one way when it keeps behaviour (`reward_hacks.md` T1) |
-| G2 accuracy | short-context quality is unchanged | GSM8K, all 1319 questions, once per arm (`scripts/eval_accuracy.sh`); more suites or runs only when the task asks |
+| G2 accuracy | quality stays within its budget | GSM8K, all 1319 questions, once per arm (`scripts/eval_accuracy.sh`); a lossy feature adds gpqa_diamond (198) and simple_qa (4326, LLM judge); a set that misses its budget is reproduced at most twice and judged on the median |
 | G3 long context | the feature's own data path is exercised and correct | needle-in-a-haystack: single and multi-needle |
 | G4 stability | no crash / hang / collapse under capacity pressure | many long prompts at high concurrency |
 | G5 performance | the claimed benefit exists on the task's workload; the guards the task names hold | see `perf_evaluation.md`; a held-out point, more guards and sweeps only when the task asks (`held_out`, `guards`, `sweep`) |
@@ -24,13 +24,13 @@ Notes per gate:
 - **G2 does not prove a long-context feature works.** Short prompts may never engage it (HiSparse V2
   only admits requests longer than its 5120-token reservation; GSM8K prompts are ~1k tokens). G2 is a
   regression check for the non-feature path; G3 must exercise the feature path.
-- **GSM8K may not show a lossy feature's loss; say so, and add a set only when the task asks.** Relaxed
-  speculative verification (FLy) left gsm8k within ±0.4pp at every setting while simple_qa lost up to
-  3pp (`feature_skills/fly-dspark`). G2 is still the task's accuracy check (GSM8K 1319 once per arm by
-  default): the spec's risks and the report name the gap, and the report proposes a knowledge-recall set
-  for the user to add. When the task asks for one, record the feature's own engagement number per dataset
-  (accept length) and compare with ≥3 baseline runs: one simple_qa run is good to about ±0.5pp, and a
-  0.6pp loss took 5 runs against 8 baselines to separate from the noise (two runs had called it noise).
+- **A lossy feature runs three sets in G2: gsm8k, gpqa_diamond and simple_qa.** GSM8K alone may not
+  show the loss: relaxed speculative verification (FLy) left gsm8k within ±0.4pp at every setting while
+  simple_qa lost up to 3pp (`feature_skills/fly-dspark`). Each set runs once per arm, and the feature
+  passes when it is at most 1 point below the baseline on each; record its own engagement number per set
+  (accept length). A set that misses is reproduced at most twice, three results in all, and judged on
+  their median, every run reported: one simple_qa run is good to about ±0.5pp, and a 0.6pp loss took 5
+  runs against 8 baselines to separate from the noise (two runs had called it noise).
 - **G3/G4 must be sized so the feature engages.** For a memory-tier feature that means total context
   well above the device pool (force eviction/demotion), and concurrency high enough that several engaged
   requests decode in the same batch. Log the engagement (e.g. demotion counters) and attach it.

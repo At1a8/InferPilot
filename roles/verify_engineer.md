@@ -19,8 +19,10 @@ Inputs: `extra_gates` (mode gates such as `issue_repro` or `failing_test`), `rou
 2. Run the gates the spec or the plan names, in this order, each against the baseline **in the same
    scheduling pattern**:
    - G0 feature off; G2 accuracy: GSM8K on all 1319 questions, once per arm, with
-     `<inferpilot_dir>/scripts/eval_accuracy.sh` (other suites or more runs only when `goal` or the
-     acceptance matrix asks); G3 long context sized so the feature engages; G4 stability under capacity
+     `<inferpilot_dir>/scripts/eval_accuracy.sh`, and for a lossy feature gpqa_diamond and simple_qa
+     too, each at most 1 point below the baseline; a set that misses is reproduced at most twice and
+     judged on the median of its runs (other suites or more runs only when `goal` or the acceptance
+     matrix asks); G3 long context sized so the feature engages; G4 stability under capacity
      pressure. G3/G4 at two or more concurrencies, at least 4 runs each (6 when an intermittent failure
      is being judged), fixed seeds, prefix cache flushed between runs.
    - Composability gates for every dimension the task touches (acceptance length for speculative

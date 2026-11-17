@@ -54,21 +54,25 @@ outputs never triggered it.
   is fixed with the workload at Setup and measured like the claim; the
   change must still win beyond the noise band there, if not by as much. A gain that vanishes is fitted
   to the benchmark (`reward_hacks.md` P7), not evidence.
-- **Choose a feature's defaults on throughput, at one point.** When the task leaves a feature's knobs
-  to be measured, run each candidate once against the baseline at one concurrency of the task's
-  workload (the lowest, unless the task names one), with the baseline on the other lane when there are
-  two, and rank by total tok/s. No accuracy set is added to rank them: the task's accuracy check (GSM8K
-  1319 by default, `validation_doctrine.md` G2) runs on the chosen candidate, then on the next-fastest
-  if it fails, before the defaults are frozen. Tuning runs are not evidence for the claim, and the
-  held-out point stays out of them.
+- **A feature runs at its source's configuration; tuning is opt-in (`tune`).** By default its knobs
+  take the values the target PR or design uses (vLLM's FLy: window 2, threshold 0.3, top-k 3), and the
+  task is to make the feature work there: accuracy within its budget, and a gain in throughput and in
+  the feature's own metric (accept length for speculative decoding). With `tune` on, choose the
+  defaults on throughput, at one point: run each candidate once against the baseline at one
+  concurrency of the task's workload (the lowest, unless the task names one), with the baseline on the
+  other lane when there are two, and rank by total tok/s. No accuracy set is added to rank them: the
+  task's accuracy check (`validation_doctrine.md` G2) runs on the chosen candidate, then on the
+  next-fastest if it fails, before the defaults are frozen. Tuning runs are not evidence for the claim,
+  and the held-out point stays out of them.
 - Check the measurement entries of [`reward_hacks.md`](reward_hacks.md) (P) on both arms before
   reporting any number.
 - Fresh server per configuration; same container, commit family, GPU set and launch flags apart from
   the feature switch and the budget.
 - Flush the prefix cache between runs; use random-token or seed-fixed distinct prompts so prefix hits do
   not differ between arms.
-- One warm-up, then ≥2 timed runs per arm (more when the spread is wide). Interleave arms when the box
-  is shared.
+- One warm-up, then one A/B round: one timed run per arm, back to back on the same GPUs. When the round
+  shows no gain, reproduce it at most twice and judge on the median of the rounds, reporting every
+  round. Interleave arms when the box is shared.
 - Metrics: elapsed time, output tok/s, total tok/s, p50 and max request latency, the concurrency the
   scheduler actually reached (`#running-req` in decode logs), and the feature's own counters (e.g.
   demotions, rows swapped in).

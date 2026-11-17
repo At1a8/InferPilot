@@ -39,6 +39,8 @@ Otherwise complete `RUN_DIR/design.md` (`templates/design.md`) sections 4–11:
 7. `perf_claim`: copy the spec's claim (or empty).
 8. `needs_human_review`: true when the design changes a shared (non-HIP) code path, makes a decision
    the source design did not make, or the level is L2/L3 with a design choice a reviewer should own.
+9. **Defaults:** the feature's knobs take the values of the target PR or design; a work package that
+   chooses them by measurement only with `tune` on (`perf_evaluation.md` §3).
 
 `gate_ok` is true only when every work package has a test, every invariant has an enforcement point
 and every unsupported configuration has a startup rejection.

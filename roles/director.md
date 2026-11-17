@@ -83,7 +83,10 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
      launch in a fresh container, which compiles kernels and is slower, is not measured.
    - `feature`, `perf`: accuracy is GSM8K on all 1319 questions, once
      (`API_URL=http://127.0.0.1:<port>/v1 TAG=baseline RESULT_ROOT=RUN_DIR/accuracy
-     bash <inferpilot_dir>/scripts/eval_accuracy.sh`); other suites or more runs only when `goal` asks.
+     bash <inferpilot_dir>/scripts/eval_accuracy.sh`), and for a lossy feature (`acceptance.md` §1.1)
+     gpqa_diamond and simple_qa as well (`eval_accuracy.sh gsm8k gpqa_diamond simple_qa`; simple_qa needs
+     the LLM judge, which the script probes before any inference); other suites or more runs only when
+     `goal` asks.
      Performance is the task's `client_script` with `OUT_DIR=RUN_DIR/bench/<tag>`, at least twice, and
      the spread recorded (`validation_doctrine.md`). The baseline passes when repeat runs agree within
      the recorded spread.
@@ -122,9 +125,11 @@ Return:
    own (`perf_evaluation.md` §2); with `sweep` on, points beyond the workload's own (more concurrencies
    or lengths, `acceptance.md` §1); with `held_out` on, the claim also names its held-out operating
    point (`perf_evaluation.md` §3), fixed here with the workload.
-5. Accuracy is the task's: GSM8K 1319 once per arm unless the task asks for more. A lossy feature adds
-   no set of its own; its risks say that GSM8K may not show the loss (`validation_doctrine.md`, G2).
-   Defaults the task leaves to be measured follow `perf_evaluation.md` §3 ("Choose a feature's defaults").
+5. Accuracy: GSM8K 1319 once per arm; a lossy feature (`acceptance.md` §1.1) adds gpqa_diamond and
+   simple_qa, each at most 1 point below the baseline (`validation_doctrine.md`, G2). Performance: one
+   A/B round on the task's workload (`perf_evaluation.md` §3). A result that misses is reproduced at
+   most twice and judged on the median. The feature's knobs take the values of the target PR or design;
+   only with `tune` on are they chosen by measurement (`perf_evaluation.md` §3).
 
 Return:
 
