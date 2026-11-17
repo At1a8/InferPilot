@@ -42,14 +42,16 @@ belongs to a host user, and the rules below are about those.
   editable mode from the image's checkout (`/sgl-workspace/sglang` in `rocm/sgl-dev`): a plain
   `python -m sglang.launch_server` runs whatever is checked out there.
 - That checkout has the whole history and is InferPilot's default `framework_dir`, and each task works in it
-  on its own branch. The image leaves it detached at the commit it built, with the build's changes to
-  the packaging files (`python/pyproject.toml` becomes the ROCm one); setup (README step 3) discards
-  those, checks out main and pulls, once per container. Never `pip install -e` from it afterwards: its
-  `pyproject.toml` is upstream's, which would pull CUDA packages into the ROCm environment.
+  on its own branch. The image leaves it detached at the commit it built, or on main, with the build's
+  changes to the packaging files (`python/pyproject.toml` becomes the ROCm one). README step 3 puts it on
+  the current main every time it runs: uncommitted changes, those included, are saved as a patch beside
+  the checkout and discarded, then main is checked out and pulled; not while a run in the container is
+  going, and never in a container started from a given image. Never `pip install -e` from it afterwards:
+  its `pyproject.toml` is upstream's, which would pull CUDA packages into the ROCm environment.
 - The checkout is the container's, and a task's branch and commits stay in it; the PR engineer writes
   them to `RUN_DIR/patches`, so the change can leave the container with the run directory (README step
   5). Run directories are the container's too, in `<inferpilot_dir>/exp`. A task starts only from a clean
-  checkout: changes left there stop Setup and are never discarded.
+  checkout: changes left there stop Setup, which never discards them itself.
 - Run every server, test and benchmark from the tree under test, first on `PYTHONPATH` (sglang:
   `PYTHONPATH=<tree>/python`), and check it once per launch script:
   `python -c "import sglang; print(sglang.__file__)"` must print a path inside that tree. The feature

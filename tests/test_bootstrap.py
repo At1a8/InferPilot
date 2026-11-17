@@ -6,11 +6,13 @@ linked outside temporary directories (commands are mocked).
 import io
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -670,45 +672,63 @@ class FrameworkTest(unittest.TestCase):
             with mock.patch.object(bs, "IMAGE_SGLANG", os.path.join(d, "no-image-checkout")), Quiet():
                 self.assertEqual(bs.ensure_framework(S(d))[0], "skipped")
 
-    def image_framework(self, d, branch="", changed="", built="f3532057e1", **env):
-        """ensure_framework on a fake image checkout; returns (result, the git commands it ran)."""
+    def image_framework(self, d, branch="", status="", heads=("f3532057e1 2026-11-05",), saved=True, run="", **env):
+        """ensure_framework on a fake image checkout; returns (result, the git commands it ran, the checkout,
+        the patches it saved the changes to)."""
         image = Path(d) / "sgl-workspace" / "sglang"
         (image / ".git").mkdir(parents=True, exist_ok=True)
-        answers = {"log": (0, "f3532057e1 2026-11-05", ""), "rev-parse": (0, "false", ""),
-                   "remote": (0, "https://github.com/sgl-project/sglang.git", ""),
-                   "symbolic-ref": (0, branch, "") if branch else (1, "", ""), "diff": (0, changed, "")}
-        with mock.patch.object(bs, "IMAGE_SGLANG", str(image)), mock.patch.object(bs, "installed_commit", return_value=built), \
-                mock.patch.object(bs, "_out", side_effect=lambda cmd: answers[cmd[3]]), \
-                mock.patch.object(bs, "_run", return_value=OK) as run, Quiet():
+        heads = list(heads)
+        answers = {"rev-parse": (0, "false", ""), "remote": (0, "https://github.com/sgl-project/sglang.git", ""),
+                   "symbolic-ref": (0, branch, "") if branch else (1, "", ""), "status": (0, status, "")}
+        out = lambda cmd: (0, heads.pop(0) if len(heads) > 1 else heads[0], "") if cmd[3] == "log" else answers[cmd[3]]
+        with mock.patch.object(bs, "IMAGE_SGLANG", str(image)), mock.patch.object(bs, "active_run_here", return_value=run), \
+                mock.patch.object(bs, "_save_diff", return_value=saved) as save, mock.patch.object(bs, "_out", side_effect=out), \
+                mock.patch.object(bs, "_run", return_value=OK) as git, Quiet():
             res = bs.ensure_framework(S(d, **env))
             self.assertNotIn("framework_dir=", bs.next_steps(bs.settings({"PWD": d, "HOME": d}), {}, {"api": True},
                                                              path_env="/usr/bin"))
-        return res, [c.args[0][3:] for c in run.call_args_list], str(image)
+        return res, [c.args[0][3:] for c in git.call_args_list], str(image), [c.args[1] for c in save.call_args_list]
 
-    def test_the_image_checkout_on_a_branch_is_kept(self):
+    def test_a_clean_image_checkout_on_main_is_pulled(self):
         with tempfile.TemporaryDirectory() as d:
-            res, ran, image = self.image_framework(d, branch="main")
-            self.assertEqual((res, ran), (("kept", "%s on main" % image), []))
+            res, ran, image, saved = self.image_framework(d, branch="main")
+            self.assertEqual((res, ran, saved),
+                             (("kept", "%s on main (f3532057e1 2026-11-05)" % image), [["pull", "-q", "--ff-only"]], []))
+            res, ran, image, _ = self.image_framework(d, branch="main",
+                                                      heads=("f3532057e1 2026-11-05",) * 2 + ("0a1b2c3d4e 2026-11-17",))
+            self.assertEqual((res, ran), (("updated", "%s on main (0a1b2c3d4e 2026-11-17)" % image), [["pull", "-q", "--ff-only"]]))
 
     def test_the_image_checkout_as_the_image_left_it_goes_on_main(self):
         with tempfile.TemporaryDirectory() as d:
-            res, ran, image = self.image_framework(d, changed="python/pyproject.toml\npython/sglang/kernels/aot/pyproject_rocm.toml")
+            res, ran, image, saved = self.image_framework(
+                d, status=" M python/pyproject.toml\n M python/sglang/kernels/aot/pyproject_rocm.toml")
             self.assertEqual(res[0], "updated")
-            self.assertEqual(ran, [["checkout", "HEAD", "--", "python/pyproject.toml", "python/sglang/kernels/aot/pyproject_rocm.toml"],
-                                   ["checkout", "main"], ["pull", "--ff-only"]])
+            self.assertEqual(ran, [["reset", "-q", "--hard", "HEAD"], ["checkout", "-q", "main"], ["pull", "-q", "--ff-only"]])
+            self.assertEqual(len(saved), 1)
+            self.assertRegex(saved[0], r"^%s-discarded-\d{8}T\d{6}Z\.patch$" % re.escape(image))
+
+    def test_any_uncommitted_change_is_saved_then_discarded(self):
+        with tempfile.TemporaryDirectory() as d:
+            res, ran, _, saved = self.image_framework(d, branch="inferpilot/fly",
+                                                      status=" M python/sglang/srt/server_args.py\nA  python/sglang/srt/fly.py")
+            self.assertEqual((res[0], len(saved)), ("updated", 1))
+            self.assertEqual(ran, [["reset", "-q", "--hard", "HEAD"], ["checkout", "-q", "main"], ["pull", "-q", "--ff-only"]])
+
+    def test_nothing_is_discarded_unless_saved_first(self):
+        with tempfile.TemporaryDirectory() as d:
+            res, ran, _, _ = self.image_framework(d, branch="main", status=" M python/sglang/srt/server_args.py", saved=False)
+            self.assertEqual((res, ran), (("failed", "git diff HEAD"), []))
+
+    def test_the_image_checkout_is_left_alone_while_a_run_here_is_going(self):
+        with tempfile.TemporaryDirectory() as d:
+            run = "/workspace/inferpilot/exp/feature_x_20261117-010203Z"
+            res, ran, _, saved = self.image_framework(d, branch="inferpilot/x", status=" M a.py", run=run)
+            self.assertEqual((res, ran, saved), (("skipped", "in use by %s" % run), [], []))
 
     def test_the_checkout_of_a_given_image_is_kept_as_the_image_has_it(self):
         with tempfile.TemporaryDirectory() as d:
-            res, ran, image = self.image_framework(d, changed="python/pyproject.toml\npython/sglang/kernels/aot/pyproject_rocm.toml",
-                                                   INFERPILOT_IMAGE_PINNED="1")
-            self.assertEqual((res, ran), (("kept", image), []))
-
-    def test_the_image_checkout_is_left_alone_unless_as_the_image_left_it(self):
-        with tempfile.TemporaryDirectory() as d:
-            res, ran, _ = self.image_framework(d, changed="python/pyproject.toml\npython/sglang/srt/server_args.py")
-            self.assertEqual((res[0], ran), ("skipped", []))
-            res, ran, _ = self.image_framework(d, built="0123456789")
-            self.assertEqual((res[0], ran), ("skipped", []))
+            res, ran, image, saved = self.image_framework(d, status=" M python/pyproject.toml", INFERPILOT_IMAGE_PINNED="1")
+            self.assertEqual((res, ran, saved), (("kept", image), [], []))
 
     def test_existing_checkout_is_kept_as_it_is(self):
         with tempfile.TemporaryDirectory() as d:
@@ -740,6 +760,122 @@ class FrameworkTest(unittest.TestCase):
                 self.assertEqual(bs.ensure_framework(S(d, INFERPILOT_FRAMEWORK_DIR=str(fw)))[0], "created")
             run.assert_called_once_with(["git", "clone", "--filter=blob:none", bs.DEFAULT_FRAMEWORK_REPO, str(fw)])
             back.assert_called_once_with(str(fw))
+
+
+@unittest.skipUnless(shutil.which("git"), "needs git")
+class ImageCheckoutTest(unittest.TestCase):
+    """follow_main against real git: an image checkout cloned from a local upstream, with work in it."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        patch = mock.patch.dict(os.environ, {
+            "GIT_CONFIG_GLOBAL": str(self.root / ".gitconfig"), "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
+            "INFERPILOT_LOCK_FILE": str(self.root / "run.lock")})
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.upstream, self.image = self.root / "upstream.git", self.root / "sgl-workspace" / "sglang"
+        self.git(self.root, "init", "-q", "--bare", "-b", "main", str(self.upstream))
+        self.git(self.root, "clone", "-q", str(self.upstream), str(self.image))
+        (self.image / "server_args.py").write_text("a = 1\n")
+        (self.image / "pyproject.toml").write_text("[project]\n")
+        self.commit(self.image, "one")
+        self.git(self.image, "push", "-q", "-u", "origin", "HEAD:main")
+
+    def git(self, cwd, *args):
+        return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(self, cwd, msg):
+        self.git(cwd, "add", "-A")
+        self.git(cwd, "commit", "-q", "-m", msg)
+
+    def upstream_moves_on(self):
+        other = self.root / "other"
+        self.git(self.root, "clone", "-q", str(self.upstream), str(other))
+        (other / "upstream.py").write_text("u = 1\n")
+        self.commit(other, "upstream")
+        self.git(other, "push", "-q", "origin", "HEAD:main")
+        return self.git(other, "rev-parse", "HEAD")
+
+    def follow_main(self):
+        out = io.StringIO()
+        with mock.patch.object(bs, "IMAGE_SGLANG", str(self.image)), redirect_stdout(out), redirect_stderr(io.StringIO()):
+            res = bs.follow_main(str(self.image))
+        self.said = out.getvalue()
+        return res
+
+    def test_work_of_every_kind_is_saved_and_the_checkout_goes_on_the_current_main(self):
+        self.git(self.image, "checkout", "-q", "-b", "inferpilot/fly")
+        (self.image / "fly.py").write_text("w = 2\n")
+        self.commit(self.image, "committed work")
+        (self.image / "server_args.py").write_text("a = 2\n")
+        (self.image / "pyproject.toml").unlink()
+        (self.image / "staged.py").write_text("s = 1\n")
+        self.git(self.image, "add", "staged.py")
+        (self.image / "scratch.hip").write_text("untracked\n")
+        latest = self.upstream_moves_on()
+
+        self.assertEqual(self.follow_main()[0], "updated")
+        self.assertIn("left inferpilot/fly; discarded the changes to 3 file(s) (pyproject.toml, server_args.py, staged.py)",
+                      self.said)
+        self.assertEqual(self.git(self.image, "symbolic-ref", "--short", "HEAD"), "main")
+        self.assertEqual(self.git(self.image, "rev-parse", "HEAD"), latest)
+        self.assertEqual(self.git(self.image, "status", "--porcelain", "--untracked-files=no"), "")
+        self.assertTrue((self.image / "scratch.hip").exists())
+        self.assertEqual(self.git(self.image, "log", "-1", "--format=%s", "inferpilot/fly"), "committed work")
+        self.assertEqual(self.follow_main()[0], "kept")
+
+        patches = list((self.root / "sgl-workspace").glob("sglang-discarded-*.patch"))
+        self.assertEqual(len(patches), 1)
+        self.git(self.image, "checkout", "-q", "inferpilot/fly")
+        self.git(self.image, "apply", "--index", str(patches[0]))
+        self.assertEqual((self.image / "server_args.py").read_text(), "a = 2\n")
+        self.assertFalse((self.image / "pyproject.toml").exists())
+        self.assertEqual((self.image / "staged.py").read_text(), "s = 1\n")
+
+    def test_the_checkout_as_the_image_left_it_goes_on_the_current_main(self):
+        self.git(self.image, "checkout", "-q", "--detach")
+        (self.image / "pyproject.toml").write_text("[project]\nname = 'rocm'\n")
+        latest = self.upstream_moves_on()
+        self.assertEqual(self.follow_main()[0], "updated")
+        self.assertEqual(self.git(self.image, "symbolic-ref", "--short", "HEAD"), "main")
+        self.assertEqual(self.git(self.image, "rev-parse", "HEAD"), latest)
+        self.assertEqual((self.image / "pyproject.toml").read_text(), "[project]\n")
+
+    def test_a_run_here_keeps_its_checkout_as_it_is(self):
+        run = self.root / "exp" / "feature_x"
+        run.mkdir(parents=True)
+        (self.root / "run.lock").write_text(json.dumps({"run_dir": str(run), "started": time.time() - 60}))
+        self.git(self.image, "checkout", "-q", "-b", "inferpilot/x")
+        (self.image / "server_args.py").write_text("a = 3\n")
+        self.assertEqual(self.follow_main(), ("skipped", "in use by %s" % run))
+        self.assertEqual(self.git(self.image, "symbolic-ref", "--short", "HEAD"), "inferpilot/x")
+        self.assertEqual((self.image / "server_args.py").read_text(), "a = 3\n")
+
+
+class ActiveRunTest(unittest.TestCase):
+    def test_only_a_run_of_this_container_that_is_still_going_counts(self):
+        with tempfile.TemporaryDirectory() as d:
+            lock, run = Path(d) / "run.lock", Path(d) / "exp" / "feature_x"
+            run.mkdir(parents=True)
+            self.assertEqual(bs.active_run_here(str(lock)), "")
+            for free in ("", "not json", "[]", "{}"):
+                lock.write_text(free)
+                self.assertEqual(bs.active_run_here(str(lock)), "", free)
+            started = time.time() - 60
+            lock.write_text(json.dumps({"run_dir": str(run), "started": started}))
+            self.assertEqual(bs.active_run_here(str(lock)), str(run))
+            report = run / "run_report.md"
+            report.write_text("where an earlier stop of this run got to")
+            os.utime(report, (started - 600, started - 600))
+            self.assertEqual(bs.active_run_here(str(lock)), str(run))
+            os.utime(report, None)
+            self.assertEqual(bs.active_run_here(str(lock)), "")
+            lock.write_text(json.dumps({"run_dir": str(Path(d) / "another-container"), "started": started}))
+            self.assertEqual(bs.active_run_here(str(lock)), "")
 
 
 class EvalscopeTest(unittest.TestCase):

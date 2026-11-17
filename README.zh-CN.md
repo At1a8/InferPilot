@@ -67,7 +67,7 @@ kernel 级的工作——调优 InferPilot 为某个特性写的 kernel，或者
 
 InferPilot 以 root 身份运行在 ROCm 容器里：Claude Code、InferPilot、git 以及框架的服务和测试都在容器里运行，紧挨着 GPU 和框架的 Python 环境。每个任务用一个自己的容器，任务用到的一切都在这个容器里：`/workspace` 里的 InferPilot checkout 和它的运行目录，以及镜像自带的 sglang `/sgl-workspace/sglang`，任务在它上面开自己的分支修改。容器之间不共享这些，所以互不干扰；它们随所在的容器保留，容器删除时一起删除。Claude Code 也装在每个容器里，并预先回答好首次启动的问题。容器只从你宿主机的 home 里拿一个文件：保存 key 的 `~/.inferpilot_env`，以只读方式挂载；home 的其余部分不挂进来，因为 agent 以 root 身份、自动批准权限运行，而 home 里有它们用不着的凭据。
 
-每一步都可以重复执行：先检查，保留已有的，只补缺的；再次运行 run_docker.sh 会回到原来的容器。命令里的 `检查 || 动作` 表示只有检查不通过时才执行动作：在新机器上每个动作都会执行，再运行一次则全部跳过。除了第 3 步丢弃镜像构建对 `/sgl-workspace/sglang` 打包文件的改动，不会删除、覆盖或重新克隆任何东西。
+每一步都可以重复执行：先检查，保留已有的，只补缺的；再次运行 run_docker.sh 会回到原来的容器。命令里的 `检查 || 动作` 表示只有检查不通过时才执行动作：在新机器上每个动作都会执行，再运行一次则全部跳过。除了第 3 步把 `/sgl-workspace/sglang` 里未提交的改动存成补丁后丢弃（见其中“框架”一行），不会删除、覆盖或重新克隆任何东西。
 
 ### 宿主机需要什么
 
@@ -126,7 +126,7 @@ claude --version    # 装在这个容器里的 Claude Code
 | git | 信任宿主机挂载目录里的 checkout，它们属于你而不是 root（`safe.directory '*'`） |
 | git 身份 | root 以 key 文件（或环境变量）里的 `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` 提交，所以不会出现作者为 `root@<本机主机名>` 的提交；两者都没有时，它会提示，不会自己编一个 |
 | shell | 在 root 的 `~/.bashrc` 里设置 `PYTHONDONTWRITEBYTECODE=1`（宿主机挂载目录里的 checkout 不会出现 root 所有的 `__pycache__`）和 `DISABLE_AUTOUPDATER=1`，并加载 key 文件，之后才放进去的也会加载；设置了 `LLM_GATEWAY_KEY` 且没有 `ANTHROPIC_BASE_URL` 时，让 Claude Code 走 AMD LLM 网关 |
-| 框架 | 镜像里的 `/sgl-workspace/sglang` 如果还是镜像留下的样子（detached 在构建时的 commit 上，打包文件被改成了 ROCm 版），就把它切到 main：丢弃这些打包改动，然后 `git checkout main`、`git pull`。之后不要在这里 `pip install -e`：这时它的 `pyproject.toml` 是上游默认的版本，会装进 CUDA 的包。已经在某个分支上、或者有其他改动的 checkout 原样保留，用指定的 `IMAGE` 启动的容器里的 checkout 也原样保留（任务的 Setup 会因为它的打包改动停下，直到你自己处理）；用 `--framework-dir` 可以改用宿主机上的 checkout（已有的原样使用，缺失时带完整历史克隆） |
+| 框架 | 镜像里的 `/sgl-workspace/sglang` 每次都切到最新的 main：未提交的改动（镜像构建对打包文件的修改、任务留下的、你自己的）先存成 `/sgl-workspace/sglang-discarded-<UTC 时间>.patch`，再用 `git reset --hard` 丢弃，然后 `git checkout main`、`git pull --ff-only`。分支（包括任务的 `inferpilot/<slug>`）和未跟踪的文件都保留；在改动原来所在的分支上 `git apply --index <补丁>` 就能拿回改动。之后不要在这里 `pip install -e`：这时它的 `pyproject.toml` 是上游默认的版本，会装进 CUDA 的包。本容器里有 InferPilot 运行正在进行时（运行锁记录的运行目录就在本容器里、而且还没写出报告）原样保留，用指定的 `IMAGE` 启动的容器里的 checkout 也原样保留（任务的 Setup 会因为镜像的打包改动停下，直到你自己处理）；用 `--framework-dir` 可以改用宿主机上的 checkout（已有的原样使用，缺失时带完整历史克隆） |
 | evalscope | 供 `scripts/eval_accuracy.sh` 使用：装在单独的 venv `/opt/evalscope` 里（约一分钟、1.2 GB），并链接为 `/usr/local/bin/evalscope`。不装进镜像的 Python，否则会把 `datasets` 和 `fsspec` 降到比 sglang 自带的更低的版本；`PATH` 上已经有 `evalscope` 时保留原样 |
 | 检查 | GPU、sglang、evalscope、API 访问、`GITHUB_TOKEN`，key 文件里设置的也算（只检测） |
 

@@ -44,10 +44,11 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
    sglang the container's `/sgl-workspace/sglang`, which the image installs sglang from in editable
    mode, so what runs is what is checked out there (`env_hygiene.md`, *The code under test*).
    - It must be clean: `git -C <framework_dir> status --porcelain --untracked-files=no` prints nothing.
-     Changes there (a task that died, someone's edits) stop the run: return `baseline_status: "fail"`
-     with the files in `baseline`, and never stash, reset or discard them. Still detached at the image's commit with only `pyproject*.toml`
-     changed means README step 3 has not run in this container: say so, unless `$INFERPILOT_IMAGE_PINNED`
-     is `1`: the container was started from a given image, and step 3 leaves its checkout as that image has it.
+     Changes there (a task that died, someone's edits, the image's own `pyproject*.toml` edits) stop the run:
+     return `baseline_status: "fail"` with the files in `baseline`, and never stash, reset or discard them yourself.
+     Say that README step 3 (`python3 -B -m inferpilot.bootstrap`) saves them as a patch beside the checkout
+     and discards them, unless `$INFERPILOT_IMAGE_PINNED` is `1`: the container was started from a given image,
+     and step 3 leaves its checkout as that image has it.
    - `git -C <framework_dir> fetch origin`, then `git -C <framework_dir> checkout -b inferpilot/<slug> <base>`
      (the base commit the task names, default `origin/main`); on a retry or a resume, check out the
      branch that is already there.

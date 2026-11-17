@@ -115,8 +115,8 @@ not need.
 Every step can be run again: it checks first, keeps what is already there and adds only what is
 missing, and run_docker.sh, run again, takes you back into the container. In the commands,
 `check || action` runs the action only when the check fails: on a new machine every action runs, and
-a second run skips them. Nothing is deleted, overwritten or re-cloned, apart from the image build's
-packaging changes in `/sgl-workspace/sglang` (step 3).
+a second run skips them. Nothing is deleted, overwritten or re-cloned, apart from the uncommitted
+changes in `/sgl-workspace/sglang`, which step 3 saves as a patch and then discards (its framework row).
 
 ### What the host needs
 
@@ -244,7 +244,7 @@ claude --version    # installed in this container
 | git | trusts checkouts on host mounts, which belong to you, not root (`safe.directory '*'`) |
 | git identity | root commits as `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` from the keys file (or the environment), so no commit reads `root@<this host>`; with neither it says so and sets nothing |
 | shell | root's `~/.bashrc` gets `PYTHONDONTWRITEBYTECODE=1` (no root-owned `__pycache__` in checkouts on host mounts) and `DISABLE_AUTOUPDATER=1`, and loads the keys file, also one put in place later; with `LLM_GATEWAY_KEY` and no `ANTHROPIC_BASE_URL`, it points Claude Code at the AMD LLM gateway |
-| framework | the image's `/sgl-workspace/sglang`, still as the image left it (detached at the commit it built, its packaging files rewritten for ROCm), is put on main: the packaging changes discarded, then `git checkout main` and `git pull`. Never `pip install -e` from it afterwards: its `pyproject.toml` is then upstream's, which would pull CUDA packages. A checkout already on a branch, or with other changes, is left as it is, and so is the checkout in a container started from a given `IMAGE` (a task's Setup then stops on its packaging changes until you deal with them); `--framework-dir` names a host checkout instead (used as it is, or cloned with its whole history when missing) |
+| framework | the image's `/sgl-workspace/sglang` is put on the current main every time: its uncommitted changes (the image build's packaging edits, a task's leftovers, your own) are saved as `/sgl-workspace/sglang-discarded-<UTC time>.patch` and discarded with `git reset --hard`, then `git checkout main` and `git pull --ff-only`. Branches, a task's `inferpilot/<slug>` among them, and untracked files stay; `git apply --index <patch>` on the branch the changes were on gives them back. Never `pip install -e` from it afterwards: its `pyproject.toml` is then upstream's, which would pull CUDA packages. It is left as it is while an InferPilot run in this container is going (the run lock names a run whose directory is here and has no report yet), and in a container started from a given `IMAGE` (a task's Setup then stops on the image's packaging changes until you deal with them); `--framework-dir` names a host checkout instead (used as it is, or cloned with its whole history when missing) |
 | evalscope | for `scripts/eval_accuracy.sh`: installed in a venv of its own, `/opt/evalscope` (about a minute and 1.2 GB), and linked as `/usr/local/bin/evalscope`. Not in the image's Python, where it would downgrade `datasets` and `fsspec` below what sglang ships with; an `evalscope` already on `PATH` is kept |
 | checks | GPUs, sglang, evalscope, API access, `GITHUB_TOKEN`, counting what the keys file sets (detect only) |
 
