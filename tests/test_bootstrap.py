@@ -305,11 +305,15 @@ class RunDockerTest(unittest.TestCase):
                       self.stderr)
         self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", image="rocm/sgl-dev:old", PATH=self.daily()),
                          (0, enter))
-        self.assertNotIn("WARNING", self.stderr)
+        self.assertIn("WARNING: container tester already exists (rocm/sgl-dev:old): you enter it, not a new container;",
+                      self.stderr)
+        self.assertNotIn("another image version", self.stderr)
         self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", image="rocm/sgl-dev:new", PATH=self.daily()),
                          (0, enter))
-        self.assertIn("WARNING: container tester runs rocm/sgl-dev:old, not rocm/sgl-dev:new: you enter a container of "
-                      "another image version", self.stderr)
+        self.assertIn("WARNING: container tester already exists: you enter it, not a new container, and it runs "
+                      "rocm/sgl-dev:old, not rocm/sgl-dev:new: another image version than the one you asked for",
+                      self.stderr)
+        self.assertEqual(self.stderr.count("WARNING"), 1, "one warning says both")
 
     def test_a_new_container_from_the_daily_image_starts_on_the_newest_main(self):
         main = ("exec -w /sgl-workspace/sglang tester bash -c git checkout -- . && git checkout -q main && git pull -q"

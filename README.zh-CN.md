@@ -105,7 +105,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/script
 | | 不指定 `IMAGE` | 指定了 `IMAGE` |
 |---|---|---|
 | 没有名为 `NAME` 的容器 | 用最新的每日镜像新建容器；在它的 `/sgl-workspace/sglang` 里执行 `git checkout -- .`、`git checkout main`、`git pull` | 用 `IMAGE` 新建容器；代码保持镜像原样 |
-| 已有名为 `NAME` 的容器 | 进入这个容器，代码保持离开时的样子，并警告它不是新建的容器 | 进入这个容器，代码保持离开时的样子；它的镜像不是 `IMAGE` 时给出警告 |
+| 已有名为 `NAME` 的容器 | 进入这个容器，代码保持离开时的样子，并警告它不是新建的容器 | 进入这个容器，代码保持离开时的样子，并警告它不是新建的容器；它的镜像不是 `IMAGE` 时，同时警告它不是指定的镜像版本 |
 
 - **镜像。** 任务要在最新的 sglang 上测试，所以启动脚本会检测宿主机 GPU，并选择匹配的最新每日 ROCm 10 `rocm/sgl-dev` 镜像：gfx942（MI300/MI308/MI325）使用 `rocm10-mi30x`，gfx950（MI350/MI355）使用 `rocm10-mi35x`；这个 GPU 没有 ROCm 10 镜像时（Docker Hub 上没有，或 Docker Hub 连不上时本机没有），依次改用 ROCm 7.2.4、7.2.0。检测不了时会警告并回退到 MI35x（[`scripts/latest_image.py`](scripts/latest_image.py)，例如 `v0.5.23-rocm10-mi35x-20261103`；同一页面上的 `miles` 镜像用于强化学习，会被跳过）。每天的新镜像在第一次使用时拉取，约 43 GB。`IMAGE_VARIANT` 可以覆盖自动检测和回退，例如 `IMAGE_VARIANT=rocm724-mi30x`；要固定镜像，设置 `IMAGE=rocm/sgl-dev:<tag>`，这时 `/sgl-workspace/sglang` 保持镜像原样。容器一直使用它启动时的镜像：回到一个镜像已经不是最新每日镜像的容器时，run_docker.sh 会提醒；在里面跑任务，会在 Setup 阶段、创建任何东西之前停下来，问你是否仍在这个镜像上运行（`image_ok`），除非任务指定的就是这个镜像（`image`）。scan 会照常进行，并在日报里写明所用的镜像。
 - **测的是哪份代码。** 镜像提供 PyTorch、aiter、sgl-kernel，以及它自带的 sglang checkout `/sgl-workspace/sglang`（带完整历史），sglang 就是以 editable 方式从这里安装的：这里检出的是什么，运行的就是什么，所以不需要另外克隆或指定 sglang。用每日镜像新建的容器一开始就在当前的 main 上：run_docker.sh 会丢弃镜像构建在这里的改动、切到 main 并拉取。之后不要在这里 `pip install -e`：这时它的 `pyproject.toml` 是上游默认的版本，会装进 CUDA 的包。用指定的 `IMAGE` 新建的容器、以及再次进入的容器，代码都保持原样。每个任务都在它上面、从最新的 main 开自己的分支，Setup 会先 fetch。在基础 commit 上跑的 baseline 和 scan 读的当前 main，用的是同一个仓库在运行目录下的 worktree（每个约 0.2 GB）。运行记录会写下镜像、镜像里 sglang 的版本和任务的基础 commit。

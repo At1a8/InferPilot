@@ -191,7 +191,7 @@ What it does depends on whether a container named `NAME` exists and whether `IMA
 | | no `IMAGE` | `IMAGE` given |
 |---|---|---|
 | no container `NAME` | a new container from the newest daily image; in its `/sgl-workspace/sglang`: `git checkout -- .`, `git checkout main`, `git pull` | a new container from `IMAGE`; its code as the image has it |
-| container `NAME` exists | you enter it, its code as it was left, with a warning that it is not a new container | you enter it, its code as it was left; a warning when it runs another image than `IMAGE` |
+| container `NAME` exists | you enter it, its code as it was left, with a warning that it is not a new container | you enter it, its code as it was left, with a warning that it is not a new container and, when it runs another image than `IMAGE`, not that image version either |
 
 - **Image.** Tasks test the newest sglang, so the launcher detects the host GPU and starts from the newest
   matching daily ROCm 10 `rocm/sgl-dev` build: `rocm10-mi30x` for gfx942 (MI300/MI308/MI325) and

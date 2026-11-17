@@ -21,8 +21,9 @@
 #                      at its first use; then in its sglang:      its sglang as the image has it
 #                      git checkout -- . && git checkout main
 #                      && git pull
-#   container NAME     entered, its code as it was left; warns    entered, its code as it was left; warns when
-#                      that it is not a new container             it runs another image than IMAGE
+#   container NAME     entered, its code as it was left; warns    entered, its code as it was left; warns that
+#                      that it is not a new container             it is not a new container, and when it runs
+#                                                                 another image than IMAGE, that too
 #
 # A container named NAME is never removed: run again, this starts it if it was stopped and opens a shell in it,
 # /workspace as it was left, and says so when its image is no longer the newest daily one (tasks there stop at
@@ -102,14 +103,18 @@ newest_local() {  # the newest local daily image of a variant
 }
 
 if OLD=$($SUDO docker inspect -f '{{.Config.Image}}' "$NAME" 2>/dev/null); then
+  RM="(or remove this one first: \`${SUDO:+sudo }docker rm -f $NAME\`, which deletes its /workspace)"
   if [ -z "$IMAGE" ]; then
     warn "container $NAME already exists ($OLD): you enter it, not a new container, so its" \
       "/sgl-workspace/sglang is as it was left, not put on the newest main. For a new one: NAME=<another name>" \
-      "$0 (or remove this one first: \`${SUDO:+sudo }docker rm -f $NAME\`, which deletes its /workspace)"
+      "$0 $RM"
   elif [ "$IMAGE" != "$OLD" ]; then
-    warn "container $NAME runs $OLD, not $IMAGE: you enter a container of another image version than the" \
-      "one you asked for, its code as it was left. For $IMAGE: IMAGE=$IMAGE NAME=<another name> $0 (or" \
-      "remove this one first: \`${SUDO:+sudo }docker rm -f $NAME\`, which deletes its /workspace)"
+    warn "container $NAME already exists: you enter it, not a new container, and it runs $OLD, not $IMAGE:" \
+      "another image version than the one you asked for. Its code is as it was left. For a new one from" \
+      "$IMAGE: IMAGE=$IMAGE NAME=<another name> $0 $RM"
+  else
+    warn "container $NAME already exists ($OLD): you enter it, not a new container; its code is as it was" \
+      "left. For a new one from $IMAGE: IMAGE=$IMAGE NAME=<another name> $0 $RM"
   fi
   echo "run_docker.sh: back into container $NAME ($OLD), /workspace as it was left" >&2
   CMP=$(latest_image --compare "$OLD" 2>/dev/null)
