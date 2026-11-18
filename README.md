@@ -295,8 +295,13 @@ the arguments of [Running it](#running-it):
 | With | Set up in step 3 | Start | Give the task |
 |---|---|---|---|
 | Claude Code | `--claude` (or no option) | `IS_SANDBOX=1 claude --dangerously-skip-permissions` | one sentence in its input box |
-| the Cursor CLI | `--cursor`, `agent login` | `node runtime/run.mjs inferpilot.js --backend cursor ...` | the arguments in a JSON file |
+| the Cursor CLI's chat | `--cursor`, `agent login` | `cd /workspace/inferpilot && agent`, which starts the runner | one sentence in its input box |
 | the Cursor app | `--cursor`, `agent login` | its agent starts the runner | one sentence in the app's chat |
+| the runner, from a shell | `--cursor`, `agent login` | `node runtime/run.mjs inferpilot.js --backend cursor ...` | the arguments in a JSON file |
+
+Claude Code and the Cursor agents (the CLI's chat, the app) drive the run for you: they put its questions
+to you and start what comes next, as the result's `next` says ([Running it](#running-it)); from a shell,
+the runner's log lists the same steps for you to take.
 
 #### With Claude Code
 
@@ -399,9 +404,11 @@ numbers each phase along the mode's route, with what the run took so far
 (`=== PHASE 2/3 [##-]: Dispatch ===  so far: 1 agent call, 410k tokens, 4 min`), names each agent call and
 every tool call in it as it starts (a command, a file read or written), adds a still-working line after five
 quiet minutes, ends each call with its time and tokens (as the CLI counts them, cache included) and the run
-with one summary line; `exp/scan.result.json` holds the run's end: the `status`, and the report of a
-run that stopped for you (`needs_input`, `awaiting_design_review`, `blocked`), which says why. Add what you
-decide to the file (`"answers": {...}`) and start the runner again.
+with one summary line; `exp/scan.result.json` holds the run's end: its `status`, and `next`, what comes
+after it. The log ends with the same steps (`=== NEXT: ...`): the questions only you answer, each run that
+can start next with its arguments written next to yours (`exp/scan.start-1.json` for the scan's first
+task, `exp/<name>.again.json` for the same task again, its answers to fill in) and the command that starts
+it, and what only you do.
 
 **From the Cursor app.** Its agent does not run `inferpilot.js` either: it writes the task to a file,
 starts the runner in the background and reads the run as it goes, as [`AGENTS.md`](AGENTS.md) at the top of
@@ -552,6 +559,12 @@ stops before the PR; the PR engineer returns the exact `git push` instead of pus
 are drafts in the run directory. A run that has its run directory ends with a report, whatever its
 status; one that ends at the Intake (questions, a rejection) or before Setup created its directory
 (`busy`) returns only its result.
+
+Every result ends with `next`, what comes after the run, the same for Claude Code, a Cursor agent and the
+runner's log: `say`, a sentence for you; `ask`, questions only you answer; `rerun_with`, the arguments to
+set before running it again with the rest unchanged (answers merge with those already given); `start`, new
+runs it offers, a scan's top tasks with their arguments; `user`, what only you do: the push, a reply to
+post, the daily report to share.
 
 **One task per machine.** A run takes the machine before it creates anything — a lock in `/dev/shm`,
 which every container started with `--ipc=host` shares with the host and no other machine sees — and

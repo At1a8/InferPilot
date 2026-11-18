@@ -1,7 +1,7 @@
 export const meta = {
   name: 'inferpilot',
   description: 'InferPilot: the framework agent for open-source LLM inference frameworks on AMD GPUs (sglang first). It turns one task (an upstream feature to bring to AMD, an AMD user issue, a red AMD CI job, a system-level performance gap) into a verified, reviewable pull request: correct first (independent unit gates, G0-G4 against a same-pattern baseline, an investigation loop with controls), then fast (equal-budget G5), within the community rules of knowledge/guardrails.md. mode=scan writes the day\'s report on the framework (the AMD CI on main, user issues by priority, upstream changes AMD needs to follow) and ranks the tasks in it, changing no code. InferPilot never pushes and never posts upstream: it prepares the branch, the PR body and the reply drafts for a human; the one thing it posts is the knowledge a run proved, as a pull request to its own repository for a human to merge; a scan\'s daily report is a local file for a human to share.',
-  whenToUse: 'Pass args.inferpilot_dir (absolute path of the InferPilot checkout, required) and the task, either as args.request (the user\'s words, any language; the Intake phase turns it into a task definition) or as the task-definition fields of templates/task_definition.md: args.mode (feature | issue | ci | perf | scan), args.task (the upstream PR or design, issue URL, CI job or tracker cluster, or performance goal), args.framework_dir (the framework checkout; for sglang the image\'s /sgl-workspace/sglang by default), args.model_path (required for feature and perf), args.workload (required for perf: the fixed benchmark every measurement uses), args.server_script (required for feature and perf: a script that starts the baseline server; InferPilot sets PORT, HIP_VISIBLE_DEVICES and PYTHONPATH, and EXTRA_ARGS carries the feature flags) and args.client_script (required for perf, and for a feature with a workload: runs the fixed workload against PORT and writes to OUT_DIR), args.goal (what done means), args.framework (default sglang), args.platform, args.gpu_ids, args.container, args.apply_prs (perf), args.sources, args.since, args.upstream_repos and args.rescan (scan: a report from the last 24 hours makes the run ask before scanning again), args.image (the image a task must run on; by default the newest daily one, and another stops Setup to ask) and args.image_ok, args.bisect_fixed (issue: when the reporter\'s code fails and main does not, find the commit that fixed it), args.stop_after (a phase title), args.resume_from="implement" with args.run_dir (feature: continue after a human approved design.md), args.auto_approve_design (feature, default true: a design the architect flags, or L3 work, goes on to Implement and the report says no human approved it; false makes it wait at Design for a human; stop_after still stops), args.held_out, args.guards and args.sweep (performance checks beyond the workload and goal of the task, each off by default: a held-out operating point the gain must also hold at, guard workloads InferPilot picks, and points beyond those of the workload), args.tune (feature, default false: the feature runs at the configuration of the target PR or design; true lets a work package choose its knobs by measurement), args.kernel_backend (none | geak | command) with args.kernel_backend_dir (geak: the GEAK checkout, whose kernel lane runs as an outside program) or args.kernel_backend_command (command; for geak it replaces the default command), args.kernel_budget ({budget} in the command). A definition that lacks something its mode needs returns status=needs_input with questions and starts nothing: answer them and run again with the same args plus args.answers ({"<field>": <value>}). Operator settings: args.exp_root, args.review_model (the reviewer\'s model, where the runtime takes one per call), args.max_fix_rounds, args.max_investigate_rounds, args.max_review_rounds, args.max_work_packages, args.agent_retries, args.agent_timeout_ms.',
+  whenToUse: 'Pass args.inferpilot_dir (absolute path of the InferPilot checkout, required) and the task, either as args.request (the user\'s words, any language; the Intake phase turns it into a task definition) or as the task-definition fields of templates/task_definition.md: args.mode (feature | issue | ci | perf | scan), args.task (the upstream PR or design, issue URL, CI job or tracker cluster, or performance goal), args.framework_dir (the framework checkout; for sglang the image\'s /sgl-workspace/sglang by default), args.model_path (required for feature and perf), args.workload (required for perf: the fixed benchmark every measurement uses), args.server_script (required for feature and perf: a script that starts the baseline server; InferPilot sets PORT, HIP_VISIBLE_DEVICES and PYTHONPATH, and EXTRA_ARGS carries the feature flags) and args.client_script (required for perf, and for a feature with a workload: runs the fixed workload against PORT and writes to OUT_DIR), args.goal (what done means), args.framework (default sglang), args.platform, args.gpu_ids, args.container, args.apply_prs (perf), args.sources, args.since, args.upstream_repos and args.rescan (scan: a report from the last 24 hours makes the run ask before scanning again), args.image (the image a task must run on; by default the newest daily one, and another stops Setup to ask) and args.image_ok, args.bisect_fixed (issue: when the reporter\'s code fails and main does not, find the commit that fixed it), args.stop_after (a phase title), args.resume_from="implement" with args.run_dir (feature: continue after a human approved design.md), args.auto_approve_design (feature, default true: a design the architect flags, or L3 work, goes on to Implement and the report says no human approved it; false makes it wait at Design for a human; stop_after still stops), args.held_out, args.guards and args.sweep (performance checks beyond the workload and goal of the task, each off by default: a held-out operating point the gain must also hold at, guard workloads InferPilot picks, and points beyond those of the workload), args.tune (feature, default false: the feature runs at the configuration of the target PR or design; true lets a work package choose its knobs by measurement), args.kernel_backend (none | geak | command) with args.kernel_backend_dir (geak: the GEAK checkout, whose kernel lane runs as an outside program) or args.kernel_backend_command (command; for geak it replaces the default command), args.kernel_budget ({budget} in the command). A definition that lacks something its mode needs returns status=needs_input and starts nothing. Every result ends with next, what comes after the run: tell the user next.say; put each question of next.ask to the user, never answering one yourself, then run inferpilot.js again with the same args plus next.rerun_with, its answers filled in from the user\'s (they merge with the answers already given); offer each of next.start (a scan\'s top tasks) as a new run with its args, and start the one the user picks; next.user is what only the user does (the push, a reply to post, the daily report to share). Operator settings: args.exp_root, args.review_model (the reviewer\'s model, where the runtime takes one per call), args.max_fix_rounds, args.max_investigate_rounds, args.max_review_rounds, args.max_work_packages, args.agent_retries, args.agent_timeout_ms.',
   phases: [
     { title: 'Intake', detail: 'intake: turn a request, or a definition with gaps, into a complete task definition; questions when something is missing' },
     { title: 'Setup', detail: 'director: run dir, the task\'s branch in the framework checkout, the server and client scripts, baseline (not in scan)' },
@@ -248,12 +248,14 @@ async function intakeStage(raw) {
   };
   if (res && res.status === 'rejected') {
     const why = res.reason || res.summary || 'outside what InferPilot does';
-    return stopped('rejected', why, { reason: why });
+    return stopped('rejected', why, { reason: why, next: { say: `Outside what InferPilot does: ${why}` } });
   }
   if (questions.length) {
     return stopped('needs_input', `missing: ${questions.map((q) => q.field).join(', ')}`, {
       questions,
-      next: 'answer the questions, then run inferpilot.js again with the same arguments plus answers={"<field>": <value>}',
+      // null until the user answers: a run that still has it asks again rather than taking a placeholder
+      next: { say: 'InferPilot needs these answers before it starts; nothing ran.', ask: questions,
+        rerun_with: { answers: Object.fromEntries(questions.map((q) => [q.field, null])) } },
     });
   }
   return {
@@ -622,7 +624,7 @@ const COLLECT = S({ lock: { type: 'string', enum: ['acquired', 'busy', 'skipped'
   counts: obj, recent: obj, notes: str }, ['lock', 'run_dir', 'candidates_path']);
 const DISPATCH = S({
   queue_path: str,
-  top: arr(S({ rank: num, task: str, type: str, level: str, priority: str, source: str }, ['task'])),
+  top: arr(S({ rank: num, task: str, type: str, level: str, priority: str, source: str, task_def: obj }, ['task'])),
   matrix_changes: num,
 }, ['queue_path', 'top']);
 
@@ -655,9 +657,50 @@ async function finish(status, at) {
     }
   }
   R.run_dir = C.run_dir;
+  R.next = nextSteps(status, at);
   log(`[inferpilot] mode=${MODE} status=${status}${at ? ` at ${at}` : ''}` +
     `${R.report_path ? ` report=${R.report_path}` : ''}${R.attention.length ? ` attention=${R.attention.length}` : ''}`);
   return R;
+}
+
+// What comes after a run, the same for whoever runs InferPilot for the user (Claude Code, a Cursor agent,
+// the runner's log): next.say tells the user; next.ask holds questions only the user answers;
+// next.rerun_with sets arguments for running inferpilot.js again with the others unchanged (answers merge
+// with those already given); next.start offers new runs, each with its arguments; next.user is what only
+// the user does.
+const ENDED = { blocked: 'Blocked', handed_off: 'Handed over', triaged: 'Triaged', fixed_on_main: 'Fixed on main already',
+  not_reproduced: 'Not reproduced', diagnosed: 'Diagnosed, with no fix to make here', no_gain: 'No measured gain to keep',
+  dropped: 'Dropped, with no measured gain' };
+function nextSteps(status, at) {
+  const report = R.report_path ? ` The report: ${R.report_path}.` : '';
+  const last = (R.phases[R.phases.length - 1] || {}).summary || '';
+  const out = { say: `${ENDED[status] || `Ended ${status}`} at ${at}${last ? `: ${last}` : ''}.${report}` };
+  if (status === 'blocked') out.say += ' Fix what it names, or change the task, then run it again.';
+  if (status === 'ready_for_review') {
+    out.say = `A pull request is ready on ${(R.pr && R.pr.branch) || C.branch}: read it, then push it yourself.${report}`;
+  } else if (status === 'queued') {
+    out.say = `${R.queue.length} ${R.queue.length === 1 ? 'task is' : 'tasks are'} ranked in ${C.queue_path}; each starts as a run of its own.${report}`;
+    out.start = R.queue.filter((t) => t.task_def && t.task_def.mode).slice(0, 5)
+      .map((t) => ({ rank: t.rank, task: t.task, args: { inferpilot_dir: INFERPILOT, ...t.task_def } }));
+  } else if (status === 'awaiting_design_review' || (status === 'stopped' && at === 'Design' && MODE === 'feature')) {
+    out.say = `The design waits for you: ${C.design_path || `${C.run_dir}/design.md`}. To go on with it, run again from `
+      + `Implement in this run directory; to change it, say how and run the task again.${report}`;
+    out.rerun_with = { resume_from: 'implement', run_dir: C.run_dir, stop_after: '' };
+  } else if (status === 'stopped') {
+    out.say = `Stopped after ${at}, as stop_after asked. To go on, run again without stop_after: the task starts over.${report}`;
+    out.rerun_with = { stop_after: '' };
+  } else if (status === 'busy') {
+    out.say = `${last || 'Another InferPilot task holds this machine'}. Run again when it ends; python3 scripts/run_lock.py status names it.`;
+    out.rerun_with = {};
+  }
+  const user = [];
+  if (status === 'ready_for_review' && R.pr) user.push(R.pr.push_command || `push ${R.pr.branch}: the report has the command`);
+  if (status === 'queued') user.push(`share ${C.run_dir}/daily_report.md as a new issue in InferPilot's repository (README step 5)`);
+  if (R.reply_draft_path) user.push(`post the reply draft on the issue: ${R.reply_draft_path}`);
+  if (R.knowledge_pr) user.push(`review the curator's pull request to InferPilot: ${R.knowledge_pr}`);
+  for (const a of R.attention) user.push(`clean up before anything else runs there: ${a.issue}${a.worktree ? ` (${a.worktree})` : ''}`);
+  if (user.length) out.user = user;
+  return out;
 }
 
 // A rollback that did not leave the worktree clean is recorded for a human; returns the note suffix.
@@ -691,12 +734,12 @@ function askImage(img) {
     resumed_elsewhere: `this run was set up on ${want}, and this container runs ${cur}`,
   }[img.verdict] || `this container runs ${cur}, not ${want}`;
   note('Setup', 'needs_input', why);
-  Object.assign(R, { status: 'needs_input', stopped_at: 'Setup', image: img,
-    questions: [{ field: 'image_ok', question: `${why}. Run on ${cur} anyway?`,
-      why: 'tasks test the newest sglang unless you name an image; a run on another image tests something else',
-      options: [true, false] }],
-    next: `to run on ${want}, start a container from it (README step 2) and run inferpilot.js there; to run here anyway, ` +
-      'run inferpilot.js again with the same arguments plus answers={"image_ok": true}' });
+  const questions = [{ field: 'image_ok', question: `${why}. Run on ${cur} anyway?`,
+    why: 'tasks test the newest sglang unless you name an image; a run on another image tests something else',
+    options: [true, false] }];
+  Object.assign(R, { status: 'needs_input', stopped_at: 'Setup', image: img, questions,
+    next: { say: `${why}. To run here anyway, answer image_ok; to run on ${want}, start a container from it (README step 2) and run there.`,
+      ask: questions, rerun_with: { answers: { image_ok: true } } } });
   log(`[inferpilot] mode=${MODE} status=needs_input: ${why}`);
   return R;
 }
@@ -1298,10 +1341,11 @@ async function runScan() {
     const when = r.at || 'the last 24 hours';
     const where = r.url || r.run_dir || 'this container';
     note('Collect', 'needs_input', `a scan from ${when} exists: ${where}`);
-    Object.assign(R, { status: 'needs_input', stopped_at: 'Collect', recent: r,
-      questions: [{ field: 'rescan', question: `A daily report from ${when} exists (${where}). Scan again anyway?`,
-        why: 'one report a day is enough: another scan repeats the same API calls and agent work', options: [true, false] }],
-      next: 'to scan anyway, run inferpilot.js again with the same arguments plus answers={"rescan": true}' });
+    const questions = [{ field: 'rescan', question: `A daily report from ${when} exists (${where}). Scan again anyway?`,
+      why: 'one report a day is enough: another scan repeats the same API calls and agent work', options: [true, false] }];
+    Object.assign(R, { status: 'needs_input', stopped_at: 'Collect', recent: r, questions,
+      next: { say: `A daily report from ${when} exists (${where}); scan again only if a fresh one is needed.`,
+        ask: questions, rerun_with: { answers: { rescan: true } } } });
     log(`[inferpilot] mode=scan status=needs_input: a scan from ${when} exists (${where})`);
     return R;
   }

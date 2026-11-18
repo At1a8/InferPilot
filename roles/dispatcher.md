@@ -40,10 +40,12 @@ Input: `candidates_path`.
    count the rest. `python3 <inferpilot_dir>/scripts/daily_report.py check RUN_DIR/daily_report.md` must pass
    (exit 3: remove the lines it lists; exit 4: shorten).
 
-Return:
+Return, each top entry with the `task_def` that starts it, as in `queue.json` (the run's `next` offers
+them as runs to start):
 
 ```json
 {"queue_path": "/abs/RUN_DIR/task_queue.md",
- "top": [{"rank": 1, "task": "GLM-5.3 crashes with --dcp-size 8 on MI300X", "type": "bug", "level": "L1", "priority": "P0", "source": "issues"}],
+ "top": [{"rank": 1, "task": "GLM-5.3 crashes with --dcp-size 8 on MI300X", "type": "bug", "level": "L1", "priority": "P0", "source": "issues",
+          "task_def": {"mode": "issue", "task": "https://github.com/sgl-project/sglang/issues/<n>", "framework_dir": "/sgl-workspace/sglang"}}],
  "matrix_changes": 0}
 ```

@@ -35,7 +35,8 @@ export const DEFAULTS = {
   'ci_guardian:bisect': () => ({ culprit: 'deadbeef', confirmed: true, work_packages: [WP('WP1')], evidence: 'fails at culprit, passes at parent' }),
   'ci_guardian:bisect_fix': () => ({ fix_commit: 'feedface', confirmed: true, evidence: 'fails at parent, passes at fix' }),
   'scout:collect': () => ({ lock: 'acquired', run_dir: RUN, candidates_path: `${RUN}/candidates.json`, counts: { upstream: 3, issues: 32, ci: 76, hardware: 5 } }),
-  'dispatcher:dispatch': () => ({ queue_path: `${RUN}/task_queue.md`, top: [{ rank: 1, task: 'GLM-5.3 DCP crash', type: 'bug', level: 'L1', priority: 'P0', source: 'issues' }], matrix_changes: 2 }),
+  'dispatcher:dispatch': () => ({ queue_path: `${RUN}/task_queue.md`, top: [{ rank: 1, task: 'GLM-5.3 DCP crash', type: 'bug', level: 'L1', priority: 'P0', source: 'issues',
+    task_def: { mode: 'issue', task: 'https://github.com/sgl-project/sglang/issues/38849', framework_dir: '/sgl-workspace/sglang' } }], matrix_changes: 2 }),
   'kernel_liaison:package': (ins) => ({ task_dir: `${RUN}/kernel/${ins.handoff.id}/task`, mode: 'optimize', target_language: 'hip',
     op_spec: { op_kind: 'swap_in' }, task: ins.handoff.reason === 'FAIL' ? 'FAIL on purpose' : 'decode, M <= 64' }),
   'kernel_liaison:run': (ins) => (ins.handoff.reason === 'FAIL'

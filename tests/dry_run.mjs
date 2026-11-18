@@ -19,6 +19,7 @@ const CONTRACTS = new Map();
 // Every phase a run entered, and the modes each scenario prefix's runs ran, as they happened.
 const ENTERED = new Set();
 const MODES_RUN = new Map();
+const RESULTS = []; // every run's result, with the scenario it ran in
 let SCENARIO = '';
 const CALL_SITE = /call\(['"]([a-z_]+)['"], ['"]([a-z_]+)['"]/g;
 // A role doc's section for one PHASE (## PHASE=bisect, not ## PHASE=bisect_fix), '' when it has none.
@@ -75,6 +76,7 @@ async function run(args, overrides) {
   const result = await rt.runScript(SCRIPT, { inferpilot_dir: INFERPILOT, framework_dir: '/tmp/sglang', agent_retries: 1, ...modeDefaults, ...args }, 0);
   const prefix = SCENARIO.split(':')[0];
   if (result && result.mode) MODES_RUN.set(prefix, (MODES_RUN.get(prefix) || new Set()).add(result.mode));
+  RESULTS.push({ scenario: SCENARIO, result });
   return { result, phases, heads, route, calls, keys: calls.map((c) => c.key), summary: rt.summary() };
 }
 
@@ -897,7 +899,9 @@ const scenarios = [
       : { status: 'needs_input', task_def: { mode: 'perf', task: 'p', framework_dir: '/tmp/sglang', model_path: '/models/m', server_script: '/s/server.sh', client_script: '/s/client.sh' },
         questions: [{ field: 'workload', question: 'Which workload?', why: 'fixed before profiling', default: '{"isl":8192}' }] }) };
     const first = await run({ request: 'make it faster' }, intake);
-    check(asks(first, 'workload') && first.result.next.includes('answers='), `first: ${JSON.stringify(first.result.questions)}`);
+    const next = first.result.next || {};
+    check(asks(first, 'workload') && (next.ask || []).some((q) => q.field === 'workload') && 'workload' in ((next.rerun_with || {}).answers || {}),
+      `first: ${JSON.stringify(first.result.questions)} | next ${JSON.stringify(next)}`);
     check(first.result.run_dir === '' && !first.keys.includes('director:report'), 'nothing was created');
     const again = await run({ request: 'make it faster', answers: { workload: { isl: 8192, osl: 1024, conc: 64 } } }, intake);
     check(again.result.status === 'ready_for_review', `with the answer: ${again.result.status}`);
@@ -959,6 +963,43 @@ const scenarios = [
           check(spec.code.includes(runners[mode]), `${prefix}: its scenarios ran ${mode}; add ${runners[mode]} to ${g}'s code`);
         }
       }
+    }
+  }],
+  ['next: every result says what comes after it, asks and offers what fits how it ended, and both sessions\' instructions act on it', async () => {
+    const seen = new Set();
+    for (const { scenario, result: r } of RESULTS) {
+      const n = r.next || {};
+      const again = n.rerun_with;
+      const where = `${scenario.split(':')[0]}, ${r.status}`;
+      seen.add(r.status);
+      check(typeof n.say === 'string' && n.say.length > 10, `${where}: next.say ${JSON.stringify(n.say)}`);
+      if (r.status === 'needs_input') {
+        check((n.ask || []).length > 0 && n.ask.every((q) => q.field in ((again || {}).answers || {})),
+          `${where}: asks ${JSON.stringify(n.ask)}, runs again with ${JSON.stringify(again)}`);
+      } else if (r.status === 'awaiting_design_review' || (r.status === 'stopped' && r.stopped_at === 'Design' && r.mode === 'feature')) {
+        check(again && again.resume_from === 'implement' && again.run_dir === r.run_dir, `${where}: runs again with ${JSON.stringify(again)}`);
+      } else if (r.status === 'stopped') {
+        check(again && again.stop_after === '', `${where}: runs again with ${JSON.stringify(again)}`);
+      } else if (r.status === 'busy') {
+        check(again && Object.keys(again).length === 0, `${where}: runs again as it was: ${JSON.stringify(again)}`);
+      } else {
+        check(again === undefined, `${where}: nothing to run again, yet ${JSON.stringify(again)}`);
+      }
+      if (r.status === 'queued') {
+        check((n.start || []).length > 0 && n.start.every((s) => s.args.mode && s.args.inferpilot_dir === INFERPILOT), `${where}: starts ${JSON.stringify(n.start)}`);
+      }
+      if (r.status === 'ready_for_review') check((n.user || []).some((u) => /\bpush\b/.test(u)), `${where}: the push is the user's: ${JSON.stringify(n.user)}`);
+    }
+    if (!ONLY) {
+      for (const s of ['needs_input', 'rejected', 'awaiting_design_review', 'stopped', 'busy', 'blocked', 'queued', 'ready_for_review',
+        'handed_off', 'triaged', 'fixed_on_main', 'not_reproduced', 'no_gain', 'dropped']) check(seen.has(s), `no scenario ends ${s}`);
+    }
+    const src = readFileSync(SCRIPT, 'utf8');
+    const whenToUse = (/whenToUse: '((?:[^'\\]|\\.)*)'/.exec(src) || [, ''])[1];
+    const agents = readFileSync(path.join(INFERPILOT, 'AGENTS.md'), 'utf8');
+    for (const k of new Set(RESULTS.flatMap(({ result }) => Object.keys(result.next || {})))) {
+      check(whenToUse.includes(`next.${k}`), `inferpilot.js's whenToUse does not tell Claude Code what to do with next.${k}`);
+      check(agents.includes(`next.${k}`), `AGENTS.md does not tell a Cursor agent what to do with next.${k}`);
     }
   }],
 ];

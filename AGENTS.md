@@ -33,7 +33,8 @@ user's login as their name). Ask which one when there are several, or none.
    `--backend cursor` needs `bootstrap --cursor` and a logged-in CLI (`agent status`); `--backend claude`
    needs Claude Code and Node.js (`bootstrap --cursor --claude`, or `--runner`) and Claude Code's API access
    (README step 1).
-3. Tell the user where it runs (the log and the result file) and stop; look again when they ask.
+3. Tell the user where it runs (the log and the result file) and stop; look again when they ask. Once it
+   has ended, do what its `next` says (*After a run*).
 
 ## Watch it
 
@@ -44,9 +45,21 @@ user's login as their name). Ask which one when there are several, or none.
   `exp/<mode>_<slug>_<time>Z`.
 - In the run directory, `experiment_ledger.md` holds every measurement and decision; at the end comes
   `run_report.md` or `validation_report.md`. The result file holds the final `status` and `stopped_at`.
-- A run that stops for the user (`needs_input`, `awaiting_design_review`, `blocked`) says why in its
-  report: relay it, and continue with the same arguments plus what the user decides (`answers`, or
-  `"resume_from": "implement"` with `"run_dir"`).
+
+## After a run
+
+The result file ends with `next`, what comes after the run, the same Claude Code gets:
+
+- tell the user `next.say`;
+- put each question of `next.ask` to the user, never answering one yourself, then start the runner again
+  with the same arguments plus `next.rerun_with`, its answers filled in from the user's (they merge with the
+  answers already given);
+- offer each of `next.start` (a scan's top tasks) as a new run with its arguments, and start the one the
+  user picks;
+- `next.user` is what only the user does: the push, a reply to post, the daily report to share.
+
+The runner's log ends with the same steps (`=== NEXT: ...`), and it writes the arguments of each run they
+name next to the arguments file: `exp/<name>.again.json`, `exp/<name>.start-<rank>.json`.
 
 ## Rules
 
