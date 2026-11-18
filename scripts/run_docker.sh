@@ -43,19 +43,19 @@
 # The host's Docker socket is not mounted by default: it would let the agents stop or start any container
 # on the host, and InferPilot inside the container does not need it.
 #
-# `docker run -it` needs a terminal. Without one (srun, CI, an agent's shell) the container starts in the
+# The shell needs a terminal. Without one (srun, CI, an agent's shell) the container is left running in the
 # background and the script prints the `docker exec` that enters it; DETACH=0 or 1 overrides the guess.
 VARIANT=${IMAGE_VARIANT:-}
 PINNED=$([ -n "$IMAGE" ] && echo 1 || echo 0)
-ME=${SUDO_USER:-$USER}
+ME=${SUDO_USER:-${USER:-$(id -un 2>/dev/null)}}
 ME=${ME//[^a-zA-Z0-9_.-]/_}
 [[ $ME =~ ^[a-zA-Z0-9] ]] || ME="u$ME"
 HOST_HOME=$HOME
 [ -n "$SUDO_USER" ] && HOST_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 SUDO=$([ -w /var/run/docker.sock ] || echo sudo)
 RAW=https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts
-SELF=$0  # how to run this again, for the hints
-case "$SELF" in /dev/fd/*|/proc/*) SELF="bash <(curl -fsSL $RAW/run_docker.sh)" ;; esac
+SELF=$0  # how to run this again, for the hints: read from curl, it has no path of its own
+case "$SELF" in /dev/fd/*|/proc/*|bash|-bash|*/bash|sh|-sh|*/sh) SELF="bash <(curl -fsSL $RAW/run_docker.sh)" ;; esac
 if [ -z "$DETACH" ]; then
   if [ -t 0 ]; then DETACH=0; else DETACH=1; fi
 fi
@@ -83,6 +83,13 @@ way_back() {  # after a new container: its name, the way back into it, and your 
              --format '{{.Names}}|{{.Image}}|{{.RunningFor}}|{{.Status}}' 2>/dev/null)
   [ -z "$others" ] || printf 'run_docker.sh: your other InferPilot containers (`%sdocker rm -f <name>` removes one you are done with, and its /workspace):\n%s' \
     "${SUDO:+sudo }" "$others" >&2
+}
+
+norm_image() {  # one spelling of an image: docker.io/library/x and x are both x:latest
+  local i=${1#docker.io/}
+  i=${i#library/}
+  case ${i##*/} in *:*|*@*) ;; *) i="$i:latest" ;; esac
+  echo "$i"
 }
 
 warn() {  # in bold yellow on a terminal
@@ -135,12 +142,12 @@ if [ -z "$NAME" ]; then
   NAME=$(new_name) || { echo "run_docker.sh: found no free container name; set NAME=<name>" >&2; exit 1; }
 fi
 
-if OLD=$($SUDO docker inspect -f '{{.Config.Image}}' "$NAME" 2>/dev/null); then
+if OLD=$($SUDO docker inspect --type container -f '{{.Config.Image}}' "$NAME" 2>/dev/null); then
   if [ -z "$IMAGE" ]; then
     warn "the name $NAME is taken: you enter the old container of that name (name $NAME, image $OLD), not a" \
       "new one, so its /sgl-workspace/sglang is as it was left, not put on the newest main. For a new one, run" \
       "without NAME: $SELF"
-  elif [ "$IMAGE" != "$OLD" ]; then
+  elif [ "$(norm_image "$IMAGE")" != "$(norm_image "$OLD")" ]; then
     warn "the name $NAME is taken: you enter the old container of that name (name $NAME, image $OLD, not" \
       "$IMAGE: another image version than the one you asked for), not a new one; its code is as it was left." \
       "For a new one from $IMAGE, run without NAME: IMAGE=$IMAGE $SELF"

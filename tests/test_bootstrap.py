@@ -6,6 +6,8 @@ linked outside temporary directories (commands are mocked).
 import io
 import json
 import os
+import pwd
+import re
 import shutil
 import stat
 import subprocess
@@ -308,7 +310,7 @@ class RunDockerTest(unittest.TestCase):
 
     def test_an_existing_container_is_entered_again_its_code_as_it_was_left(self):
         """With your home, also in a container this script did not start."""
-        inspect = "inspect -f {{.Config.Image}} tester"
+        inspect = "inspect --type container -f {{.Config.Image}} tester"
         enter = [inspect, "start tester", "exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash"]
         self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", PATH=self.daily()), (0, enter))
         taken = "WARNING: the name tester is taken: you enter the old container of that name (name tester, image "
@@ -323,6 +325,26 @@ class RunDockerTest(unittest.TestCase):
         self.assertIn(taken + "rocm/sgl-dev:old, not rocm/sgl-dev:new: another image version than the one you asked "
                       "for), not a new one", self.stderr)
         self.assertEqual(self.stderr.count("WARNING"), 1, "one warning says both")
+        self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", image="docker.io/rocm/sgl-dev:old", PATH=self.daily()),
+                         (0, enter))
+        self.assertNotIn("another image version", self.stderr, "the same image, spelt another way")
+
+    def test_the_hints_say_how_to_run_it_again(self):
+        """Read from curl, the script has no path of its own; without USER, the name is still yours."""
+        with open(ROOT / "scripts" / "run_docker.sh") as script:
+            r = subprocess.run(["bash"], stdin=script, capture_output=True, text=True,
+                               env={"PATH": self.path, "HOME": str(self.tmp / "home"), "USER": "tester",
+                                    "DOCKER_LOG": str(self.log), "IMAGE": "rocm/sgl-dev:new", "DETACH": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("come back to it with: NAME=inferpilot_tester_", r.stderr)
+        self.assertIn(" bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts/run_docker.sh)",
+                      r.stderr)
+        self.log.unlink()
+        rc, calls = self.run_docker(image="rocm/sgl-dev:new", NAME="", USER="")
+        self.assertEqual(rc, 0, self.stderr)
+        me = re.escape(pwd.getpwuid(os.getuid()).pw_name)
+        self.assertRegex(self.created(calls), r"--label inferpilot\.user=%s --entrypoint /bin/bash --name "
+                                              r"inferpilot_%s_\d{4}_[a-z0-9]{4} rocm/sgl-dev:new$" % (me, me))
 
     def test_a_new_container_from_the_daily_image_starts_on_the_newest_main(self):
         main = ("exec -w /sgl-workspace/sglang tester bash -c git checkout -- . && git checkout -q main && git pull -q"
@@ -345,7 +367,7 @@ class RunDockerTest(unittest.TestCase):
         rc, calls = self.run_docker(image="rocm/sgl-dev:new", NAME="", FAKE_TAKEN_ONCE="1")
         days.add(today())
         self.assertEqual(rc, 0, self.stderr)
-        tried = [c.split()[-1] for c in calls if c.startswith("inspect --type container ")]
+        tried = [c.split()[-1] for c in calls if c.startswith("inspect --type container ") and " -f " not in c]
         self.assertEqual(len(tried), 2, "the first name is taken, the second is free")
         for name in tried:
             self.assertRegex(name, r"^inferpilot_tester_\d{4}_[a-z0-9]{4}$")
@@ -362,7 +384,8 @@ class RunDockerTest(unittest.TestCase):
         others = "inferpilot_tester_1101_ab12|rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261101|2 weeks ago|Exited (0) 3 days ago"
         rc, _ = self.run_docker(image="rocm/sgl-dev:new", FAKE_PS=others + "\ntester|rocm/sgl-dev:new|1 second ago|Up 1 second")
         self.assertEqual(rc, 0, self.stderr)
-        self.assertIn("your other InferPilot containers (`docker rm -f <name>` removes one you are done with", self.stderr)
+        self.assertIn("your other InferPilot containers (`", self.stderr)
+        self.assertIn("docker rm -f <name>` removes one you are done with", self.stderr)
         self.assertIn("  inferpilot_tester_1101_ab12  rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261101  (created 2 weeks ago; Exited (0) "
                       "3 days ago)", self.stderr)
         self.assertNotIn("  tester  rocm/sgl-dev:new", self.stderr, "not the new one itself")
@@ -439,7 +462,7 @@ class RunDockerTest(unittest.TestCase):
         self.assertIn(enter, self.stderr)
 
         rc, calls = self.run_docker(existing="rocm/sgl-dev:new", DETACH="")
-        self.assertEqual((rc, calls), (0, ["inspect -f {{.Config.Image}} tester", "start tester"]))
+        self.assertEqual((rc, calls), (0, ["inspect --type container -f {{.Config.Image}} tester", "start tester"]))
         self.assertIn(enter, self.stderr)
 
     def test_privileged_0_leaves_it_out_and_keeps_the_gpus(self):
