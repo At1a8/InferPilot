@@ -137,6 +137,68 @@ return { a, b, par, nested, n: args.n, budget: budget.remaining() };`);
     check(BACKENDS.cursor.args.includes('--force') && BACKENDS.cursor.promptVia === 'arg' && BACKENDS.claude.promptVia === 'stdin',
       'the presets');
   }],
+  ['backends: stream-json shows each tool call as it starts; the answer comes from the result event', async () => {
+    const answer = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '```json\n{"ok": true}\n```' });
+    const claudeCli = fakeCli('claude-stream.sh', `cat >/dev/null
+cat <<'EOF'
+{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"python3  scripts/scan_ci.py\\n --out ci.json"}}]}}
+EOF
+sleep 0.4
+cat <<'EOF'
+{"type":"user","message":{"content":[]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/x/ci.md"}},{"type":"text","text":"almost"}]}}
+${answer}
+EOF`);
+    const seen = [];
+    const t0 = Date.now();
+    const out = await cliBackend('fake', { preset: preset(claudeCli, 'stdin', { events: BACKENDS.claude.events }) })
+      .runAgent({ prompt: 'p', label: 'c', onProgress: (m) => seen.push([m, Date.now() - t0]) });
+    const done = Date.now() - t0;
+    check(seen.map((s) => s[0]).join('|') === 'Bash: python3 scripts/scan_ci.py --out ci.json|Read: /x/ci.md', `claude tool calls: ${seen}`);
+    check(seen[0][1] < done - 250, `the first tool call is shown while the agent still runs (${seen[0][1]} ms of ${done} ms)`);
+    check(extractJson(out.text).ok === true, `claude answer: ${out.text}`);
+
+    const cursorCli = fakeCli('cursor-stream.sh', `cat <<'EOF'
+{"type":"system","subtype":"init","model":"x"}
+{"type":"thinking","subtype":"delta","text":"hmm"}
+{"type":"tool_call","subtype":"started","tool_call":{"shellToolCall":{"args":{"command":"echo hi"},"description":"Run echo hi"}}}
+{"type":"tool_call","subtype":"completed","tool_call":{"shellToolCall":{"args":{"command":"echo hi"},"result":{}}}}
+{"type":"tool_call","subtype":"started","tool_call":{"readToolCall":{"args":{"path":"/etc/hostname"}}}}
+{"type":"tool_call","subtype":"started","tool_call":{"editToolCall":{"args":{"path":"/tmp/a.txt","streamContent":"hi"}}}}
+${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'x'.repeat(300000) })}
+EOF`);
+    const lines = [];
+    const big = await cliBackend('fake', { preset: preset(cursorCli, 'arg', { events: BACKENDS.cursor.events }) })
+      .runAgent({ prompt: 'p', label: 'k', onProgress: (m) => lines.push(m) });
+    check(lines.join('|') === 'shell: echo hi|read: /etc/hostname|edit: /tmp/a.txt', `cursor tool calls: ${lines}`);
+    check(big.text.length === 300000, `a result line longer than a pipe read: ${big.text.length}`);
+
+    const plain = await cliBackend('fake', { preset: preset(fakeCli('plain.sh', OK_JSON), 'arg', { events: BACKENDS.cursor.events }) })
+      .runAgent({ prompt: 'p', label: 'plain' });
+    check(extractJson(plain.text).ok === true && plain.text.includes('working'), 'no result event: the plain text is the answer');
+    const erred = fakeCli('erred.sh', `echo '${JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: 'quota exceeded' })}'`);
+    await rejects(cliBackend('fake', { preset: preset(erred, 'arg', { events: BACKENDS.cursor.events }) }).runAgent({ prompt: 'p', label: 'e' }),
+      /ended in an error: quota exceeded/, 'a result that is an error');
+  }],
+  ['engine: the tool calls, a still-working line after a quiet spell, and the end of each call', async () => {
+    const logs = [];
+    const backend = { name: 'fake', async runAgent({ onProgress }) {
+      onProgress('shell: python3 scripts/scan_ci.py');
+      await new Promise((r) => setTimeout(r, 200));
+      return { text: '```json\n{"ok": true}\n```' };
+    } };
+    const rt = createRuntime({ backend, quietMs: 50, log: (m) => logs.push(m) });
+    rt.phase('Collect');
+    check((await rt.agent('q', { label: 'scout:collect', schema: SCHEMA })).ok === true, 'the answer');
+    check(logs.includes('     · [Collect] scout:collect  shell: python3 scripts/scan_ci.py'), `a tool call: ${logs}`);
+    check(logs.some((l) => /^ {5}· \[Collect\] scout:collect {2}still working, 0 min$/.test(l)), `still working: ${logs}`);
+    check(logs[logs.length - 1] === '  <- [Collect] scout:collect  done in 0 min', `the end: ${logs[logs.length - 1]}`);
+    const quietLogs = [];
+    const rt2 = createRuntime({ backend, quietMs: 0, log: (m) => quietLogs.push(m) });
+    await rt2.agent('q', { label: 'x' });
+    check(!quietLogs.some((l) => l.includes('still working')), 'quietMs 0: no still-working line');
+  }],
   ['run.mjs: a workflow end to end on a CLI backend, the result on stdout and in a file', async () => {
     const script = path.join(TMP, 'e2e.js');
     writeFileSync(script, `export const meta = { name: 'e2e', description: 'test', phases: [] };

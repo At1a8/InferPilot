@@ -376,7 +376,7 @@ instead (the Node.js it needs comes with `--cursor`, or with `--runner`), starte
 ```bash
 cd /workspace/inferpilot && mkdir -p exp
 echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
-nohup node runtime/run.mjs inferpilot.js --backend claude --args-file exp/scan.json --result-file exp/scan.result.json > exp/scan.log 2>&1 &
+nohup node runtime/run.mjs inferpilot.js --backend claude --args-file exp/scan.json --result-file exp/scan.result.json < /dev/null > exp/scan.log 2>&1 &
 ```
 
 #### With Cursor
@@ -387,7 +387,7 @@ file and start the runner in the background; it runs every role on `agent -p`:
 ```bash
 cd /workspace/inferpilot && mkdir -p exp
 echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
-nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.json --result-file exp/scan.result.json > exp/scan.log 2>&1 &
+nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.json --result-file exp/scan.result.json < /dev/null > exp/scan.log 2>&1 &
 tail -f exp/scan.log    # Ctrl-C leaves the log; the run goes on
 ```
 
@@ -395,7 +395,8 @@ The file holds, as JSON, the arguments the sentences above give Claude Code. The
 the reproduction is `{"mode": "issue", "task": "https://github.com/sgl-project/sglang/issues/41299",
 "inferpilot_dir": "/workspace/inferpilot", "model_path": "<weights>", "gpu_ids": "0", "stop_after": "Reproduce"}`;
 a request in plain words is `{"inferpilot_dir": "/workspace/inferpilot", "request": "..."}`. `exp/scan.log`
-names each phase and agent call, and `exp/scan.result.json` holds the end: the `status`, and the report of a
+names each phase and agent call, every tool call in it as it starts (a command, a file read or written), a
+still-working line after five quiet minutes and the call's end; `exp/scan.result.json` holds the run's end: the `status`, and the report of a
 run that stopped for you (`needs_input`, `awaiting_design_review`, `blocked`), which says why. Add what you
 decide to the file (`"answers": {...}`) and start the runner again.
 

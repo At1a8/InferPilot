@@ -27,7 +27,7 @@ user's login as their name). Ask which one when there are several, or none.
 
    ```
    cd /workspace/inferpilot && mkdir -p exp && nohup node runtime/run.mjs inferpilot.js --backend cursor \
-     --args-file exp/<name>.json --result-file exp/<name>.result.json > exp/<name>.log 2>&1 &
+     --args-file exp/<name>.json --result-file exp/<name>.result.json < /dev/null > exp/<name>.log 2>&1 &
    ```
 
    `--backend cursor` needs `bootstrap --cursor` and a logged-in CLI (`agent status`); `--backend claude`
@@ -37,7 +37,8 @@ user's login as their name). Ask which one when there are several, or none.
 
 ## Watch it
 
-- `exp/<name>.log` names each phase and agent call. The run directory is the newest
+- `exp/<name>.log` names each phase and agent call, every tool call in it as it starts, a still-working
+  line after five quiet minutes and each call's end. The run directory is the newest
   `exp/<mode>_<slug>_<time>Z`.
 - In the run directory, `experiment_ledger.md` holds every measurement and decision; at the end comes
   `run_report.md` or `validation_report.md`. The result file holds the final `status` and `stopped_at`.

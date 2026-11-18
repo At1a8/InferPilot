@@ -37,11 +37,13 @@ export function scriptBody(src) {
 
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
 
+// quietMs: an agent call that showed nothing for that long gets a still-working line (0: never).
 export function createRuntime({
   backend,
   concurrency = 4,
   schemaRetries = 2,
   agentTimeoutMs = 0,
+  quietMs = 5 * 60 * 1000,
   log = (msg) => process.stderr.write(`[${new Date().toISOString().slice(11, 19)}] ${msg}\n`),
 } = {}) {
   if (!backend || typeof backend.runAgent !== 'function') throw new Error('createRuntime: backend.runAgent is required');
@@ -62,18 +64,32 @@ export function createRuntime({
     const where = opts.phase || current;
     const full = opts.schema ? prompt + outputContract(opts.schema) : prompt;
     await slots.take();
+    const started = Date.now();
+    const minutes = () => Math.round((Date.now() - started) / 60000);
+    let shown = started;
+    const show = (msg) => {
+      shown = Date.now();
+      log(`     · [${where}] ${label}  ${msg}`);
+    };
+    const beat = quietMs > 0 ? setInterval(() => {
+      if (Date.now() - shown >= quietMs) show(`still working, ${minutes()} min`);
+    }, Math.min(quietMs, 60000)) : null;
     try {
       log(`  -> [${where}] ${label} (${backend.name})`);
       let last;
       for (let attempt = 1; attempt <= (opts.schema ? schemaRetries + 1 : 1); attempt++) {
         const { text } = await backend.runAgent({
-          prompt: full, label, cwd: opts.cwd, env: opts.env, model: opts.model, timeoutMs: agentTimeoutMs,
+          prompt: full, label, cwd: opts.cwd, env: opts.env, model: opts.model, timeoutMs: agentTimeoutMs, onProgress: show,
         });
-        if (!opts.schema) return text;
+        if (!opts.schema) {
+          log(`  <- [${where}] ${label}  done in ${minutes()} min`);
+          return text;
+        }
         try {
           const value = extractJson(text);
           const errors = validate(value, opts.schema);
           if (errors.length) throw new Error(`schema: ${errors.slice(0, 3).join('; ')}`);
+          log(`  <- [${where}] ${label}  done in ${minutes()} min`);
           return value;
         } catch (e) {
           last = e;
@@ -83,6 +99,7 @@ export function createRuntime({
       }
       throw last;
     } finally {
+      if (beat) clearInterval(beat);
       slots.give();
     }
   }
