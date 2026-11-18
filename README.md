@@ -350,15 +350,29 @@ runs on, and one flag to the bootstrap of step 3:
 | Runner, Cursor roles | `runtime/run.mjs` | the Cursor CLI, `agent -p` | `--cursor`; `--no-claude` leaves Claude Code out | `agent login` once per container, or `CURSOR_API_KEY` in the keys file | `node runtime/run.mjs inferpilot.js --backend cursor ...` |
 | The Cursor app, or the Cursor CLI's chat | the runner, which that agent starts | either runner backend | as for that backend | as for that backend | your sentence to the agent |
 
-A container that runs every role on Cursor, and a scan to try it:
+A scan to try each runner backend, in the container's shell (a new one, or after `source ~/.bashrc`).
+Every role on Claude Code (`claude -p`), on the key in your keys file:
+
+```bash
+cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap --runner
+mkdir -p exp && echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
+nohup node runtime/run.mjs inferpilot.js --backend claude --args-file exp/scan.json --result-file exp/scan.result.json > exp/scan.log 2>&1 &
+```
+
+Every role on Cursor (`agent -p`), logged in once per container:
 
 ```bash
 cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap --cursor --no-claude
-NO_OPEN_BROWSER=1 agent login   # open the URL it prints in a browser elsewhere and log in (q shows a QR code)
-agent status
+NO_OPEN_BROWSER=1 agent login   # open the URL it prints in a browser elsewhere, within about 20 minutes (q shows a QR code)
+agent status                    # Logged in as ...
 mkdir -p exp && echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
 nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.json --result-file exp/scan.result.json > exp/scan.log 2>&1 &
 ```
+
+`exp/scan.log` follows the run, and `exp/scan.result.json` holds its end. From outside the container, run
+each line through `docker exec -i <container> bash -ic '...'`: only an interactive shell reads `~/.bashrc`,
+which loads the keys file and puts `claude` on PATH. A plain `bash -c` gets neither, so Claude roles fail
+and a scan runs without `GITHUB_TOKEN`.
 
 **From the Cursor app.** Cursor has nothing like Claude Code's Workflow tool, so its agent does not run
 `inferpilot.js` itself: it writes the task to a file, starts the runner in the background and reads the

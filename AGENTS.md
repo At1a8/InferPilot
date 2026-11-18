@@ -9,7 +9,9 @@ start InferPilot's own runner, `runtime/run.mjs`, and watch the run (README, *Wa
 
 InferPilot and its runs live in the task's ROCm container, in `/workspace/inferpilot` (README steps 2-3).
 Inside that container (`/.dockerenv` exists) run the commands below as they are. Anywhere else, such as
-the GPU host opened over Remote-SSH, run each one through `docker exec -i <container> bash -c '...'`.
+the GPU host opened over Remote-SSH, run each one through `docker exec -i <container> bash -ic '...'`.
+It has to be an interactive shell: only then does the container's `~/.bashrc` load the keys file and put
+`claude` on PATH. Its warnings about job control are harmless.
 The container is the user's: `scripts/run_docker.sh` names a new one `inferpilot_<user>_<MMDD>_<random>`
 and labels it, so `docker ps --filter label=inferpilot.user=<user>` lists them (older ones carry the
 user's login as their name). Ask which one when there are several, or none.

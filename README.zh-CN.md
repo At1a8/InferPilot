@@ -198,15 +198,25 @@ tmux capture-pane -p -t inferpilot | tail -40
 | runner，角色用 Cursor | `runtime/run.mjs` | Cursor CLI，`agent -p` | `--cursor`；加 `--no-claude` 时不装 Claude Code | 每个容器 `agent login` 一次，或在 key 文件里设置 `CURSOR_API_KEY` | `node runtime/run.mjs inferpilot.js --backend cursor ...` |
 | Cursor app，或 Cursor CLI 的对话界面 | 由那个 agent 启动的 runner | 上面两种 runner backend 之一 | 同所用的 backend | 同所用的 backend | 对 agent 用一句话说出任务 |
 
-一个所有角色都跑在 Cursor 上的容器，以及用来试一下的 scan 任务：
+在容器的 shell 里（新开一个，或者先 `source ~/.bashrc`）用 scan 任务试一下两种 runner backend。所有角色跑在 Claude Code 上（`claude -p`），用你 key 文件里的 key：
+
+```bash
+cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap --runner
+mkdir -p exp && echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
+nohup node runtime/run.mjs inferpilot.js --backend claude --args-file exp/scan.json --result-file exp/scan.result.json > exp/scan.log 2>&1 &
+```
+
+所有角色跑在 Cursor 上（`agent -p`），每个容器登录一次：
 
 ```bash
 cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap --cursor --no-claude
-NO_OPEN_BROWSER=1 agent login   # 在别处的浏览器里打开它打印出的链接并登录（按 q 显示二维码）
-agent status
+NO_OPEN_BROWSER=1 agent login   # 在别处的浏览器里打开它打印出的链接并登录，大约 20 分钟内有效（按 q 显示二维码）
+agent status                    # Logged in as ...
 mkdir -p exp && echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
 nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.json --result-file exp/scan.result.json > exp/scan.log 2>&1 &
 ```
+
+运行过程看 `exp/scan.log`，最终结果在 `exp/scan.result.json`。在容器外执行时，每一行都要通过 `docker exec -i <容器> bash -ic '...'`：只有交互式 shell 才会读 `~/.bashrc`，它负责加载 key 文件、把 `claude` 加进 PATH。普通的 `bash -c` 两样都没有，Claude 角色会失败，scan 也会在没有 `GITHUB_TOKEN` 的情况下运行。
 
 **从 Cursor app 使用。** Cursor 没有类似 Claude Code Workflow 工具的东西，所以它的 agent 不会自己运行 `inferpilot.js`，而是把任务写进文件、在后台启动 runner，并随时读取运行进展，具体做法写在本仓库根目录的 [`AGENTS.md`](AGENTS.md) 里（Cursor 会把这个文件当作规则加载）。在 app 里通过 Remote-SSH 打开 GPU 机器（agent 会通过 `docker exec` 在你的容器里执行每条命令），或者直接打开容器，然后像在 Claude Code 里一样用一句话说出任务。Cursor CLI 自己的对话界面（容器里的 `agent`）也读取同一个文件。app 的登录不会带进容器：容器里的 CLI 要用 `agent login` 登录一次，或者使用 `CURSOR_API_KEY`。角色跑在 Cursor 上时，代码和提示词会发到 Cursor 的服务，而不是 AMD 的 LLM 网关，并计入账户的用量。
 
