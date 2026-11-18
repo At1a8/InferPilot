@@ -369,7 +369,7 @@ python3 scripts/run_lock.py release --force   # 那个运行已经中断时，�
 
 ## 测试
 
-提交前运行 `tests/run_all.sh`：离线、不需要 GPU，十秒左右跑完（需要 Python 3.10+ 和 Node.js 20+；装了 shellcheck 就用上）。CI 在 GitHub 的机器上运行它（[`.github/workflows/tests.yml`](.github/workflows/tests.yml)）：pull request 跑基础测试和改动涉及的任务组；推到 main、每天夜里和手动触发时全部都跑。
+提交前运行 `tests/run_all.sh`：离线、不需要 GPU，十秒左右跑完（需要 Python 3.10+ 和 Node.js 20+；装了 shellcheck 就用上）。CI 在 GitHub 的机器上运行同样的测试（[`.github/workflows/tests.yml`](.github/workflows/tests.yml)），在 pull request 页面上每个部分各一项检查：`changes`（这个 pull request 涉及哪些任务组，摘要里写明每个文件的原因）、基础测试的五个步骤、每个任务组一项（改动没涉及时显示为 skipped）、在 Python 3.10 和 Node.js 20 上完整运行一遍 `tests/run_all.sh`，以及 `tests-finish`：所有实际运行的 job 都通过时才变绿。推到 main、每天夜里和手动触发时，每个组都跑。
 
 基础测试每次改动都跑：每个脚本的语法、shellcheck、runner、两个 backend 的对照，以及下表中保持各部分一致的检查。任务组（`feature`、`issue`、`ci`、`perf`、`scan`、`kernel`）加上该任务的 dry-run 场景和它所用脚本的单元测试，只在改动涉及该任务时才跑：该任务会执行的 `inferpilot.js` 代码、它调用的角色，或这些角色读的文件（[`tests/groups.json`](tests/groups.json)）。改动所有任务共用的部分（`runtime/`、dry run 和它的 fixtures、CI、`inferpilot.js` 主流程执行的代码）时，每个组都跑。
 
@@ -387,7 +387,9 @@ node tests/dry_run.mjs --only scan,roles          # 只跑名字以 scan: 和 ro
 | workflow 与角色：进入的每个阶段都在 `meta.phases` 里；每种模式的路线就是它实际走的路线，也是两份 README 列出的路线；回答必须有的每个字段都写在对应角色的 PHASE 一节里 | `tests/dry_run.mjs` |
 | 代码与文档：setup、`run_docker.sh` 和 runner 读的每个变量都写在 README 里，其他脚本在自己开头写明；README 和 `AGENTS.md` 给出的每个参数都存在 | `tests/test_docs.py` |
 | 公开仓库：没有 token 或密钥、内部主机名、私有网段地址、真实的 home 或存储目录，也没有本机及同集群机器的名字 | `tests/test_hygiene.py` |
-| 测试划分：每个 dry-run 场景和单元测试都属于基础测试或某个组 | `tests/test_groups.py` |
+| 测试划分：每个 dry-run 场景和单元测试都属于基础测试或某个组，CI 里每个组都有一项检查 | `tests/test_groups.py` |
+
+要让合并等测试通过：在仓库的 Settings → Branches 给 `main` 添加分支保护规则（或在 Settings → Rules 里建 ruleset），打开 *Require status checks to pass before merging*，加上 `tests-finish`；它在某个 pull request 上运行过之后才会出现在可选列表里。
 
 ## 目录结构
 

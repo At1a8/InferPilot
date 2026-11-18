@@ -12,6 +12,7 @@ group, and so does any change to inferpilot.js this cannot place.
     python3 tests/groups.py select --all
     python3 tests/groups.py dry-run feature perf           # the dry run's --only: basic's and theirs
     python3 tests/groups.py unittest feature perf          # run basic's unit tests and theirs
+    python3 tests/groups.py unittest --only scan           # run scan's unit tests alone (dry-run --only too)
 """
 import ast
 import fnmatch
@@ -276,14 +277,16 @@ def changes(base):
     return out
 
 
-def dry_run_prefixes(groups):
-    return [p for g in ["basic", *groups] for p in GROUPS[g]["dry_run"]]
+def dry_run_prefixes(groups, only=False):
+    """The dry run's --only: basic's scenario prefixes and the groups', or with only the groups' alone."""
+    return [p for g in ([] if only else ["basic"]) + list(groups) for p in GROUPS[g]["dry_run"]]
 
 
-def unit_tests(groups):
-    """basic's unit tests and the groups', and any test no group lists (test_groups asks to place it)."""
+def unit_tests(groups, only=False):
+    """basic's unit tests and the groups', and any test no group lists (test_groups asks to place it); with
+    only, the groups' alone."""
     listed = {t for g in TASKS for t in GROUPS[g]["unittest"]}
-    want = set(GROUPS["basic"]["unittest"]) | {t for g in groups for t in GROUPS[g]["unittest"]}
+    want = (set() if only else set(GROUPS["basic"]["unittest"])) | {t for g in groups for t in GROUPS[g]["unittest"]}
 
     def flat(suite):
         for t in suite:
@@ -293,7 +296,7 @@ def unit_tests(groups):
     for t in flat(unittest.defaultTestLoader.discover(str(ROOT / "tests"), top_level_dir=str(ROOT / "tests"))):
         module, cls = t.id().split(".")[:2]
         names = {module, "%s.%s" % (module, cls)}
-        if names & want or not names & (listed | set(GROUPS["basic"]["unittest"])):
+        if names & want or not only and not names & (listed | set(GROUPS["basic"]["unittest"])):
             keep.append(t)
     return unittest.TestSuite(keep)
 
@@ -326,11 +329,18 @@ def main(argv):
                 print("  %-44s -> %s" % (path, " ".join(g for g in TASKS if g in got) or "basic only"), file=sys.stderr)
             print(" ".join(g for g in TASKS if g in out))
             return 0
-    if len(argv) >= 1 and argv[0] == "dry-run":
-        print(",".join(dry_run_prefixes(argv[1:])))
-        return 0
-    if len(argv) >= 1 and argv[0] == "unittest":
-        result = unittest.TextTestRunner(verbosity=1).run(unit_tests(argv[1:]))
+    if len(argv) >= 1 and argv[0] in ("dry-run", "unittest"):
+        only = "--only" in argv[1:]
+        groups = [a for a in argv[1:] if a != "--only"]
+        unknown = [g for g in groups if g not in TASKS]
+        if unknown or (only and not groups):
+            print("groups.py: name the groups%s; the groups: %s" % (" (no group %s)" % ", ".join(unknown) if unknown else "",
+                                                                    ", ".join(TASKS)), file=sys.stderr)
+            return 2
+        if argv[0] == "dry-run":
+            print(",".join(dry_run_prefixes(groups, only)))
+            return 0
+        result = unittest.TextTestRunner(verbosity=1).run(unit_tests(groups, only))
         return 0 if result.wasSuccessful() else 1
     print(__doc__, file=sys.stderr)
     return 2

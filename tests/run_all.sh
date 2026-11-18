@@ -51,34 +51,9 @@ step() {  # step <name> <command...>: one line for it, and its output when it fa
   fi
 }
 
-syntax_js() {  # inferpilot.js as the runner compiles it; the modules and tests as Node loads them
-  node --input-type=module -e "
-    import { readFileSync } from 'node:fs';
-    import { scriptBody } from './runtime/engine.mjs';
-    const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
-    new AsyncFunction('agent', 'parallel', 'pipeline', 'phase', 'log', 'workflow', 'args', 'budget',
-      scriptBody(readFileSync('inferpilot.js', 'utf8')));" || return 1
-  local f
-  for f in runtime/*.mjs tests/*.mjs tests/fixtures/*.mjs; do node --check "$f" || return 1; done
-}
-
-syntax_sh() {
-  local f
-  for f in scripts/*.sh tests/*.sh; do bash -n "$f" || return 1; done
-}
-
-syntax_py() {  # parsed, not compiled to files: no __pycache__ in the checkout
-  python3 - inferpilot/*.py scripts/*.py tests/*.py setup.py <<'EOF'
-import ast, sys
-for path in sys.argv[1:]:
-    with open(path, encoding="utf-8") as f:
-        ast.parse(f.read(), path)
-EOF
-}
-
-step "syntax: inferpilot.js, runtime, tests" syntax_js
-step "syntax: shell scripts" syntax_sh
-step "syntax: Python" syntax_py
+step "syntax: inferpilot.js, runtime, tests" tests/syntax.sh js
+step "syntax: shell scripts" tests/syntax.sh sh
+step "syntax: Python" tests/syntax.sh py
 if command -v shellcheck >/dev/null; then
   step "shellcheck: shell scripts" shellcheck -S warning scripts/*.sh tests/*.sh
 else
