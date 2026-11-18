@@ -7,7 +7,7 @@
 //   node tests/backend_parity.mjs
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { MODE_DEFAULTS } from './fixtures/answers.mjs';
@@ -179,4 +179,6 @@ for (const [name, fn] of scenarios) {
   console.log(`${failed === before ? 'ok  ' : 'FAIL'} ${name}`);
 }
 console.log(`\n${passed} checks passed, ${failed} failed.`);
+if (failed) console.error(`the stand-in CLIs and what each was given: ${TMP}`);
+else rmSync(TMP, { recursive: true, force: true });
 process.exit(failed ? 1 : 0);

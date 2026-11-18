@@ -24,13 +24,21 @@ HOME = re.compile(r"(?<![\w.-])/home/(?![<${*])([A-Za-z0-9._-]+)")
 PLACEHOLDER_USERS = {"user", "you", "me", "alice", "bob", "username"}
 
 
-def files():
+def tracked():
+    """The files git tracks and the new ones it does not ignore; None outside a git checkout."""
     try:
         out = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
                              capture_output=True, check=True).stdout
     except (OSError, subprocess.CalledProcessError):
         return None
-    for name in sorted(set(out.decode().split("\0")) - {""}):
+    return sorted(set(out.decode().split("\0")) - {""})
+
+
+FILES = tracked()
+
+
+def files():
+    for name in FILES or []:
         path = ROOT / name
         if path.is_file():
             data = path.read_bytes()
@@ -43,7 +51,7 @@ def found(pattern, keep=lambda m: True, show=lambda s: s[:60]):
             for name, text in files() for m in pattern.finditer(text) if keep(m)]
 
 
-@unittest.skipIf(files() is None, "not a git checkout")
+@unittest.skipIf(FILES is None, "not a git checkout")
 class HygieneTest(unittest.TestCase):
     def test_no_token_or_private_key(self):
         # a public CI log shows what fails: the start of a token says which it is, and no more

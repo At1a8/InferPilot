@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Which tests a change needs (tests/groups.json). basic runs on every pull request. A task group runs when a
 change reaches its task: inferpilot.js code its entry points run or that leads to them, a role that code
-calls, a file such a role names, a path the group lists, or one of its tests. A change to what all tasks
+calls, a file such a role names, a path the group lists, or one of its tests. A group's entry points are
+where its dry-run scenarios start, the runner of every mode they run (test_groups checks), since a scenario
+runs a whole task; more narrow ones (kernelStage) add what leads to them. A change to what all tasks
 share (the runner, the dry run and its fixtures, CI, inferpilot.js code the main flow runs) runs every
 group, and so does any change to inferpilot.js this cannot place.
 
@@ -179,6 +181,10 @@ def reached(path, lines, js=None):
             roles |= {p.stem for p in (ROOT / "roles").glob("*.md") if path in p.read_text(encoding="utf-8")}
         for k in [k for r in roles for k in js.naming(r"\bcall\(\s*'%s'" % r)] + js.naming(re.escape(path)):
             out |= js.groups_of(k)
+    script = re.fullmatch(r"scripts/(\w+)\.(?:py|sh)", path)
+    if script:  # the groups with its unit test, which is named after it
+        test = "test_scripts.%sTest" % "".join(w.capitalize() for w in script.group(1).split("_"))
+        out |= {g for g in TASKS if test in GROUPS[g]["unittest"]}
     test = re.fullmatch(r"tests/(test_\w+)\.py", path)
     if test:
         out |= {g for g in TASKS if any(t.split(".")[0] == test.group(1) for t in GROUPS[g]["unittest"])}
@@ -191,20 +197,18 @@ def git(*args):
 
 def changes(base):
     """{path: the lines changed in it now, None for anywhere} since where HEAD left base, uncommitted and
-    untracked files too."""
-    out, path = {}, None
-    for line in git("diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", git("merge-base", base, "HEAD").strip()).splitlines():
-        if line.startswith("diff --git "):
-            path = line.split(" b/", 1)[1]
-            out[path] = None
-        elif line.startswith("+++ b/"):
-            out[path] = set()
-        elif line.startswith("@@") and out.get(path) is not None:
-            m = re.match(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)
+    untracked files too. Lines are counted in inferpilot.js only, the one file split finer than whole."""
+    since = git("merge-base", base, "HEAD").strip()
+    names = git("diff", "--name-only", "-z", "--no-renames", since).split("\0")
+    names += git("ls-files", "-z", "--others", "--exclude-standard").split("\0")
+    out = {name: None for name in names if name}
+    if "inferpilot.js" in out and (ROOT / "inferpilot.js").is_file():
+        lines = set()
+        hunks = git("diff", "-U0", "--no-color", "--no-ext-diff", since, "--", "inferpilot.js")
+        for m in re.finditer(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@", hunks, re.M):
             start, count = int(m.group(1)), int(m.group(2) if m.group(2) is not None else 1)
-            out[path] |= set(range(start, start + count)) if count else {start, start + 1}
-    for path in git("ls-files", "--others", "--exclude-standard").splitlines():
-        out[path] = None
+            lines |= set(range(start, start + count)) if count else {start, start + 1}
+        out["inferpilot.js"] = lines or None
     return out
 
 

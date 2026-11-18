@@ -28,8 +28,8 @@
     "unittest": ["test_scripts.ScanCiTest"]
   },
   "perf": {
-    "about": "a performance goal to a measured win",
-    "code": ["runPerf"],
+    "about": "a performance goal to a measured win; some of its scenarios run a feature task",
+    "code": ["runPerf", "runFeature"],
     "paths": [],
     "dry_run": ["perf"],
     "unittest": ["test_scripts.EvalAccuracyTest"]
@@ -43,8 +43,8 @@
                  "test_scripts.AuditPlatformGatesTest", "test_scripts.AuditHostSyncsTest", "test_scripts.CheckFrameworkSkillsTest"]
   },
   "kernel": {
-    "about": "kernel hand-offs and their back ends",
-    "code": ["kernelStage", "rejectKernels"],
+    "about": "kernel hand-offs and their back ends, in feature and perf tasks",
+    "code": ["runFeature", "runPerf", "kernelStage", "rejectKernels"],
     "paths": ["knowledge/kernels/*"],
     "dry_run": ["kernel"],
     "unittest": []

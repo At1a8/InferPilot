@@ -931,6 +931,12 @@ const scenarios = [
   }],
 ];
 
+const PREFIXES = new Set(scenarios.map(([name]) => name.split(':')[0]));
+if (ONLY && (!ONLY.size || [...ONLY].some((p) => !PREFIXES.has(p)))) {
+  console.error(`--only: no scenarios named ${[...ONLY].filter((p) => !PREFIXES.has(p)).join(', ') || '(none given)'}; `
+    + `the names begin ${[...PREFIXES].join(', ')}`);
+  process.exit(2);
+}
 for (const [name, fn] of scenarios) {
   if (ONLY && !ONLY.has(name.split(':')[0])) continue;
   const before = failed;

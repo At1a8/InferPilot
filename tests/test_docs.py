@@ -18,6 +18,7 @@ BASH = {"SECONDS", "RANDOM", "LINENO", "BASH_SOURCE", "BASH_REMATCH", "PIPESTATU
 # Their variables are the READMEs' to document; any other script documents its own.
 USER_FACING = ["inferpilot/bootstrap.py", "setup.py", "scripts/run_docker.sh", "runtime/*.mjs"]
 ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
 
 
 def shell_code(text):
@@ -25,7 +26,7 @@ def shell_code(text):
     out, i, n, dq = [], 0, len(text), False
     while i < n:
         c = text[i]
-        heredoc = None if dq else re.match(r"<<-?\s*(['\"]?)([A-Za-z_]\w*)\1", text[i:])
+        heredoc = HEREDOC.match(text, i) if c == "<" and not dq else None
         if heredoc:
             body = text.find("\n", i)
             end = re.compile(r"^\s*%s$" % heredoc.group(2), re.M).search(text, body + 1) if body >= 0 else None

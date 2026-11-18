@@ -90,8 +90,8 @@ if [ "$groups" = "$every" ]; then
   step "dry run: all (tests/dry_run.mjs)" node tests/dry_run.mjs
   step "unit tests: all" python3 -B -m unittest discover -s tests
 else
-  step "dry run: basic ${groups}" node tests/dry_run.mjs --only "$(python3 -B tests/groups.py dry-run $groups)"
-  step "unit tests: basic ${groups}" python3 -B tests/groups.py unittest $groups
+  step "dry run: basic and those groups" node tests/dry_run.mjs --only "$(python3 -B tests/groups.py dry-run $groups)"
+  step "unit tests: basic and those groups" python3 -B tests/groups.py unittest $groups
 fi
 
 if [ ${#failed[@]} -eq 0 ]; then
