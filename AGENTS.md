@@ -31,7 +31,8 @@ user's login as their name). Ask which one when there are several, or none.
    ```
 
    `--backend cursor` needs `bootstrap --cursor` and a logged-in CLI (`agent status`); `--backend claude`
-   needs `bootstrap --runner` and Claude Code's API access (README step 1).
+   needs Claude Code and Node.js (`bootstrap --cursor --claude`, or `--runner`) and Claude Code's API access
+   (README step 1).
 3. Tell the user where it runs (the log and the result file) and stop; look again when they ask.
 
 ## Watch it

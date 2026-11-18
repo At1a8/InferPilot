@@ -14,7 +14,8 @@ state warns and leaves it alone.
   keys          (root in a container) find your keys file: INFERPILOT_KEYS, else ~/.inferpilot_env, where
                 run_docker.sh mounts yours; in a container that mounts /home, the one in your home there
                 (INFERPILOT_HOST_HOME, else, with a warning, the home of the user the container is named after)
-  claude        install the Claude Code CLI if it is still missing; update one older than inferpilot.js needs
+  claude        (--claude, the default with neither --claude nor --cursor) install the Claude Code CLI if it
+                is still missing; update one older than inferpilot.js needs
   path          put the CLI's directory on PATH for new shells (one marked block in ~/.bashrc)
   claude-config (root in a container) answer Claude Code's first-start questions in its config: the
                 onboarding, trust in the InferPilot checkout, bypass permissions mode, and an Anthropic API
@@ -40,16 +41,16 @@ state warns and leaves it alone.
                 (~/.local/bin). A Node.js 20+ already there is kept
   cursor        (--cursor) the Cursor CLI (agent) from cursor.com/install, for runtime/run.mjs --backend
                 cursor; one already there is kept. Logging it in is yours: NO_OPEN_BROWSER=1 agent login,
-                or CURSOR_API_KEY. --no-claude leaves the claude, path and claude-config steps out
+                or CURSOR_API_KEY. --cursor without --claude leaves the claude, path and claude-config steps out
   checks        git, docker (host only), ROCm, sglang, evalscope, Node.js, API access, GitHub token, and
                 with --cursor the Cursor CLI (detect only)
 
-  python3 -B -m inferpilot.bootstrap [--framework-dir DIR]
-  python3 -B -m inferpilot.bootstrap --runner        # also Node.js, for runtime/run.mjs --backend claude
-  python3 -B -m inferpilot.bootstrap --cursor        # also Node.js and the Cursor CLI (--backend cursor)
-  python3 -B -m inferpilot.bootstrap --cursor --no-claude   # the Cursor CLI instead of Claude Code
-  python3 -B -m inferpilot.bootstrap --claude-only   # the keys, claude, path and claude-config steps
-  python3 -B -m inferpilot.bootstrap --check         # the checks
+  python3 -B -m inferpilot.bootstrap [--framework-dir DIR]   # Claude Code, as --claude
+  python3 -B -m inferpilot.bootstrap --cursor --claude       # Claude Code, Node.js and the Cursor CLI
+  python3 -B -m inferpilot.bootstrap --cursor                # Node.js and the Cursor CLI, no Claude Code
+  python3 -B -m inferpilot.bootstrap --runner                # Claude Code and Node.js (--backend claude)
+  python3 -B -m inferpilot.bootstrap --claude-only           # the keys, claude, path and claude-config steps
+  python3 -B -m inferpilot.bootstrap --check                 # the checks
 
 Environment (a flag wins over its variable):
   INFERPILOT_HOME, INFERPILOT_REPO_URL, INFERPILOT_REF
@@ -64,7 +65,8 @@ Environment (a flag wins over its variable):
   EVALSCOPE_VERSION, EVALSCOPE_VENV
                                 (container) the evalscope version to install (latest), its venv
                                 (/opt/evalscope)
-  INFERPILOT_CURSOR             1 to run the node and cursor steps, as --cursor does (0 or unset: not)
+  INFERPILOT_CLAUDE, INFERPILOT_CURSOR
+                                1 as --claude, 1 as --cursor (0 or unset: not; neither: Claude Code)
   INFERPILOT_RUNNER             1 to run the node step, as --runner does (0 or unset: not)
   INFERPILOT_NODE_VERSION       (--runner or --cursor) the Node.js to install: 22 for the newest 22.x, or v22.11.0
                                 (default: the newest LTS)
@@ -234,6 +236,8 @@ def settings(env=None, opts=None) -> dict:
     inv = _invocation_dir(env)
     home = env.get("INFERPILOT_HOME") or (inv if is_inferpilot_checkout(inv) else os.path.join(inv, "inferpilot"))
     framework_dir = opts.get("framework_dir") or env.get("INFERPILOT_FRAMEWORK_DIR") or ""
+    cursor = bool(opts.get("cursor")) or _on(env.get("INFERPILOT_CURSOR"))
+    claude = bool(opts.get("claude")) or _on(env.get("INFERPILOT_CLAUDE")) or not cursor
     return {
         "invocation_dir": inv,
         "home": _expand(home, env),
@@ -250,10 +254,9 @@ def settings(env=None, opts=None) -> dict:
         "evalscope_version": env.get("EVALSCOPE_VERSION") or "",
         "evalscope_venv": _expand(env.get("EVALSCOPE_VENV") or EVALSCOPE_VENV, env),
         "evalscope_link": EVALSCOPE_LINK,
-        "cursor": bool(opts.get("cursor")) or _on(env.get("INFERPILOT_CURSOR")),
-        "runner": bool(opts.get("runner") or opts.get("cursor")) or _on(env.get("INFERPILOT_RUNNER"))
-                  or _on(env.get("INFERPILOT_CURSOR")),
-        "claude": not opts.get("no_claude"),
+        "cursor": cursor,
+        "runner": cursor or bool(opts.get("runner")) or _on(env.get("INFERPILOT_RUNNER")),
+        "claude": claude,
         "node_version": env.get("INFERPILOT_NODE_VERSION") or "",
         "node_dir": _expand("/opt/node" if is_root() else "~/.local/node", env),
         "link_dir": "/usr/local/bin" if is_root() else _expand(env.get("CLAUDE_BIN_DIR") or "~/.local/bin", env),
@@ -965,7 +968,7 @@ def keys_defined(path: str) -> set:
 
 def check_environment(env=None, keys_path: str = "", cursor: bool = False, claude: bool = True) -> dict:
     """keys_path: ~/.inferpilot_env, which new shells load; what it sets counts before this shell has it.
-    cursor: also check the Cursor CLI (--cursor); claude: check Claude Code's API access (not with --no-claude)."""
+    cursor: also check the Cursor CLI (--cursor); claude: check Claude Code's API access (not with --cursor alone)."""
     env = dict(os.environ if env is None else env)
     for name in keys_defined(keys_path):
         env.setdefault(name, "set in %s" % keys_path)
@@ -1101,23 +1104,22 @@ def main(argv=None) -> int:
     g.add_argument("--check", action="store_true", help="only the environment checks")
     ap.add_argument("--framework-dir", help="framework checkout for tasks; cloned only if missing (INFERPILOT_FRAMEWORK_DIR)")
     ap.add_argument("--framework-repo", help="repository to clone it from (default: sglang; INFERPILOT_FRAMEWORK_REPO)")
+    ap.add_argument("--claude", action="store_true",
+                    help="install Claude Code; the default when neither --claude nor --cursor is given (INFERPILOT_CLAUDE)")
+    ap.add_argument("--cursor", action="store_true",
+                    help="install Node.js and the Cursor CLI, for runtime/run.mjs --backend cursor; without --claude, "
+                         "no Claude Code (INFERPILOT_CURSOR)")
     ap.add_argument("--runner", action="store_true",
                     help="also install Node.js, for runtime/run.mjs, InferPilot's own runner (INFERPILOT_RUNNER)")
-    ap.add_argument("--cursor", action="store_true",
-                    help="also install Node.js and the Cursor CLI, for runtime/run.mjs --backend cursor (INFERPILOT_CURSOR)")
-    ap.add_argument("--no-claude", action="store_true",
-                    help="leave Claude Code out (the claude, path and claude-config steps), e.g. with --cursor")
     a = ap.parse_args([] if argv is None else argv)
-    if a.claude_only and a.no_claude:
-        ap.error("--claude-only and --no-claude contradict each other")
+    if a.claude_only and a.cursor:
+        ap.error("--claude-only sets up Claude Code alone; leave --cursor out")
 
     if os.environ.get("INFERPILOT_SKIP_BOOTSTRAP"):
         log("INFERPILOT_SKIP_BOOTSTRAP set; skipping")
         return 0
     s = settings(opts={"framework_dir": a.framework_dir, "framework_repo": a.framework_repo, "cursor": a.cursor,
-                       "runner": a.runner, "no_claude": a.no_claude})
-    if not s["claude"] and not s["cursor"] and not a.check:
-        ap.error("--no-claude needs --cursor: without Claude Code or the Cursor CLI nothing here could run a task")
+                       "claude": a.claude or a.claude_only, "runner": a.runner})
     container = in_container()
     if a.check:
         if container and is_root() and not keys_file(s):

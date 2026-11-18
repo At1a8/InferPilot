@@ -91,6 +91,13 @@ class VersionAndSettingsTest(unittest.TestCase):
             s = bs.settings({"PWD": str(work), "HOME": d, "INFERPILOT_CURSOR": "1", "INFERPILOT_NODE_VERSION": "22"})
             self.assertEqual((s["cursor"], s["node_version"]), (True, "22"))
             self.assertTrue(bs.settings({"PWD": str(work), "HOME": d}, {"cursor": True})["cursor"])
+            pick = lambda opts, env=None: (lambda s: (s["claude"], s["cursor"], s["runner"]))(
+                bs.settings(dict({"PWD": str(work), "HOME": d}, **(env or {})), opts))
+            self.assertEqual(pick({}), (True, False, False), "neither: Claude Code")
+            self.assertEqual(pick({"cursor": True}), (False, True, True), "--cursor: the Cursor CLI and Node.js")
+            self.assertEqual(pick({"cursor": True, "claude": True}), (True, True, True))
+            self.assertEqual(pick({"runner": True}), (True, False, True))
+            self.assertEqual(pick({}, {"INFERPILOT_CURSOR": "1", "INFERPILOT_CLAUDE": "1"}), (True, True, True))
 
 
 class KeysTest(unittest.TestCase):
@@ -1121,7 +1128,7 @@ class CursorNextStepsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             co = make_checkout(Path(d) / "workspace" / "inferpilot")
             env = {"PWD": "/", "HOME": d, "INFERPILOT_HOME": str(co)}
-            cursor_only = bs.settings(env, {"cursor": True, "no_claude": True})
+            cursor_only = bs.settings(env, {"cursor": True})
             both = bs.settings(env, {"runner": True})
             with mock.patch.object(bs, "in_container", return_value=True), \
                     mock.patch.object(bs, "find_cursor_cli", return_value="/x/agent"), \
@@ -1142,7 +1149,7 @@ class CursorNextStepsTest(unittest.TestCase):
             co = make_checkout(Path(d) / "workspace" / "inferpilot")
             keys = Path(d) / ".inferpilot_env"
             keys.write_text("export GITHUB_TOKEN=t\n")
-            s = bs.settings({"PWD": "/", "HOME": d, "INFERPILOT_HOME": str(co)}, {"cursor": True})
+            s = bs.settings({"PWD": "/", "HOME": d, "INFERPILOT_HOME": str(co)}, {"cursor": True, "claude": True})
             real_access = os.access
             for writable in (True, False):
                 with mock.patch.object(bs, "in_container", return_value=True), \
@@ -1162,7 +1169,7 @@ class CursorNextStepsTest(unittest.TestCase):
 
     def test_without_claude_code_a_missing_keys_file_is_said_for_what_it_holds(self):
         with tempfile.TemporaryDirectory() as d:
-            for opts, said in (({}, "Claude Code here has no API access"), ({"cursor": True, "no_claude": True}, "CURSOR_API_KEY")):
+            for opts, said in (({}, "Claude Code here has no API access"), ({"cursor": True}, "CURSOR_API_KEY")):
                 s = bs.settings({"PWD": "/", "HOME": d}, opts)
                 with mock.patch.object(bs, "keys_file", return_value=""), \
                         mock.patch.object(bs, "find_host_home", return_value=""), Quiet() as q:
@@ -1219,23 +1226,29 @@ class MainTest(unittest.TestCase):
             rc, m = self.run_main(argv, container=True, root=True, env_extra=env)
             self.assertTrue(m["ensure_node"].called and m["ensure_cursor_cli"].called, argv or env)
             self.assertTrue(m["check_environment"].call_args[1].get("cursor"))
-        rc, m = self.run_main(["--cursor", "--claude-only"], container=True, root=True)
-        self.assertFalse(m["ensure_node"].called, "--claude-only stays the Claude Code steps")
+        with self.assertRaises(SystemExit), Quiet():
+            self.run_main(["--cursor", "--claude-only"], container=True, root=True)
+        rc, m = self.run_main(["--claude-only"], container=True, root=True, env_extra={"INFERPILOT_CURSOR": "1"})
+        self.assertTrue(m["ensure_claude_code"].called and not m["ensure_node"].called,
+                        "--claude-only stays the Claude Code steps")
         rc, m = self.run_main(["--runner"], container=True, root=True)
         self.assertTrue(m["ensure_node"].called and not m["ensure_cursor_cli"].called, "--runner is Node.js alone")
 
-    def test_no_claude_leaves_claude_code_out(self):
-        rc, m = self.run_main(["--cursor", "--no-claude"], container=True, root=True)
-        self.assertEqual(rc, 0)
-        self.assertFalse(any(m[n].called for n in ("ensure_claude_code", "ensure_path", "ensure_claude_config")))
-        self.assertTrue(m["ensure_node"].called and m["ensure_cursor_cli"].called and m["ensure_framework"].called)
-        self.assertFalse(m["check_environment"].call_args[1].get("claude"))
-        with self.assertRaises(SystemExit), Quiet():
-            bs.main(["--claude-only", "--no-claude"])
-        with self.assertRaises(SystemExit), Quiet():
-            self.run_main(["--no-claude"], container=True, root=True)
-        rc, m = self.run_main(["--check", "--no-claude"])
-        self.assertEqual(rc, 0, "the checks without Claude Code's API access")
+    def test_claude_and_cursor_choose_what_is_installed(self):
+        """Neither: Claude Code. --cursor: the Cursor CLI alone. Both: both."""
+        claude_steps = ("ensure_claude_code", "ensure_path", "ensure_claude_config")
+        for argv, env, claude, cursor in (([], None, True, False), (["--claude"], None, True, False),
+                                          (["--cursor"], None, False, True), (["--cursor", "--claude"], None, True, True),
+                                          ([], {"INFERPILOT_CURSOR": "1"}, False, True),
+                                          ([], {"INFERPILOT_CURSOR": "1", "INFERPILOT_CLAUDE": "1"}, True, True)):
+            with self.subTest(argv=argv, env=env):
+                rc, m = self.run_main(argv, container=True, root=True, env_extra=env)
+                self.assertEqual(rc, 0)
+                self.assertEqual([m[n].called for n in claude_steps], [claude] * 3)
+                self.assertEqual((m["ensure_node"].called, m["ensure_cursor_cli"].called), (cursor, cursor))
+                self.assertTrue(m["ensure_framework"].called)
+                self.assertEqual((m["check_environment"].call_args[1].get("claude"),
+                                  m["check_environment"].call_args[1].get("cursor")), (claude, cursor))
 
     def test_a_switch_set_to_0_is_off(self):
         for value, on in (("1", True), ("yes", True), ("0", False), ("false", False), ("", False)):
