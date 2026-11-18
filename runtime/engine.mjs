@@ -37,6 +37,13 @@ export function scriptBody(src) {
 
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
 
+export const fmtTokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : `${n}`)
+  .replace(/\.0(?=[kM])/, '');
+export const fmtMinutes = (ms) => {
+  const m = Math.round(ms / 60000);
+  return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
+};
+
 // quietMs: an agent call that showed nothing for that long gets a still-working line (0: never).
 export function createRuntime({
   backend,
@@ -48,12 +55,37 @@ export function createRuntime({
 } = {}) {
   if (!backend || typeof backend.runAgent !== 'function') throw new Error('createRuntime: backend.runAgent is required');
   const slots = new Slots(concurrency);
-  const state = { agents: 0, schemaFailures: 0 };
+  const state = { agents: 0, schemaFailures: 0, done: 0, tokens: 0, tokensKnown: false };
+  const runStarted = Date.now();
   let current = '';
+  // The phases the script says the run passes ("Route: A → B → C" in a log line), for x/y in each phase line.
+  let route = [];
+  const entered = new Set();
+
+  const soFar = () => `${state.done} agent call${state.done === 1 ? '' : 's'}`
+    + `${state.tokensKnown ? `, ${fmtTokens(state.tokens)} tokens` : ''}, ${fmtMinutes(Date.now() - runStarted)}`;
 
   const phase = (title) => {
     current = title;
-    log(`=== PHASE: ${title} ===`);
+    entered.add(title);
+    const at = route.indexOf(title);
+    const head = at >= 0
+      ? `PHASE ${at + 1}/${route.length} [${'#'.repeat(at + 1)}${'-'.repeat(route.length - at - 1)}]: ${title}`
+      : `PHASE${route.length ? ' (off the route)' : ''}: ${title}`;
+    log(`=== ${head} ===${state.done ? `  so far: ${soFar()}` : ''}`);
+  };
+
+  const scriptLog = (msg) => {
+    const m = /\bRoute: (.+)$/.exec(String(msg));
+    if (m) route = m[1].split('→').map((s) => s.trim()).filter(Boolean);
+    log(msg);
+  };
+
+  // One line for the end of a run: how far along its route it got, and what it took.
+  const summary = () => {
+    const phases = route.length ? `${route.filter((t) => entered.has(t)).length}/${route.length} phases of the route`
+      : `${entered.size} phase${entered.size === 1 ? '' : 's'}`;
+    return `${phases}, ${soFar()}`;
   };
 
   // With a schema, the answer is the validated JSON object; a reply that does not parse or validate is
@@ -74,22 +106,33 @@ export function createRuntime({
     const beat = quietMs > 0 ? setInterval(() => {
       if (Date.now() - shown >= quietMs) show(`still working, ${minutes()} min`);
     }, Math.min(quietMs, 60000)) : null;
+    let tokens = null;
+    const done = () => {
+      state.done++;
+      log(`  <- [${where}] ${label}  done in ${minutes()} min`
+        + `${tokens !== null ? `, ${fmtTokens(tokens)} tokens (run total ${fmtTokens(state.tokens)})` : ''}`);
+    };
     try {
       log(`  -> [${where}] ${label} (${backend.name})`);
       let last;
       for (let attempt = 1; attempt <= (opts.schema ? schemaRetries + 1 : 1); attempt++) {
-        const { text } = await backend.runAgent({
+        const { text, usage } = await backend.runAgent({
           prompt: full, label, cwd: opts.cwd, env: opts.env, model: opts.model, timeoutMs: agentTimeoutMs, onProgress: show,
         });
+        if (usage && Number.isFinite(usage.total)) {
+          tokens = (tokens || 0) + usage.total;
+          state.tokens += usage.total;
+          state.tokensKnown = true;
+        }
         if (!opts.schema) {
-          log(`  <- [${where}] ${label}  done in ${minutes()} min`);
+          done();
           return text;
         }
         try {
           const value = extractJson(text);
           const errors = validate(value, opts.schema);
           if (errors.length) throw new Error(`schema: ${errors.slice(0, 3).join('; ')}`);
-          log(`  <- [${where}] ${label}  done in ${minutes()} min`);
+          done();
           return value;
         } catch (e) {
           last = e;
@@ -137,8 +180,8 @@ export function createRuntime({
     } catch (e) {
       throw new Error(`cannot compile ${path}: ${e.message}`);
     }
-    return fn(agent, parallel, pipeline, phase, log, workflow, args, budget);
+    return fn(agent, parallel, pipeline, phase, scriptLog, workflow, args, budget);
   }
 
-  return { agent, parallel, pipeline, phase, log, runScript, state };
+  return { agent, parallel, pipeline, phase, log: scriptLog, runScript, state, summary };
 }

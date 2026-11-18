@@ -18,6 +18,18 @@ function toolLine(tool, args, description) {
   return `${tool}${what ? `: ${String(what).replace(/\s+/g, ' ').trim().slice(0, 160)}` : ''}`;
 }
 
+// The tokens a result event reports, under either CLI's names; cache covers reads and writes.
+function usageOf(u) {
+  if (!u || typeof u !== 'object') return null;
+  const n = (...keys) => keys.reduce((sum, k) => sum + (Number(u[k]) || 0), 0);
+  const input = n('input_tokens', 'inputTokens');
+  const output = n('output_tokens', 'outputTokens');
+  const cache = n('cache_read_input_tokens', 'cacheReadTokens', 'cache_creation_input_tokens', 'cacheWriteTokens');
+  return { input, output, cache, total: input + output + cache };
+}
+
+const resultOf = (e) => ({ result: String(e.result ?? ''), error: Boolean(e.is_error), usage: usageOf(e.usage) });
+
 // What one event of `claude -p --output-format stream-json --verbose` tells: the tool calls of an
 // assistant message, or the final answer.
 function claudeEvent(e) {
@@ -25,7 +37,7 @@ function claudeEvent(e) {
     const content = (e.message && e.message.content) || [];
     return { tools: content.filter((c) => c && c.type === 'tool_use').map((c) => toolLine(c.name, c.input)) };
   }
-  if (e.type === 'result') return { result: String(e.result ?? ''), error: Boolean(e.is_error) };
+  if (e.type === 'result') return resultOf(e);
   return null;
 }
 
@@ -37,7 +49,7 @@ function cursorEvent(e) {
     const kind = Object.keys(call).find((k) => k.endsWith('ToolCall'));
     return kind ? { tools: [toolLine(kind.slice(0, -'ToolCall'.length), (call[kind] || {}).args, (call[kind] || {}).description)] } : null;
   }
-  if (e.type === 'result') return { result: String(e.result ?? ''), error: Boolean(e.is_error) };
+  if (e.type === 'result') return resultOf(e);
   return null;
 }
 
@@ -70,7 +82,8 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
   return {
     name,
     bin,
-    // onProgress(line) hears each tool call as it starts, when the CLI streams events.
+    // onProgress(line) hears each tool call as it starts, when the CLI streams events; the answer comes
+    // with the tokens its result event reports (usage: {input, output, cache, total}, or null).
     runAgent({ prompt, label = 'agent', cwd, env, model, timeoutMs = 0, onProgress = () => {} }) {
       const argv = [...preset.args];
       const m = model || defaultModel;
@@ -86,6 +99,7 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
         let partial = '';
         let answer = null;
         let answerIsError = false;
+        let usage = null;
         let timer = null;
         let killed = false;
         const stop = (signal) => {
@@ -110,6 +124,7 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
           if (said.result !== undefined) {
             answer = said.result;
             answerIsError = said.error;
+            usage = said.usage || null;
           }
         };
         child.stdout.setEncoding('utf8');
@@ -136,7 +151,7 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
           else if (code !== 0) reject(new Error(`${name} [${label}] exited ${code ?? signal}: ${err.slice(-600)}`));
           else if (answer !== null && answerIsError) reject(new Error(`${name} [${label}] ended in an error: ${answer.slice(-600)}`));
           // No result event: a CLI that printed its answer as plain text.
-          else resolve({ text: answer !== null ? answer : out });
+          else resolve({ text: answer !== null ? answer : out, usage });
         });
         if (timeoutMs > 0) {
           timer = setTimeout(() => {
