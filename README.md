@@ -474,11 +474,13 @@ step 3 too, cloning InferPilot to `/workspace/inferpilot` (pip shows the output 
 | `INFERPILOT_HOME` | bootstrap | `./inferpilot`, or the checkout you run from |
 | `INFERPILOT_KEYS` | bootstrap | root's `~/.inferpilot_env`, where run_docker.sh mounts yours: the keys file the container's shells load |
 | `INFERPILOT_HOST_HOME` | `scripts/run_docker.sh` (with `/home` mounted), bootstrap | in a container that mounts `/home`, your home there, where the bootstrap looks for the keys file (without it, the home of the user the container is named after) |
+| `INFERPILOT_CONTAINER` | `scripts/run_docker.sh` sets it; bootstrap, `scripts/run_lock.py` | the container's name (without it, Docker's answer when the socket is mounted): the bootstrap looks for the keys file in the home of the user it names, and the run lock records it as the holder |
 | `INFERPILOT_REPO_URL`, `INFERPILOT_REF` | bootstrap | `https://github.com/At1a8/inferpilot.git`, its default branch |
 | `CLAUDE_VERSION`, `CLAUDE_BIN_DIR` | bootstrap | `latest`, `~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code, bootstrap | unset (`~`): Claude Code's own, where its config lives; the bootstrap writes the first-start answers there |
 | `EVALSCOPE_VERSION`, `EVALSCOPE_VENV` | bootstrap | `latest`, `/opt/evalscope` |
 | `INFERPILOT_CLAUDE`, `INFERPILOT_CURSOR`, `INFERPILOT_RUNNER`, `INFERPILOT_NODE_VERSION` | bootstrap | unset; `1` as `--claude`, `--cursor` and `--runner` (`0` is off; with neither of the first two, Claude Code); the newest Node.js LTS (`22` for the newest 22.x, or an exact `v22.11.0`) |
+| `INFERPILOT_CLAUDE_BIN`, `INFERPILOT_CURSOR_BIN` | `runtime/run.mjs` | `claude`, `agent` on `PATH`: the CLIs that `--backend claude` and `--backend cursor` run |
 | `INFERPILOT_GIT_NAME`, `INFERPILOT_GIT_EMAIL` | `~/.inferpilot_env`, bootstrap | unset; the identity root commits with in the container |
 | `INFERPILOT_REPO_TOKEN` | `~/.inferpilot_env`, `scripts/propose_knowledge.py` | unset; a fine-grained token for InferPilot's own repository alone (Contents, Pull requests: read and write), with which the curator opens its pull request |
 | `LLM_GATEWAY_KEY` | `~/.inferpilot_env`, the container's shell settings | unset; set, Claude Code runs on the AMD LLM gateway unless `ANTHROPIC_BASE_URL` names another |
@@ -600,11 +602,33 @@ restores `knowledge/` in the checkout, so later runs read only merged knowledge.
 
 ## Tests
 
+Before you push, run `tests/run_all.sh`: offline, without a GPU, in about ten seconds (Python 3.10+ and
+Node.js 20+; shellcheck when installed). CI runs it on GitHub's runners
+([`.github/workflows/tests.yml`](.github/workflows/tests.yml)): for a pull request, basic and the task groups
+its changes reach; for a push to main, every night and on demand, all of it.
+
+Basic runs for every change: the syntax of every script, shellcheck, the runner, the two backends side by
+side, and the checks below that keep the parts in step. A task group (`feature`, `issue`, `ci`, `perf`,
+`scan`, `kernel`) adds the task's dry-run scenarios and the unit tests of its scripts, and runs when a change
+reaches the task: code of `inferpilot.js` the task runs, a role it calls, or a file such a role reads
+([`tests/groups.json`](tests/groups.json)). A change to what every task shares (`runtime/`, the dry run and
+its fixtures, CI, code the main flow of `inferpilot.js` runs) runs every group.
+
 ```bash
-node tests/dry_run.mjs                            # every control path of inferpilot.js on InferPilot's runner, no GPU
-node tests/runtime_selftest.mjs                   # the runner itself: schema checks, globals, CLI backends; offline
-python3 -m unittest discover -s tests             # the scripts' parsers and rules, the bootstrap, Claude Code's workflow rules, the two READMEs in step; offline
+tests/run_all.sh                                  # basic and every group; it says which step failed, and how
+tests/run_all.sh --changed                        # basic and the groups your changes since origin/main reach, and why
+tests/run_all.sh --group perf,kernel              # basic and these groups
+node tests/dry_run.mjs --only scan,roles          # only the dry-run scenarios named scan: and roles:
 ```
+
+| Kept in step | Checked by |
+|---|---|
+| the two backends: the same prompts, phases, retries, timeouts, models and result on `claude` and `cursor` | `tests/backend_parity.mjs` |
+| the two READMEs: section by section the same headings, commands, inline code, numbers, links and tables | `tests/test_readme.py` |
+| workflow and roles: every phase entered is in `meta.phases`; each mode's route is what it walks and what the READMEs list; every field an answer must have is named in its role's PHASE section | `tests/dry_run.mjs` |
+| code and docs: every variable that setup, `run_docker.sh` and the runner read is in the READMEs, and other scripts name theirs; every flag the READMEs and `AGENTS.md` give exists | `tests/test_docs.py` |
+| the public repository: no token or key, internal host, private address, real home or storage directory, or the name of this machine or its siblings | `tests/test_hygiene.py` |
+| the split: every dry-run scenario and unit test is in basic or a group | `tests/test_groups.py` |
 
 ## Layout
 
@@ -633,8 +657,9 @@ inferpilot/
 │                            # restore_owner.sh, run_in_tmux.sh
 ├── inferpilot/bootstrap.py  # setup step 3, in the container; safe to re-run
 ├── setup.py, pyproject.toml # packaging; setup.py runs the bootstrap when pip builds the wheel
-├── tests/                   # dry run of inferpilot.js, the runner's self-test, unit tests of the scripts, the
-│                            # bootstrap, Claude Code's workflow rules and the READMEs
+├── tests/                   # run_all.sh, groups.json; dry run of inferpilot.js, the runner's self-test, the two
+│                            # backends side by side, unit tests of the scripts, the bootstrap and the docs
+├── .github/                 # CI (workflows/tests.yml runs tests/run_all.sh) and the pull request template
 ├── README.md, README.zh-CN.md
 └── docs/design.md
 ```

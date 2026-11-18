@@ -10,6 +10,9 @@
 # `claude -p "use inferpilot.js ..."` is no substitute: the Workflow tool runs inferpilot.js in the
 # background, print mode answers within seconds and then ends the process, and the run dies with it.
 #
+# INFERPILOT_TMUX names the session (default inferpilot) and INFERPILOT_HOME the checkout (default the one
+# this script is in); it looks for the prompt TRIES times (default 90), POLL_S seconds apart (default 2).
+#
 # Exit 0 = task handed over, 2 = usage or no tmux, 3 = a first-start question is up (the bootstrap's
 # claude-config step did not answer it), 4 = Claude Code asks to log in (no key), 5 = no prompt in time.
 set -u

@@ -1,0 +1,51 @@
+# tests/run_all.sh on GitHub's runners: offline, no GPU, no secrets. A pull request runs basic and the task
+# groups its changes reach (--changed); a push to main, the nightly run and a manual run run every group.
+# Once with the oldest Python and Node.js InferPilot supports (a host's), once with the newest (the
+# container's Python, the Node.js LTS bootstrap --runner installs).
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 18 * * *'  # 02:00 UTC+8
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  # a newer push to a pull request replaces its run; every commit on main keeps its run of every group
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tests:
+    name: tests (Python ${{ matrix.python }}, Node.js ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: '3.10'
+            node: '20'
+          - python: '3.12'
+            node: 'lts/*'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # --changed diffs against where the branch left its base
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: tests/run_all.sh
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then tests/run_all.sh --changed "origin/$BASE"; else tests/run_all.sh; fi

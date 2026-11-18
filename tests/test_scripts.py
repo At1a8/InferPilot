@@ -257,6 +257,7 @@ class EvalAccuracyTest(unittest.TestCase):
         (fake / "evalscope").write_text(textwrap.dedent("""\
             #!/bin/bash
             echo "$*" >> "$CALLS"
+            printf '%s\\n' "$@" > "$CALLS.argv"
             while [ $# -gt 0 ]; do
               case "$1" in --work-dir) wd=$2; shift ;; --datasets) ds=$2; shift ;; esac
               shift
@@ -290,6 +291,20 @@ class EvalAccuracyTest(unittest.TestCase):
         summary = (self.tmp / "results" / "summary.txt").read_text()
         self.assertIn("eval gsm8k: accept_length=[4.0]", summary)
         self.assertIn("'num': 1319", summary)
+
+    def test_options_reach_evalscope_whole(self):
+        data = self.tmp / "long bench"
+        data.mkdir()
+        (data / "default_test.jsonl").write_text('{"q": 1}\n')
+        cache = self.tmp / "my cache"
+        r = self.run_script("longbench_v2", LONGBENCH_LOCAL_PATH=str(data), LIMIT="5", CACHE_DIR=str(cache),
+                            RERUN_REVIEW="1")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        argv = Path(str(self.calls) + ".argv").read_text().splitlines()
+        self.assertEqual(json.loads(argv[argv.index("--dataset-args") + 1])["longbench_v2"]["local_path"], str(data))
+        self.assertEqual(argv[argv.index("--limit") + 1], "5")
+        self.assertEqual(argv[argv.index("--use-cache") + 1], str(cache))
+        self.assertIn("--rerun-review", argv)
 
     def test_a_judged_set_without_a_key_is_skipped(self):
         r = self.run_script("simple_qa")

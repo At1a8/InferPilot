@@ -1,0 +1,52 @@
+{
+  "basic": {
+    "about": "every pull request: syntax, shellcheck, the runner and both backends, setup, the READMEs and docs, the repository's hygiene, and the machinery every task shares",
+    "shared": ["runtime/*", "tests/run_all.sh", "tests/groups.py", "tests/groups.json", "tests/dry_run.mjs", "tests/fixtures/*", ".github/workflows/*"],
+    "dry_run": ["agents", "setup", "lock", "image", "stop_after", "implement", "rollback", "review", "pr", "phases", "routes", "roles", "skills", "schemas", "arguments", "intake", "groups"],
+    "unittest": ["test_bootstrap", "test_claude_code_rules", "test_docs", "test_groups", "test_hygiene", "test_readme", "test_templates",
+                 "test_scripts.LatestImageTest", "test_scripts.ProposeKnowledgeTest", "test_scripts.RunInTmuxTest", "test_scripts.RunLockTest"]
+  },
+  "feature": {
+    "about": "bring an upstream feature to AMD",
+    "code": ["runFeature"],
+    "paths": ["knowledge/feature_skills/*"],
+    "dry_run": ["feature"],
+    "unittest": ["test_scripts.FindSkillTest", "test_scripts.EvalAccuracyTest"]
+  },
+  "issue": {
+    "about": "triage, reproduce and fix an issue",
+    "code": ["runIssue"],
+    "paths": [],
+    "dry_run": ["issue"],
+    "unittest": ["test_scripts.ScanIssuesTest"]
+  },
+  "ci": {
+    "about": "a failing CI job to its fix",
+    "code": ["runCi"],
+    "paths": [],
+    "dry_run": ["ci"],
+    "unittest": ["test_scripts.ScanCiTest"]
+  },
+  "perf": {
+    "about": "a performance goal to a measured win; some of its scenarios run a feature task",
+    "code": ["runPerf", "runFeature"],
+    "paths": [],
+    "dry_run": ["perf"],
+    "unittest": ["test_scripts.EvalAccuracyTest"]
+  },
+  "scan": {
+    "about": "collect and dispatch, and the daily report",
+    "code": ["runScan"],
+    "paths": [],
+    "dry_run": ["scan"],
+    "unittest": ["test_scripts.ScanCiTest", "test_scripts.ScanIssuesTest", "test_scripts.ScanUpstreamTest", "test_scripts.DailyReportTest",
+                 "test_scripts.AuditPlatformGatesTest", "test_scripts.AuditHostSyncsTest", "test_scripts.CheckFrameworkSkillsTest"]
+  },
+  "kernel": {
+    "about": "kernel hand-offs and their back ends, in feature and perf tasks",
+    "code": ["runFeature", "runPerf", "kernelStage", "rejectKernels"],
+    "paths": ["knowledge/kernels/*"],
+    "dry_run": ["kernel"],
+    "unittest": []
+  }
+}

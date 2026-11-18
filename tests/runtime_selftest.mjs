@@ -118,9 +118,12 @@ return { a, b, par, nested, n: args.n, budget: budget.remaining() };`);
     const b = cliBackend('fake', { preset: preset(argCli, 'arg') });
     const short = await b.runAgent({ prompt: 'do it', label: 'y' });
     check(short.text.includes('stdin-closed') && short.text.includes('last=do it'), `arg: ${short.text}`);
-    const long = await b.runAgent({ prompt: 'z'.repeat(150 * 1024), label: 'big/role' });
-    const file = (/in (\S+)\. Read/.exec(long.text) || [])[1];
-    check(file && existsSync(file) && readFileSync(file, 'utf8').length === 150 * 1024, `a long prompt goes in a file: ${long.text.slice(0, 160)}`);
+    // 128 KiB: one more byte than Linux takes in a single argument.
+    const fileCli = fakeCli('file.sh', 'for a; do last=$a; done; f=${last#*instructions are in }; f=${f%%. Read*}; echo "file=$f size=$(wc -c < "$f")"');
+    const long = await cliBackend('fake', { preset: preset(fileCli, 'arg') }).runAgent({ prompt: 'z'.repeat(128 * 1024), label: 'big/role' });
+    const file = (/file=(\S+)/.exec(long.text) || [])[1];
+    check(file && long.text.includes(`size=${128 * 1024}`), `a long prompt goes in a file the CLI reads: ${long.text.slice(0, 160)}`);
+    check(file && !existsSync(file.replace(/\/[^/]+$/, '')), `and its directory is gone once the CLI is done: ${file}`);
     const rt = createRuntime({ backend: cliBackend('fake', { preset: preset(stdinCli, 'stdin') }), log: quiet });
     check((await rt.agent('q', { schema: SCHEMA })).ok === true, 'a structured answer through a real process');
   }],
