@@ -63,3 +63,30 @@ Return:
 {"reproduced": true, "reproduced_on_reporter": true, "repro_cmd": "bash /abs/RUN_DIR/repro.sh",
  "perf_claim": "<performance issues only>", "evidence": "<counts, logs, environment>"}
 ```
+
+## PHASE=reply (before the report)
+
+Inputs: `status`, `stopped_at`, `phases`, the triage record, the reproduction (`repro_cmd` and its
+evidence in `RUN_DIR/experiment_ledger.md`), `known_issues`, and what the run produced
+(`pr_body_path`, the validation report). The draft written at Triage predates all of it.
+
+1. Keep the Triage draft as `RUN_DIR/reply_draft_triage.md`, then rewrite `RUN_DIR/reply_draft.md`
+   from how the run ended: what was checked (image, commit, platform, configuration), the result with
+   its counts, and the next step and who owns it. State only what the run showed; drop every step
+   the Triage draft promised that did not happen, and say what was not covered.
+   - `ready_for_review`: what the fix changes and how it was verified; a `<PR link>` placeholder, since
+     the human opens the PR.
+   - `fixed_on_main`: on which code it fails and on which it passes, the fixing commit when Bisect
+     named one, and a request to confirm on a current image.
+   - `not_reproduced`, `diagnosed`: the environment, duration and counts, or the root cause, and the
+     exact information or test that would move it on.
+   - `blocked`, `stopped`: what was done so far, without a conclusion.
+   A failure the run found on the baseline as well (`known_issues`) is reported as what was seen and
+   where, not as part of this issue; whether it gets an issue of its own is the human's call.
+2. Update the *Reply draft* section of `RUN_DIR/issue_triage.md` to the same text.
+
+Return:
+
+```json
+{"reply_draft_path": "/abs/RUN_DIR/reply_draft.md", "summary": "<the reply in one sentence>"}
+```

@@ -40,6 +40,7 @@ const DEFAULTS = {
   'curator:learn': () => ({ updates: [{ file: 'knowledge/known_issues.md', change: 'none' }], skill_status: 'draft' }),
   'issue_triager:triage': () => ({ priority: 'P0', category: 'crash', action: 'reproduce', reason: 'default config crash', existing_prs: [], triage_path: `${RUN}/issue_triage.md`, reply_draft_path: `${RUN}/reply.md` }),
   'issue_triager:reproduce': () => ({ reproduced: true, repro_cmd: 'bash repro.sh', evidence: 'segfault 3/3' }),
+  'issue_triager:reply': () => ({ reply_draft_path: `${RUN}/reply_draft.md`, summary: 'fix prepared, PR to follow' }),
   'ci_guardian:classify': () => ({ failure_class: 'code_regression', failing_test_cmd: 'pytest test_x.py', window: 'a..b', evidence: 'new regression since 10-21', triage_path: `${RUN}/ci_triage.md` }),
   'ci_guardian:bisect': () => ({ culprit: 'deadbeef', confirmed: true, work_packages: [WP('WP1')], evidence: 'fails at culprit, passes at parent' }),
   'ci_guardian:bisect_fix': () => ({ fix_commit: 'feedface', confirmed: true, evidence: 'fails at parent, passes at fix' }),
@@ -416,16 +417,36 @@ const scenarios = [
   ['issue: reproduce, diagnose, fix, verify with the reproduction as a gate', async () => {
     const r = await run({ mode: 'issue', task: 'https://github.com/sgl-project/sglang/issues/38849' });
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
-    check(eqList(r.phases, ['Setup', 'Triage', 'Reproduce', 'Diagnose', 'Implement', 'Verify', 'Review', 'PR', 'Report']), `phases ${r.phases}`);
+    check(eqList(r.phases, ['Setup', 'Triage', 'Reproduce', 'Diagnose', 'Implement', 'Verify', 'Review', 'PR', 'Reply', 'Report']), `phases ${r.phases}`);
     const v = r.calls.find((c) => c.key === 'verify_engineer:verify');
     check(v && JSON.stringify(v.ins.extra_gates).includes('issue_repro'), 'issue_repro gate passed to verify');
     check(r.result.priority === 'P0', 'priority recorded');
+  }],
+  ['issue: the reply draft is rewritten from how the run ended, before the report', async () => {
+    const r = await run({ mode: 'issue', task: 'i' });
+    const reply = r.calls.find((c) => c.key === 'issue_triager:reply');
+    check(reply && reply.ins.status === 'ready_for_review' && reply.ins.pr_body_path, 'the reply sees the outcome and the PR body');
+    const at = r.keys.indexOf('issue_triager:reply');
+    check(at >= 0 && at < r.keys.indexOf('director:report'), 'before the report');
+    const rep = r.calls.find((c) => c.key === 'director:report');
+    check(rep && rep.ins.reply_draft_path === `${RUN}/reply_draft.md` && r.result.reply_draft_path === `${RUN}/reply_draft.md`,
+      'the report and the result name the rewritten draft');
+    const failed = await run({ mode: 'issue', task: 'i' }, { 'issue_triager:reply': () => null });
+    check(failed.result.status === 'ready_for_review' && failed.result.reply_draft_path === `${RUN}/reply.md`,
+      `a failed rewrite keeps the Triage draft and the report: ${failed.result.reply_draft_path}`);
+    const fixed = await run({ mode: 'issue', task: 'i' }, { 'issue_triager:reproduce': () => ({ reproduced: false,
+      reproduced_on_reporter: true, repro_cmd: 'bash repro.sh', evidence: 'reporter 3/3 crash; main 6/6 pass' }) });
+    const fr = fixed.calls.find((c) => c.key === 'issue_triager:reply');
+    check(fr && fr.ins.status === 'fixed_on_main' && fr.ins.stopped_at === 'Reproduce', 'a conclusion without a fix gets its reply too');
+    const early = await run({ mode: 'issue', task: 'i' }, { 'issue_triager:triage': () => null });
+    check(!early.keys.includes('issue_triager:reply'), 'no triage, no reply to rewrite');
   }],
   ['issue: needs_info ends at triage with a reply draft', async () => {
     const r = await run({ mode: 'issue', task: 'i' }, {
       'issue_triager:triage': () => ({ priority: 'P1', category: 'crash', action: 'needs_info', triage_path: `${RUN}/t.md`, reply_draft_path: `${RUN}/reply.md` }),
     });
     check(r.result.status === 'triaged' && r.result.stopped_at === 'Triage', `status ${r.result.status}`);
+    check(!r.keys.includes('issue_triager:reply') && r.result.reply_draft_path === `${RUN}/reply.md`, 'the Triage draft is the reply');
   }],
   ['issue: close_fixed that no longer reproduces', async () => {
     const r = await run({ mode: 'issue', task: 'i' }, {
@@ -469,7 +490,7 @@ const scenarios = [
       'issue_triager:triage': () => ({ priority: 'P1', category: 'crash', action: 'push_existing_pr', existing_prs: ['#40872'], triage_path: `${RUN}/t.md` }),
     });
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
-    check(eqList(r.phases, ['Setup', 'Triage', 'Reproduce', 'Implement', 'Verify', 'Review', 'PR', 'Report']), `phases ${r.phases}`);
+    check(eqList(r.phases, ['Setup', 'Triage', 'Reproduce', 'Implement', 'Verify', 'Review', 'PR', 'Reply', 'Report']), `phases ${r.phases}`);
     const im = r.calls.find((c) => c.key === 'implementer:implement');
     check(im && im.ins.work_package.kind === 'apply_pr' && im.ins.work_package.goal.includes('#40872'), 'apply_pr work package');
     const v = r.calls.find((c) => c.key === 'verify_engineer:verify');

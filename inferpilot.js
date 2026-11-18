@@ -24,6 +24,7 @@ export const meta = {
     { title: 'PR', detail: 'pr_engineer: hygiene, lint, upstream sync, pr_body.md, exact push command; never pushes' },
     { title: 'Collect', detail: 'scout: the AMD CI on main, user issues, upstream changes (platform gates, host syncs on request) -> candidates; asks first when a report from the last 24 hours exists [scan]' },
     { title: 'Dispatch', detail: 'dispatcher: type, level, priority, dependencies, effort, ranking, ecosystem-matrix changes -> the daily report [scan]' },
+    { title: 'Reply', detail: 'issue_triager: the reply draft rewritten from how the run ended; the Triage draft is kept beside it [issue]' },
     { title: 'Report', detail: 'director: final report for every outcome of a run that has its run directory (for a scan, the daily report a human shares), then frees the machine; curator: knowledge updates, proposed as a pull request to InferPilot\'s own repository' },
   ],
 };
@@ -478,6 +479,7 @@ const TRIAGE = S({
 // image or commit, left out when that could not run here.
 const REPRO = S({ reproduced: bool, reproduced_on_reporter: bool, repro_cmd: str, perf_claim: str, evidence: str },
   ['reproduced', 'repro_cmd', 'evidence']);
+const REPLY = S({ reply_draft_path: str, summary: str }, ['reply_draft_path']);
 const DIAG = S({
   verdict: { type: 'string', enum: ['fix_needed', 'baseline_bug', 'not_amd_side', 'inconclusive'] },
   root_cause: str,
@@ -620,6 +622,13 @@ async function finish(status, at) {
   R.status = status;
   R.stopped_at = at || '';
   if (C.run_dir) {
+    // The Triage draft predates every result: by now it promises steps that were done, or changed.
+    if (MODE === 'issue' && C.triage_path && at !== 'Triage') {
+      enter('Reply');
+      const rp = await call('issue_triager', 'reply', inputs({ status, stopped_at: at || '', phases: R.phases }), REPLY);
+      if (rp && String(rp.reply_draft_path || '').trim()) C.reply_draft_path = rp.reply_draft_path;
+    }
+    if (MODE === 'issue') R.reply_draft_path = C.reply_draft_path || '';
     enter('Report');
     const rep = await call('director', 'report',
       inputs({ status, stopped_at: at || '', phases: R.phases, handoffs: R.handoffs, attention: R.attention }), REPORT);
