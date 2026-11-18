@@ -64,9 +64,9 @@ Environment (a flag wins over its variable):
   EVALSCOPE_VERSION, EVALSCOPE_VENV
                                 (container) the evalscope version to install (latest), its venv
                                 (/opt/evalscope)
-  INFERPILOT_CURSOR             set to run the node and cursor steps, as --cursor does
-  INFERPILOT_RUNNER             set to run the node step, as --runner does
-  INFERPILOT_NODE_VERSION       (--cursor) the Node.js to install: 22 for the newest 22.x, or v22.11.0
+  INFERPILOT_CURSOR             1 to run the node and cursor steps, as --cursor does (0 or unset: not)
+  INFERPILOT_RUNNER             1 to run the node step, as --runner does (0 or unset: not)
+  INFERPILOT_NODE_VERSION       (--runner or --cursor) the Node.js to install: 22 for the newest 22.x, or v22.11.0
                                 (default: the newest LTS)
   INFERPILOT_FRAMEWORK_DIR, INFERPILOT_FRAMEWORK_REPO
                                 --framework-dir (default: the image's checkout), --framework-repo
@@ -88,6 +88,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 
 CLAUDE_MIN_VERSION = "2.1.177"  # first Claude Code with the dynamic Workflow tool inferpilot.js runs in
 DEFAULT_REPO_URL = "https://github.com/At1a8/inferpilot.git"
@@ -222,6 +223,11 @@ def is_inferpilot_checkout(path: str) -> bool:
             and os.path.isdir(os.path.join(path, "roles")))
 
 
+def _on(value) -> bool:
+    """A switch from the environment: set, and not 0, false, no or off."""
+    return str(value or "").strip().lower() not in ("", "0", "false", "no", "off")
+
+
 def settings(env=None, opts=None) -> dict:
     env = os.environ if env is None else env
     opts = opts or {}
@@ -244,8 +250,9 @@ def settings(env=None, opts=None) -> dict:
         "evalscope_version": env.get("EVALSCOPE_VERSION") or "",
         "evalscope_venv": _expand(env.get("EVALSCOPE_VENV") or EVALSCOPE_VENV, env),
         "evalscope_link": EVALSCOPE_LINK,
-        "cursor": bool(opts.get("cursor") or env.get("INFERPILOT_CURSOR")),
-        "runner": bool(opts.get("runner") or env.get("INFERPILOT_RUNNER") or opts.get("cursor") or env.get("INFERPILOT_CURSOR")),
+        "cursor": bool(opts.get("cursor")) or _on(env.get("INFERPILOT_CURSOR")),
+        "runner": bool(opts.get("runner") or opts.get("cursor")) or _on(env.get("INFERPILOT_RUNNER"))
+                  or _on(env.get("INFERPILOT_CURSOR")),
         "claude": not opts.get("no_claude"),
         "node_version": env.get("INFERPILOT_NODE_VERSION") or "",
         "node_dir": _expand("/opt/node" if is_root() else "~/.local/node", env),
@@ -398,7 +405,11 @@ def ensure_keys(s: dict) -> tuple[str, str]:
              "Run this again with INFERPILOT_KEYS=<your keys file> in front"
              % (os.path.join(s["user_home"], KEYS_FILE), keys, s["container_name"]))
         return "found", keys
-    warn("keys: %s; Claude Code here has no API access until there is one (see the next steps)" % keys_missing(s))
+    if s.get("claude", True):
+        warn("keys: %s; Claude Code here has no API access until there is one (see the next steps)" % keys_missing(s))
+    else:
+        warn("keys: %s; CURSOR_API_KEY, GITHUB_TOKEN and your git identity would come from it (see the next steps)"
+             % keys_missing(s))
     return "skipped", "no keys file"
 
 
@@ -791,6 +802,8 @@ def install_node(version: str, dest: str, fetch=_fetch) -> str:
     """Unpack node-<version>-<platform>.tar.xz into dest, a directory that does not exist yet, after
     checking it against the release's SHASUMS256.txt; '' on success, else what went wrong."""
     name = "node-%s-%s" % (version, node_platform())
+    if os.path.lexists(dest):
+        return "%s is there without bin/node; move it away and run this again" % dest
     sums = fetch("%s/%s/SHASUMS256.txt" % (NODE_DIST, version)).decode()
     want = next((line.split()[0] for line in sums.splitlines() if line.endswith("  %s.tar.xz" % name)), "")
     if not want:
@@ -885,9 +898,19 @@ def ensure_cursor_cli(s: dict) -> tuple[str, str]:
         warn("cursor: curl not found; cannot run the Cursor CLI installer (%s)" % CURSOR_INSTALL)
         return "failed", "no curl"
     log("cursor: installing the Cursor CLI (%s)" % CURSOR_INSTALL)
-    if _run("curl -fsS --connect-timeout 20 %s | bash" % CURSOR_INSTALL, shell=True).returncode != 0:
-        warn("cursor: the Cursor CLI installer failed; it needs cursor.com, *.cursor.sh and *.cursorapi.com")
-        return "failed", CURSOR_INSTALL
+    fd, script = tempfile.mkstemp(prefix="cursor-install-", suffix=".sh")
+    os.close(fd)
+    try:
+        # Downloaded first: piped into bash, a failed download would pass for an installer that ran.
+        if _run(["curl", "-fsS", "--connect-timeout", "20", "-o", script, CURSOR_INSTALL]).returncode != 0:
+            warn("cursor: could not download the Cursor CLI installer (%s); check the network and run this again"
+                 % CURSOR_INSTALL)
+            return "failed", CURSOR_INSTALL
+        if _run(["bash", script]).returncode != 0:
+            warn("cursor: the Cursor CLI installer failed; it needs cursor.com, *.cursor.sh and *.cursorapi.com")
+            return "failed", CURSOR_INSTALL
+    finally:
+        os.unlink(script)
     path = find_cursor_cli(s)
     if not path:
         warn("cursor: the installer ran, but no agent is in ~/.local/bin or ~/.cursor/bin")
@@ -985,6 +1008,18 @@ def summary(results: list) -> str:
     return "summary (safe to re-run: what is already there is kept):\n" + "\n".join(rows)
 
 
+def keys_place(s: dict, keys: str, container: bool) -> str:
+    """Where a key goes in a container: the keys file new shells load, or, when that is run_docker.sh's
+    read-only copy of yours, your file on the host."""
+    if keys and os.access(keys, os.W_OK):
+        return "in %s, which new shells load" % keys
+    if keys:
+        return ("in ~/%s on the host, which containers started after it get (%s here is a read-only copy), or "
+                "export it in this shell for now" % (KEYS_FILE, keys))
+    return ("in ~/%s on the host (README step 1), which containers started after it get, or for this container "
+            "only in %s" % (KEYS_FILE, os.path.join(s["user_home"], KEYS_FILE)))
+
+
 def next_steps(s: dict, statuses: dict, found: dict | None = None, path_env: str | None = None,
                claude_only: bool = False) -> str:
     c_on, c_off = _styles(sys.stdout)
@@ -1003,13 +1038,7 @@ def next_steps(s: dict, statuses: dict, found: dict | None = None, path_env: str
         env = dict(os.environ, **{name: "set in %s" % keys for name in keys_defined(keys)})
         api = api_configured(env, s["user_home"])
     if not api and s.get("claude", True):
-        if keys:
-            where = "in %s, which new shells load:" % keys
-        elif container:
-            where = ("in ~/%s on the host (README step 1), which containers started after it get, or for this "
-                     "container only in %s:" % (KEYS_FILE, os.path.join(s["user_home"], KEYS_FILE)))
-        else:
-            where = "(pick one; keep it in %s):" % rc_file(s)
+        where = "%s:" % keys_place(s, keys, container) if keys or container else "(pick one; keep it in %s):" % rc_file(s)
         steps.append([
             "Give Claude Code API access %s" % where,
             "a. AMD LLM gateway:     " + hl("export LLM_GATEWAY_KEY=<your key>") + "   (%s)" % AMD_GATEWAY_URL,
@@ -1045,8 +1074,8 @@ def next_steps(s: dict, statuses: dict, found: dict | None = None, path_env: str
             steps.append(["Log the Cursor CLI in (once per container), for runtime/run.mjs --backend cursor:",
                           "a. web login:  " + hl("NO_OPEN_BROWSER=1 agent login")
                           + "   then open the URL it prints where a browser is (q shows a QR code)",
-                          "b. API key:    " + hl("export CURSOR_API_KEY=<key>") + "   in %s (Cursor Dashboard, API Keys)"
-                          % (keys or os.path.join(s["user_home"], KEYS_FILE))])
+                          "b. API key:    " + hl("export CURSOR_API_KEY=<key>") + "   %s (Cursor Dashboard, API Keys)"
+                          % (keys_place(s, keys, container) if keys or container else "in %s" % rc_file(s))])
     runner = [b for b, ok in (("cursor", statuses.get("cursor") in ("kept", "installed")),
                               ("claude", statuses.get("node") in ("kept", "installed", "added") and s.get("claude", True)))
               if ok]
@@ -1087,6 +1116,8 @@ def main(argv=None) -> int:
         return 0
     s = settings(opts={"framework_dir": a.framework_dir, "framework_repo": a.framework_repo, "cursor": a.cursor,
                        "runner": a.runner, "no_claude": a.no_claude})
+    if not s["claude"] and not s["cursor"] and not a.check:
+        ap.error("--no-claude needs --cursor: without Claude Code or the Cursor CLI nothing here could run a task")
     container = in_container()
     if a.check:
         if container and is_root() and not keys_file(s):

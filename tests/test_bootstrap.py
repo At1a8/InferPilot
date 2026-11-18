@@ -978,6 +978,14 @@ class NodeTest(unittest.TestCase):
         self.assertFalse((self.tmp / "node" / "v24.11.1").exists())
         self.assertFalse(os.path.lexists(self.tmp / "bin" / "node"))
 
+    def test_a_partial_install_is_named_not_downloaded_over(self):
+        (self.tmp / "node" / "v24.11.1").mkdir(parents=True)
+        fetch = self.fetcher()
+        with mock.patch.object(bs.shutil, "which", return_value=None), Quiet() as q:
+            self.assertEqual(bs.ensure_node(self.s, fetch=lambda url, timeout=60: fetch(url) if url.endswith("index.json")
+                                            else self.no_fetch(url)), ("failed", "v24.11.1"))
+        self.assertIn("v24.11.1 is there without bin/node; move it away", q.err.getvalue())
+
     def test_another_node_at_the_link_is_left_alone(self):
         old = make_exe(self.tmp / "bin" / "node")
         with mock.patch.object(bs.shutil, "which", return_value=str(old)), \
@@ -1002,21 +1010,25 @@ class CursorCliTest(unittest.TestCase):
 
     def test_missing_is_installed_with_the_official_installer(self):
         def install(cmd, shell=False):
-            make_exe(self.tmp / ".cursor" / "bin" / "agent")
+            if cmd[0] == "bash":
+                make_exe(self.tmp / ".cursor" / "bin" / "agent")
             return OK
         with mock.patch.object(bs.shutil, "which", return_value=None), mock.patch.object(bs, "_has", return_value=True), \
                 mock.patch.object(bs, "_run", side_effect=install) as run, Quiet():
             status, path = bs.ensure_cursor_cli(self.s)
         self.assertEqual(status, "installed")
-        self.assertIn(bs.CURSOR_INSTALL, run.call_args[0][0])
-        self.assertTrue(run.call_args[1].get("shell"))
+        (curl, *_, script, url), (bash, ran) = [c.args[0] for c in run.call_args_list]
+        self.assertEqual((curl, url, bash, ran), ("curl", bs.CURSOR_INSTALL, "bash", script), "downloaded, then run")
+        self.assertFalse(os.path.exists(script), "the downloaded installer is removed")
         self.assertEqual(os.readlink(self.tmp / "bin" / "agent"), path, "linked where PATH finds it")
 
-    def test_a_failed_installer_is_reported(self):
-        with mock.patch.object(bs.shutil, "which", return_value=None), mock.patch.object(bs, "_has", return_value=True), \
-                mock.patch.object(bs, "_run", return_value=SimpleNamespace(returncode=1)), Quiet() as q:
-            self.assertEqual(bs.ensure_cursor_cli(self.s)[0], "failed")
-        self.assertIn("cursorapi.com", q.err.getvalue())
+    def test_a_failed_download_or_installer_is_reported_as_what_it_is(self):
+        for fails, said in (("curl", "could not download the Cursor CLI installer"), ("bash", "cursorapi.com")):
+            run = lambda cmd, shell=False, fails=fails: SimpleNamespace(returncode=1 if cmd[0] == fails else 0)
+            with mock.patch.object(bs.shutil, "which", return_value=None), mock.patch.object(bs, "_has", return_value=True), \
+                    mock.patch.object(bs, "_run", side_effect=run), Quiet() as q:
+                self.assertEqual(bs.ensure_cursor_cli(self.s)[0], "failed")
+            self.assertIn(said, q.err.getvalue(), fails)
 
     def test_logged_in_by_key_or_by_status(self):
         self.assertTrue(bs.cursor_logged_in("", {"CURSOR_API_KEY": "k"}))
@@ -1124,6 +1136,39 @@ class CursorNextStepsTest(unittest.TestCase):
             self.assertIn("--backend claude", runner)
             self.assertNotIn("--backend cursor", runner)
 
+    def test_a_key_goes_where_it_can_be_written(self):
+        """run_docker.sh mounts your keys file read-only: a key then goes in yours on the host."""
+        with tempfile.TemporaryDirectory() as d:
+            co = make_checkout(Path(d) / "workspace" / "inferpilot")
+            keys = Path(d) / ".inferpilot_env"
+            keys.write_text("export GITHUB_TOKEN=t\n")
+            s = bs.settings({"PWD": "/", "HOME": d, "INFERPILOT_HOME": str(co)}, {"cursor": True})
+            real_access = os.access
+            for writable in (True, False):
+                with mock.patch.object(bs, "in_container", return_value=True), \
+                        mock.patch.object(bs, "keys_file", return_value=str(keys)), \
+                        mock.patch.object(bs.os, "access", side_effect=lambda p, m: writable if p == str(keys)
+                                          else real_access(p, m)), \
+                        mock.patch.object(bs, "find_cursor_cli", return_value="/x/agent"), \
+                        mock.patch.object(bs, "cursor_logged_in", return_value=False):
+                    out = bs.next_steps(s, {"cursor": "installed"}, {"api": False}, path_env="/usr/bin")
+                if writable:
+                    self.assertIn("export CURSOR_API_KEY=<key>   in %s, which new shells load" % keys, out)
+                    self.assertIn("Give Claude Code API access in %s, which new shells load:" % keys, out)
+                else:
+                    self.assertIn("export CURSOR_API_KEY=<key>   in ~/.inferpilot_env on the host, which containers "
+                                  "started after it get (%s here is a read-only copy)" % keys, out)
+                    self.assertIn("Give Claude Code API access in ~/.inferpilot_env on the host", out)
+
+    def test_without_claude_code_a_missing_keys_file_is_said_for_what_it_holds(self):
+        with tempfile.TemporaryDirectory() as d:
+            for opts, said in (({}, "Claude Code here has no API access"), ({"cursor": True, "no_claude": True}, "CURSOR_API_KEY")):
+                s = bs.settings({"PWD": "/", "HOME": d}, opts)
+                with mock.patch.object(bs, "keys_file", return_value=""), \
+                        mock.patch.object(bs, "find_host_home", return_value=""), Quiet() as q:
+                    self.assertEqual(bs.ensure_keys(s)[0], "skipped")
+                self.assertIn(said, q.err.getvalue())
+
 
 class MainTest(unittest.TestCase):
     STEPS = ["ensure_checkout", "ensure_keys", "ensure_claude_code", "ensure_path", "ensure_claude_config",
@@ -1187,6 +1232,17 @@ class MainTest(unittest.TestCase):
         self.assertFalse(m["check_environment"].call_args[1].get("claude"))
         with self.assertRaises(SystemExit), Quiet():
             bs.main(["--claude-only", "--no-claude"])
+        with self.assertRaises(SystemExit), Quiet():
+            self.run_main(["--no-claude"], container=True, root=True)
+        rc, m = self.run_main(["--check", "--no-claude"])
+        self.assertEqual(rc, 0, "the checks without Claude Code's API access")
+
+    def test_a_switch_set_to_0_is_off(self):
+        for value, on in (("1", True), ("yes", True), ("0", False), ("false", False), ("", False)):
+            rc, m = self.run_main([], container=True, root=True, env_extra={"INFERPILOT_CURSOR": value})
+            self.assertEqual(m["ensure_cursor_cli"].called, on, value)
+            rc, m = self.run_main([], container=True, root=True, env_extra={"INFERPILOT_RUNNER": value})
+            self.assertEqual(m["ensure_node"].called, on, value)
 
     def test_a_failed_step_sets_the_exit_code(self):
         self.assertEqual(self.run_main([], failing="ensure_framework")[0], 1)
