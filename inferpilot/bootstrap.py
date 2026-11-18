@@ -80,9 +80,11 @@ RC_BEGIN = "# >>> inferpilot: Claude Code CLI on PATH >>>"
 RC_END = "# <<< inferpilot: Claude Code CLI on PATH <<<"
 ENV_BEGIN = "# >>> inferpilot: root in the container >>>"
 ENV_END = "# <<< inferpilot: root in the container <<<"
-# scripts/run_docker.sh names a container after your login unless told otherwise (alice, or alice-0116
-# for the next task): in a container that mounts /home without INFERPILOT_HOST_HOME, that user's home is yours.
+# scripts/run_docker.sh names a new container after your login unless told otherwise (inferpilot_alice_1118_k3x9;
+# older ones alice, or alice-0116): in a container that mounts /home without INFERPILOT_HOST_HOME, that user's
+# home is yours.
 HOMES = "/home"
+NAME_PREFIX = "inferpilot_"
 NAME_SEPARATORS = "-_."
 # Root in the container must not leave root-owned __pycache__ in checkouts on host mounts; Claude Code
 # stays at the version installed here for the container's life (a new container gets the newest).
@@ -323,19 +325,23 @@ def container_name(env=None) -> str:
 
 def home_from_container_name(name: str, homes: str | None = None) -> str:
     """The home of the user a container is named after: <user>, or <user> with a suffix after - _ or .
-    (the longest such user). Only a home with a keys file in it counts (README step 1)."""
+    (the longest such user), also after the inferpilot_ that begins the names scripts/run_docker.sh makes up.
+    Only a home with a keys file in it counts (README step 1)."""
     homes = HOMES if homes is None else homes
     try:
         users = os.listdir(homes)
     except OSError:
         return ""
-    best = ""
-    for u in users:
-        if len(u) <= len(best) or not (name == u or (name.startswith(u) and name[len(u)] in NAME_SEPARATORS)):
-            continue
-        if os.path.isfile(os.path.join(homes, u, KEYS_FILE)):
-            best = u
-    return os.path.join(homes, best) if best else ""
+    for n in ([name[len(NAME_PREFIX):]] if name.startswith(NAME_PREFIX) else []) + [name]:
+        best = ""
+        for u in users:
+            if len(u) <= len(best) or not (n == u or (n.startswith(u) and n[len(u)] in NAME_SEPARATORS)):
+                continue
+            if os.path.isfile(os.path.join(homes, u, KEYS_FILE)):
+                best = u
+        if best:
+            return os.path.join(homes, best)
+    return ""
 
 
 def find_host_home(s: dict, env=None) -> str:

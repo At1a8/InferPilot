@@ -26,7 +26,8 @@
 #                      that it is not a new container             it is not a new container, and when it runs
 #                                                                 another image than IMAGE, that too
 #
-# Without NAME a new container is named <you>_<MMDD>_<4 random letters or digits> (the UTC date), a name no container has, and
+# Without NAME a new container is named inferpilot_<you>_<MMDD>_<4 random letters or digits> (the UTC date), a name
+# no container has, and
 # labelled inferpilot.user=<you>; a new container's name, the way back into it and your other such containers
 # are printed. A container is never removed: run again with its NAME, this starts it if it was stopped and opens
 # a shell in it, /workspace as it was left, and says so when its image is no longer the newest daily one (tasks
@@ -63,10 +64,10 @@ entered() {  # what to run when this script opened no shell
     "${SUDO:+sudo }docker exec -it -w /workspace -e INFERPILOT_CONTAINER=$NAME $NAME bash" >&2
 }
 
-new_name() {  # <you>_<MMDD, UTC>_<4 random letters or digits>, a name no container has
+new_name() {  # inferpilot_<you>_<MMDD, UTC>_<4 random letters or digits>, a name no container has
   local name i
   for i in 1 2 3 4 5 6 7 8; do
-    name="${ME}_$(date -u +%m%d)_$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 4)"
+    name="inferpilot_${ME}_$(date -u +%m%d)_$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 4)"
     $SUDO docker inspect --type container "$name" >/dev/null 2>&1 || { echo "$name"; return 0; }
   done
   return 1

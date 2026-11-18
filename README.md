@@ -217,7 +217,7 @@ What it does depends on whether `NAME` names an existing container and whether `
   repository under the run directory (about 0.2 GB each). The run records the image, the image's sglang
   version and the task's base commit.
 - **One container per task.** Without `NAME`, every run starts a new container, named
-  `<you>_<MMDD>_<4 random letters or digits>` (the UTC date; a name no container has) and labelled
+  `inferpilot_<you>_<MMDD>_<4 random letters or digits>` (the UTC date; a name no container has) and labelled
   `inferpilot.user=<you>`; run_docker.sh prints its name, the command that brings you back
   (`NAME=<name> scripts/run_docker.sh`) and your other InferPilot containers. With `NAME` of an existing
   container it takes you back into it, started again if it was stopped, with `/workspace` as you left it:
@@ -384,7 +384,7 @@ step 3 too, cloning InferPilot to `/workspace/inferpilot` (pip shows the output 
 | Variable | Used by | Default |
 |---|---|---|
 | `IMAGE` | `scripts/run_docker.sh` | the newest daily `rocm/sgl-dev` image of `IMAGE_VARIANT` (the newest local one when Docker Hub cannot be reached) |
-| `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS`, `MOUNT_HOME` | `scripts/run_docker.sh` | detected from gfx942/gfx950 (fallback MI35x), ROCm 10, else 7.2.4, else 7.2.0; a new container's `<you>_<MMDD>_<random>`; more directories to mount, space-separated; `0` leaves `/home` out |
+| `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS`, `MOUNT_HOME` | `scripts/run_docker.sh` | detected from gfx942/gfx950 (fallback MI35x), ROCm 10, else 7.2.4, else 7.2.0; a new container's `inferpilot_<you>_<MMDD>_<random>`; more directories to mount, space-separated; `0` leaves `/home` out |
 | `DOCKER_SOCKET` | `scripts/run_docker.sh` | unset; `1` also mounts the host's Docker socket and `docker` |
 | `DETACH`, `PRIVILEGED` | `scripts/run_docker.sh` | unset: in the background when there is no terminal, else an interactive shell; `PRIVILEGED=0` leaves out `--privileged` |
 | `INFERPILOT_LOCK_FILE` | `scripts/run_lock.py` | `/dev/shm/inferpilot-run.lock`, the machine's one-task lock |

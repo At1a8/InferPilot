@@ -145,9 +145,16 @@ class KeysTest(unittest.TestCase):
         (homes / "ali").mkdir()
         (homes / "ali" / ".inferpilot_env").write_text("")
         make_exe(homes / "bare" / ".local" / "bin" / "claude")
-        for name in ("alice", "alice-0116", "alice_sgl", "alice.dev"):
+        for name in ("alice", "alice-0116", "alice_sgl", "alice.dev", "inferpilot_alice_1118_k3x9"):
             self.assertEqual(bs.home_from_container_name(name, str(homes)), str(homes / "alice"), name)
         self.assertEqual(bs.home_from_container_name("ali-test", str(homes)), str(homes / "ali"))
+        self.assertEqual(bs.home_from_container_name("inferpilot_ali_1118_k3x9", str(homes)), str(homes / "ali"))
+        (homes / "inferpilot").mkdir()
+        (homes / "inferpilot" / ".inferpilot_env").write_text("")
+        self.assertEqual(bs.home_from_container_name("inferpilot_alice_1118_k3x9", str(homes)), str(homes / "alice"),
+                         "the user after the prefix")
+        self.assertEqual(bs.home_from_container_name("inferpilot_1118_k3x9", str(homes)), str(homes / "inferpilot"),
+                         "a user named inferpilot")
         for name in ("alicex", "bare", "bare-1", "nobody", "a"):
             self.assertEqual(bs.home_from_container_name(name, str(homes)), "", name)
         self.assertEqual(bs.home_from_container_name("alice", str(homes / "missing")), "")
@@ -338,7 +345,7 @@ class RunDockerTest(unittest.TestCase):
         tried = [c.split()[-1] for c in calls if c.startswith("inspect --type container ")]
         self.assertEqual(len(tried), 2, "the first name is taken, the second is free")
         for name in tried:
-            self.assertRegex(name, r"^tester_\d{4}_[a-z0-9]{4}$")
+            self.assertRegex(name, r"^inferpilot_tester_\d{4}_[a-z0-9]{4}$")
         name = tried[1]
         self.assertTrue(self.created(calls).endswith("--label inferpilot.user=tester --entrypoint /bin/bash --name %s "
                                                      "rocm/sgl-dev:new" % name), self.created(calls))
@@ -347,11 +354,11 @@ class RunDockerTest(unittest.TestCase):
         self.assertIn("this is container %s; come back to it with: NAME=%s " % (name, name), self.stderr)
 
     def test_a_new_container_lists_your_other_ones(self):
-        others = "tester_1101_ab12|rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261101|2 weeks ago|Exited (0) 3 days ago"
+        others = "inferpilot_tester_1101_ab12|rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261101|2 weeks ago|Exited (0) 3 days ago"
         rc, _ = self.run_docker(image="rocm/sgl-dev:new", FAKE_PS=others + "\ntester|rocm/sgl-dev:new|1 second ago|Up 1 second")
         self.assertEqual(rc, 0, self.stderr)
         self.assertIn("your other InferPilot containers (`docker rm -f <name>` removes one you are done with", self.stderr)
-        self.assertIn("  tester_1101_ab12  rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261101  (created 2 weeks ago; Exited (0) "
+        self.assertIn("  inferpilot_tester_1101_ab12  rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261101  (created 2 weeks ago; Exited (0) "
                       "3 days ago)", self.stderr)
         self.assertNotIn("  tester  rocm/sgl-dev:new", self.stderr, "not the new one itself")
         rc, _ = self.run_docker(image="rocm/sgl-dev:new")
