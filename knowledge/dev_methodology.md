@@ -11,7 +11,7 @@ gates:
 | Mode | Front end (replaces Spec / Recon / Design) | Then |
 |---|---|---|
 | `feature` | Spec → Recon → Design | Implement → Verify → Performance → Review → PR → Report |
-| `issue` | Triage → Reproduce → Diagnose (`issue_triage.md`) | Implement → Verify, with the issue's reproduction as an extra gate → Review → PR → Report |
+| `issue` | Triage → Reproduce → Diagnose (`issue_triage.md`) | Implement → Verify, with the issue's reproduction as an extra gate → Review → PR → Reply → Report |
 | `ci` | Classify → Bisect (`ci_triage.md`) | Implement → Verify, with the failing test as an extra gate → Review → PR → Report |
 | `perf` | Profile → Plan (`system_perf.md`) | Implement → Verify (correctness first) → Performance → Review → PR → Report |
 | `scan` | Collect → Dispatch | writes the day's report on the framework and a ranked task queue, and changes no code |

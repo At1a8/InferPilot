@@ -92,7 +92,7 @@ feature  Setup → Spec → Recon → Design ─┐
 issue    Setup → Triage → Reproduce → Diagnose ─┤
 ci       Setup → Classify → Bisect ─────────────┼→ Implement (per WP: implementer → test_engineer, rollback on failure)
 perf     Setup → Profile → Plan ────────────────┘   → Kernel (hand-offs → kernel back end, gains integrated as WPs)
-                                                     → Verify (↔ Investigate) → Performance → Review → PR → Report
+                                                     → Verify (↔ Investigate) → Performance → Review → PR → (Reply, issue) → Report
 scan     Collect → Dispatch → Report
 ```
 
