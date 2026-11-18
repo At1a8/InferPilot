@@ -163,8 +163,11 @@ Claude Code 在它的 Workflow 工具里运行 `inferpilot.js`。Cursor 没有�
 | 用 | 第 3 步怎么配置 | 怎么启动 | 怎么交给它任务 |
 |---|---|---|---|
 | Claude Code | `--claude`（或不加选项） | `IS_SANDBOX=1 claude --dangerously-skip-permissions` | 在它的输入框里用一句话说出任务 |
-| Cursor CLI | `--cursor`，`agent login` | `node runtime/run.mjs inferpilot.js --backend cursor ...` | 把参数写进一个 JSON 文件 |
+| Cursor CLI 的对话 | `--cursor`，`agent login` | `cd /workspace/inferpilot && agent`，由它启动 runner | 在它的输入框里用一句话说出任务 |
 | Cursor app | `--cursor`，`agent login` | 由它的 agent 启动 runner | 在 app 的对话里用一句话说出任务 |
+| 在 shell 里直接跑 runner | `--cursor`，`agent login` | `node runtime/run.mjs inferpilot.js --backend cursor ...` | 把参数写进一个 JSON 文件 |
+
+Claude Code 和 Cursor 的 agent（CLI 的对话、app）会替你主持运行：把运行提出的问题转给你，并按结果里的 `next` 发起接下来的步骤（见[运行](#运行)）；在 shell 里直接跑 runner 时，日志末尾会列出同样的步骤，由你来执行。
 
 #### 用 Claude Code
 
@@ -232,7 +235,7 @@ nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.j
 tail -f exp/scan.log    # Ctrl-C 只是退出查看，运行会继续
 ```
 
-文件里写的就是上面交给 Claude Code 的那些参数，格式为 JSON。在复现之后停下的那个 issue 任务写成 `{"mode": "issue", "task": "https://github.com/sgl-project/sglang/issues/41299", "inferpilot_dir": "/workspace/inferpilot", "model_path": "<weights>", "gpu_ids": "0", "stop_after": "Reproduce"}`；用一句话描述的写成 `{"inferpilot_dir": "/workspace/inferpilot", "request": "..."}`。`exp/scan.log` 按这个模式的路线给每个阶段编号，并附上到目前为止的用量（`=== PHASE 2/3 [##-]: Dispatch ===  so far: 1 agent call, 410k tokens, 4 min`）；写出每次 agent 调用，调用里的每个工具调用开始时各写一行（执行的命令、读写的文件）；安静五分钟后写一行"仍在运行"；每次调用结束时写出用时和 token（按 CLI 的计数，含缓存），整个运行结束时写一行总结；`exp/scan.result.json` 是最终结果：其中有 `status`；停下来等你的运行（`needs_input`、`awaiting_design_review`、`blocked`）会在报告里写明原因。把你的决定加进文件（`"answers": {...}`），再启动一次 runner。
+文件里写的就是上面交给 Claude Code 的那些参数，格式为 JSON。在复现之后停下的那个 issue 任务写成 `{"mode": "issue", "task": "https://github.com/sgl-project/sglang/issues/41299", "inferpilot_dir": "/workspace/inferpilot", "model_path": "<weights>", "gpu_ids": "0", "stop_after": "Reproduce"}`；用一句话描述的写成 `{"inferpilot_dir": "/workspace/inferpilot", "request": "..."}`。`exp/scan.log` 按这个模式的路线给每个阶段编号，并附上到目前为止的用量（`=== PHASE 2/3 [##-]: Dispatch ===  so far: 1 agent call, 410k tokens, 4 min`）；写出每次 agent 调用，调用里的每个工具调用开始时各写一行（执行的命令、读写的文件）；安静五分钟后写一行"仍在运行"；每次调用结束时写出用时和 token（按 CLI 的计数，含缓存），整个运行结束时写一行总结；`exp/scan.result.json` 是最终结果：其中有 `status`，以及 `next`，即运行结束后接下来做什么。日志末尾列出同样的步骤（`=== NEXT: ...`）：只有你能回答的问题；接下来可以发起的每次运行，参数写在你那个文件旁边（`exp/scan.start-1.json` 是 scan 排名第一的任务，`exp/<name>.again.json` 是同一个任务再跑一次、待你填好回答），并附上启动它的命令；以及只有你能做的事。
 
 **从 Cursor app。** 它的 agent 同样不会自己运行 `inferpilot.js`：它把任务写进文件、在后台启动 runner，并随时读取运行进展，具体做法写在 checkout 根目录的 [`AGENTS.md`](AGENTS.md) 里。把一个 InferPilot 的 checkout 作为 app 的工作区打开，Cursor 就会把这个文件当作规则加载：可以通过 Remote-SSH 打开 GPU 机器上的任意一个克隆（比如你运行 run_docker.sh 的那个），agent 会在你的容器里执行每条命令；也可以直接连接到容器，打开 `/workspace/inferpilot`。然后像对 Claude Code 一样用一句话说出任务；agent 会追问这个模式需要而你没说的内容，并告诉你运行在哪里。它默认用 Cursor CLI；想让角色跑在 `claude -p` 上，跟它说一声即可（需要 Claude Code 和 Node.js：bootstrap 加 `--cursor --claude` 或 `--runner`）。Cursor CLI 自己的对话界面（容器里的 `agent`）也读取同一个文件。
 
@@ -337,6 +340,8 @@ node runtime/run.mjs inferpilot.js --backend cursor \
 除 `inferpilot_dir`、`request`、`answers`、`exp_root`、`review_model` 和各项预算外，其余参数都属于任务定义；每次已启动的运行，其结果都会记录所用的任务定义（`task_def`）、每个字段的来源（`provenance`）以及 intake 的假设（`assumptions`）。
 
 人工检查点：Intake 的提问（`needs_input`）；任何 `stop_after`；`auto_approve_design` 设为 `false` 时，L3 任务和 architect 标记的设计会停在 Design（`awaiting_design_review`；默认直接继续，报告会写明设计没有经过人审）；被 reviewer 标为 `blocked` 的审阅会在 PR 之前停下；PR engineer 只返回确切的 `git push` 而不执行；issue 回复是运行目录里的草稿。只要建好了运行目录，无论结局如何，运行都会以一份报告结束；停在 Intake（提问或拒绝），或在 Setup 建目录之前就结束的运行（`busy`），只返回运行结果。
+
+每个结果最后都有 `next`，说明运行结束后接下来做什么，对 Claude Code、Cursor 的 agent 和 runner 的日志都一样：`say` 是写给你的一句话；`ask` 是只有你能回答的问题；`rerun_with` 是再跑一次之前要设置的参数，其余参数不变（answers 会和已有的回答合并）；`start` 是它建议发起的新运行，比如 scan 排在前面的任务及其参数；`user` 是只有你能做的事：推送、发出回复、分享日报。
 
 **一台机器一个任务。** 运行在创建任何东西之前先占住这台机器：锁放在 `/dev/shm`，所有用 `--ipc=host` 启动的容器都和宿主机共用它，其他机器看不到；运行在写完报告后释放。另一个任务占着机器时，新的运行会立即以 `busy` 结束，并说明是谁占着。如果持有锁的运行已经结束，或者在两倍于最长 agent 调用的时间里（默认 12 小时）没往运行目录写过任何东西，下一个运行会直接接管。另一个容器里的运行不会因为没动静而被接管，因为这里看不到它的运行目录；确认那次运行已经不在之后，用第二条命令释放机器，和释放意外中断的运行留下的锁一样：
 
