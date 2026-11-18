@@ -362,7 +362,10 @@ python3 scripts/run_lock.py release --force   # 那个运行已经中断时，�
 
 ## 测试
 
+提交前运行 `tests/run_all.sh`：先检查每个脚本的语法，再跑下面三套测试，离线、不需要 GPU，几秒钟就跑完（需要 Python 3.10+ 和 Node.js 20+）。CI 会在每个 pull request 和每次推到 main 时，在 GitHub 的机器上跑同样的内容（[`.github/workflows/tests.yml`](.github/workflows/tests.yml)）。
+
 ```bash
+tests/run_all.sh                                  # 全部跑一遍；失败时会说明是哪一步、怎么失败的
 node tests/dry_run.mjs                            # 在 InferPilot 的 runner 上走遍 inferpilot.js 的每条控制路径，不需要 GPU
 node tests/runtime_selftest.mjs                   # runner 本身：schema 检查、全局函数、命令行 backend；离线运行
 python3 -m unittest discover -s tests             # 脚本的解析与规则、bootstrap、Claude Code 对 workflow 的规则、两份 README 的一致性；离线运行
@@ -395,7 +398,8 @@ inferpilot/
 │                            # restore_owner.sh、run_in_tmux.sh
 ├── inferpilot/bootstrap.py  # 第 3 步的配置脚本，在容器内运行；可以重复执行
 ├── setup.py, pyproject.toml # 打包；pip 构建 wheel 时 setup.py 会运行 bootstrap
-├── tests/                   # inferpilot.js 的 dry run，runner 的自测，脚本、bootstrap、Claude Code workflow 规则和 README 的单元测试
+├── tests/                   # run_all.sh；inferpilot.js 的 dry run，runner 的自测，脚本、bootstrap、Claude Code workflow 规则和 README 的单元测试
+├── .github/                 # CI（workflows/tests.yml 运行 tests/run_all.sh）和 pull request 模板
 ├── README.md, README.zh-CN.md
 └── docs/design.md
 ```

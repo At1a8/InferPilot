@@ -7,7 +7,6 @@ import hashlib
 import io
 import json
 import os
-import pwd
 import re
 import shutil
 import stat
@@ -111,6 +110,7 @@ class KeysTest(unittest.TestCase):
         self.root = self.tmp / "root"
         self.root.mkdir()
 
+    @unittest.skipIf(os.geteuid() == 0, "as root, what the test makes belongs to root, not to a user as on a host mount")
     def test_the_mounted_keys_file_comes_first(self):
         co = make_checkout(self.tmp / "u" / "inferpilot")
         (self.tmp / "u" / ".inferpilot_env").write_text("export LLM_GATEWAY_KEY=k\n")
@@ -245,6 +245,7 @@ class CheckoutTest(unittest.TestCase):
 
 
 class GiveBackTest(unittest.TestCase):
+    @unittest.skipIf(os.geteuid() == 0, "as root, what the test makes belongs to root, not to a user as on a host mount")
     def test_root_gives_back_to_the_closest_owner(self):
         with tempfile.TemporaryDirectory() as d:
             new = Path(d) / "a" / "b"
@@ -355,7 +356,11 @@ class RunDockerTest(unittest.TestCase):
         self.log.unlink()
         rc, calls = self.run_docker(image="rocm/sgl-dev:new", NAME="", USER="")
         self.assertEqual(rc, 0, self.stderr)
-        me = re.escape(pwd.getpwuid(os.getuid()).pw_name)
+        # As run_docker.sh has it: what id -un prints (a uid without a passwd entry prints its number, or nothing),
+        # its odd characters as _.
+        who = subprocess.run(["id", "-un"], capture_output=True, text=True)
+        me = re.sub(r"[^a-zA-Z0-9_.-]", "_", who.stdout.strip())
+        me = re.escape(me if re.match(r"[a-zA-Z0-9]", me) else "u" + me)
         self.assertRegex(self.created(calls), r"--label inferpilot\.user=%s --entrypoint /bin/bash --name "
                                               r"inferpilot_%s_\d{4}_[a-z0-9]{4} rocm/sgl-dev:new$" % (me, me))
 
@@ -609,6 +614,7 @@ class ShellRcTest(unittest.TestCase):
         self.assertEqual(bs.rc_file(S(self.home, SHELL="/usr/bin/zsh")), str(self.home / ".zshrc"))
 
     @unittest.skipUnless(shutil.which("bash"), "needs bash")
+    @unittest.skipIf(os.geteuid() == 0, "as root, what the test makes belongs to root, not to a user as on a host mount")
     def test_container_env_and_keys_added_once(self):
         host = self.home / "u"
         co = make_checkout(host / "inferpilot")
@@ -635,6 +641,7 @@ class ShellRcTest(unittest.TestCase):
         self.assertEqual(out.strip(), "k9|k9")
 
     @unittest.skipUnless(shutil.which("bash"), "needs bash")
+    @unittest.skipIf(os.geteuid() == 0, "as root, what the test makes belongs to root, not to a user as on a host mount")
     def test_an_amd_gateway_key_points_claude_code_at_the_gateway(self):
         host = self.home / "u"
         co = make_checkout(host / "inferpilot")

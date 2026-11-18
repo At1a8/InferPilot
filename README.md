@@ -600,7 +600,12 @@ restores `knowledge/` in the checkout, so later runs read only merged knowledge.
 
 ## Tests
 
+Before you push, run `tests/run_all.sh`: the syntax of every script, then the three suites below, offline and
+without a GPU, in a few seconds (Python 3.10+ and Node.js 20+). CI runs the same on every pull request and
+every push to main ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)), on GitHub's runners.
+
 ```bash
+tests/run_all.sh                                  # all of it; it says which step failed, and how
 node tests/dry_run.mjs                            # every control path of inferpilot.js on InferPilot's runner, no GPU
 node tests/runtime_selftest.mjs                   # the runner itself: schema checks, globals, CLI backends; offline
 python3 -m unittest discover -s tests             # the scripts' parsers and rules, the bootstrap, Claude Code's workflow rules, the two READMEs in step; offline
@@ -633,8 +638,9 @@ inferpilot/
 │                            # restore_owner.sh, run_in_tmux.sh
 ├── inferpilot/bootstrap.py  # setup step 3, in the container; safe to re-run
 ├── setup.py, pyproject.toml # packaging; setup.py runs the bootstrap when pip builds the wheel
-├── tests/                   # dry run of inferpilot.js, the runner's self-test, unit tests of the scripts, the
-│                            # bootstrap, Claude Code's workflow rules and the READMEs
+├── tests/                   # run_all.sh; dry run of inferpilot.js, the runner's self-test, unit tests of the
+│                            # scripts, the bootstrap, Claude Code's workflow rules and the READMEs
+├── .github/                 # CI (workflows/tests.yml runs tests/run_all.sh) and the pull request template
 ├── README.md, README.zh-CN.md
 └── docs/design.md
 ```
