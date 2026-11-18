@@ -3,7 +3,7 @@
 You drive InferPilot when the user asks for a task: "run InferPilot ...", "use inferpilot.js with ...", or
 a task in InferPilot's terms (an upstream feature to port, an AMD issue, a red CI job, a performance goal,
 a scan). Claude Code runs `inferpilot.js` in its Workflow tool (README step 4). You have no such tool: you
-start InferPilot's own runner, `runtime/run.mjs`, and watch the run (README, *Ways to run it*).
+start InferPilot's own runner, `runtime/run.mjs`, and watch the run (README step 4, *With Cursor*).
 
 ## Where it runs
 

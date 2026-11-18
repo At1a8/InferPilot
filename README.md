@@ -241,21 +241,39 @@ What it does depends on whether `NAME` names an existing container and whether `
 
 ### 3. Set up InferPilot in the container (once per container)
 
-This puts InferPilot in the container's `/workspace` and makes the container ready to run it, as the table
-below lists:
+This puts InferPilot in the container's `/workspace` and makes the container ready to run it, as the second
+table below lists. By default it sets up Claude Code; `--cursor` sets up the Cursor CLI as well, for running
+tasks on Cursor (step 4):
 
 ```bash
 [ -d /workspace/inferpilot/.git ] || git clone https://github.com/At1a8/inferpilot /workspace/inferpilot
-cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap
+cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap     # or with --cursor, as below
 source ~/.bashrc
 claude --version    # installed in this container
 ```
 
+| To run tasks with | Bootstrap | It installs |
+|---|---|---|
+| Claude Code (default) | `python3 -B -m inferpilot.bootstrap` | Claude Code |
+| Claude Code and Cursor | `python3 -B -m inferpilot.bootstrap --cursor` | Claude Code, Node.js and the Cursor CLI (`agent`) |
+| Cursor alone | `python3 -B -m inferpilot.bootstrap --cursor --no-claude` | Node.js and the Cursor CLI |
+
+`--runner` adds Node.js to Claude Code, to run every role on `claude -p` without a Claude Code session
+(step 4). The Cursor CLI logs in once per container, since the Cursor app's login does not reach it:
+
+```bash
+NO_OPEN_BROWSER=1 agent login   # open the URL it prints in a browser elsewhere, within about 20 minutes (q shows a QR code)
+agent status                    # Logged in as ...
+```
+
+or it uses `CURSOR_API_KEY` (Cursor Dashboard, API Keys) from your keys file on the host, which containers
+started after it get.
+
 | Step | In a new container |
 |---|---|
 | keys | root's `~/.inferpilot_env`, which run_docker.sh mounts from your home, or the file `INFERPILOT_KEYS` names. In a container that mounts `/home`, the one in your home there: `INFERPILOT_HOST_HOME`, else, with a warning, the home of the user the container is named after (`<you>`, `<you>-0116`). Without a keys file the rest is still set up, and the next steps say where a key goes |
-| `claude` | installed in the container with Claude Code's native installer (`~/.local/bin/claude`, put on `PATH`): the newest version, a large download (minutes without output on a slow link are the download). It stays at that version for the container's life (`DISABLE_AUTOUPDATER=1`); a new container gets the newest |
-| Claude Code config | root's `~/.claude.json` answers the first start's questions ahead: the onboarding, trust in `/workspace/inferpilot`, bypass permissions mode and, for an `ANTHROPIC_API_KEY`, using it. The rest of the file is kept; like everything of root's, it goes with the container |
+| `claude` | (not with `--no-claude`) installed in the container with Claude Code's native installer (`~/.local/bin/claude`, put on `PATH`): the newest version, a large download (minutes without output on a slow link are the download). It stays at that version for the container's life (`DISABLE_AUTOUPDATER=1`); a new container gets the newest |
+| Claude Code config | (not with `--no-claude`) root's `~/.claude.json` answers the first start's questions ahead: the onboarding, trust in `/workspace/inferpilot`, bypass permissions mode and, for an `ANTHROPIC_API_KEY`, using it. The rest of the file is kept; like everything of root's, it goes with the container |
 | git | trusts checkouts on host mounts, which belong to you, not root (`safe.directory '*'`) |
 | git identity | root commits as `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` from the keys file (or the environment), so no commit reads `root@<this host>`; with neither it says so and sets nothing |
 | shell | root's `~/.bashrc` gets `PYTHONDONTWRITEBYTECODE=1` (no root-owned `__pycache__` in checkouts on host mounts) and `DISABLE_AUTOUPDATER=1`, and loads the keys file, also one put in place later; with `LLM_GATEWAY_KEY` and no `ANTHROPIC_BASE_URL`, it points Claude Code at the AMD LLM gateway |
@@ -266,7 +284,19 @@ claude --version    # installed in this container
 
 The clone runs only when `/workspace/inferpilot` is not there yet; the bootstrap never writes keys.
 
-### 4. Start Claude Code and give it a task (inside the container)
+### 4. Give it a task (inside the container): with Claude Code or with Cursor
+
+Claude Code runs `inferpilot.js` in its Workflow tool. Cursor has no such tool: there InferPilot's own
+runner, `runtime/run.mjs`, runs `inferpilot.js` and every role on the Cursor CLI. The task is the same,
+the arguments of [Running it](#running-it):
+
+| With | Set up in step 3 | Start | Give the task |
+|---|---|---|---|
+| Claude Code | `bootstrap` | `IS_SANDBOX=1 claude --dangerously-skip-permissions` | one sentence in its input box |
+| the Cursor CLI | `bootstrap --cursor`, `agent login` | `node runtime/run.mjs inferpilot.js --backend cursor ...` | the arguments in a JSON file |
+| the Cursor app | `bootstrap --cursor`, `agent login` | its agent starts the runner | one sentence in the app's chat |
+
+#### With Claude Code
 
 ```bash
 cd /workspace/inferpilot && IS_SANDBOX=1 claude --dangerously-skip-permissions
@@ -338,51 +368,49 @@ echo 'use /workspace/inferpilot/inferpilot.js with mode=scan, inferpilot_dir=/wo
 tmux capture-pane -p -t inferpilot | tail -40
 ```
 
-### Ways to run it
-
-Steps 3-4 set up and use the default way. The others differ in who runs `inferpilot.js`, what each role
-runs on, and one flag to the bootstrap of step 3:
-
-| Way | `inferpilot.js` runs in | Each role runs on | Step 3 adds | Logged in by | A task starts with |
-|---|---|---|---|---|---|
-| Claude Code (step 4) | Claude Code's Workflow tool | a Claude Code agent | nothing | a key in the keys file (step 1) | your sentence in Claude Code |
-| Runner, Claude roles | `runtime/run.mjs` | `claude -p` | `--runner` | a key in the keys file (step 1) | `node runtime/run.mjs inferpilot.js --backend claude ...` |
-| Runner, Cursor roles | `runtime/run.mjs` | the Cursor CLI, `agent -p` | `--cursor`; `--no-claude` leaves Claude Code out | `agent login` once per container, or `CURSOR_API_KEY` in the keys file | `node runtime/run.mjs inferpilot.js --backend cursor ...` |
-| The Cursor app, or the Cursor CLI's chat | the runner, which that agent starts | either runner backend | as for that backend | as for that backend | your sentence to the agent |
-
-A scan to try each runner backend, in the container's shell (a new one, or after `source ~/.bashrc`).
-Every role on Claude Code (`claude -p`), on the key in your keys file:
+**Claude roles on the runner.** Without a Claude Code session, the runner runs every role on `claude -p`
+instead (bootstrap `--runner` adds the Node.js it needs), started as on Cursor below:
 
 ```bash
-cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap --runner
-mkdir -p exp && echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
+cd /workspace/inferpilot && mkdir -p exp
+echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
 nohup node runtime/run.mjs inferpilot.js --backend claude --args-file exp/scan.json --result-file exp/scan.result.json > exp/scan.log 2>&1 &
 ```
 
-Every role on Cursor (`agent -p`), logged in once per container:
+#### With Cursor
+
+**From the container's shell.** With the Cursor CLI logged in (step 3), write the task's arguments to a
+file and start the runner in the background; it runs every role on `agent -p`:
 
 ```bash
-cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap --cursor --no-claude
-NO_OPEN_BROWSER=1 agent login   # open the URL it prints in a browser elsewhere, within about 20 minutes (q shows a QR code)
-agent status                    # Logged in as ...
-mkdir -p exp && echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
+cd /workspace/inferpilot && mkdir -p exp
+echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
 nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.json --result-file exp/scan.result.json > exp/scan.log 2>&1 &
+tail -f exp/scan.log    # Ctrl-C leaves the log; the run goes on
 ```
 
-`exp/scan.log` follows the run, and `exp/scan.result.json` holds its end. From outside the container, run
-each line through `docker exec -i <container> bash -ic '...'`: only an interactive shell reads `~/.bashrc`,
-which loads the keys file and puts `claude` on PATH. A plain `bash -c` gets neither, so Claude roles fail
-and a scan runs without `GITHUB_TOKEN`.
+The file holds, as JSON, the arguments the sentences above give Claude Code. The issue that stops after
+the reproduction is `{"mode": "issue", "task": "https://github.com/sgl-project/sglang/issues/41299",
+"inferpilot_dir": "/workspace/inferpilot", "model_path": "<weights>", "gpu_ids": "0", "stop_after": "Reproduce"}`;
+a request in plain words is `{"inferpilot_dir": "/workspace/inferpilot", "request": "..."}`. `exp/scan.log`
+names each phase and agent call, and `exp/scan.result.json` holds the end: the `status`, and the report of a
+run that stopped for you (`needs_input`, `awaiting_design_review`, `blocked`), which says why. Add what you
+decide to the file (`"answers": {...}`) and start the runner again.
 
-**From the Cursor app.** Cursor has nothing like Claude Code's Workflow tool, so its agent does not run
-`inferpilot.js` itself: it writes the task to a file, starts the runner in the background and reads the
-run as it goes, as [`AGENTS.md`](AGENTS.md) at the top of this checkout tells it (Cursor loads that file
-as a rule). Open the GPU machine in the app over Remote-SSH, where the agent runs each command through
-`docker exec` in your container, or the container itself, and give the task in one sentence as you would
-in Claude Code. The Cursor CLI's own chat (`agent`, in the container) reads the same file. The app's
-login does not reach the container: its CLI logs in once with `agent login`, or uses `CURSOR_API_KEY`.
-With Cursor roles, code and prompts go to Cursor's service instead of the AMD LLM gateway, and count
-against the account's usage.
+**From the Cursor app.** Its agent does not run `inferpilot.js` either: it writes the task to a file,
+starts the runner in the background and reads the run as it goes, as [`AGENTS.md`](AGENTS.md) at the top of
+the checkout tells it. Open a checkout of InferPilot as the app's workspace, so that Cursor loads that file
+as a rule: on the GPU machine over Remote-SSH (any clone, such as the one you ran run_docker.sh from), where
+the agent runs each command in your container, or attached to the container at `/workspace/inferpilot`.
+Then give the task in one sentence, as to Claude Code; the agent asks for what the mode needs and you have
+not said, and tells you where the run goes. It uses the Cursor CLI; say so for Claude roles on `claude -p`
+instead (bootstrap `--runner`). The Cursor CLI's own chat (`agent`, in the container) reads the same file.
+
+With Cursor roles, code and prompts go to Cursor's service instead of the AMD LLM gateway, and count against
+the account's usage. From outside the container, every command goes through
+`docker exec -i <container> bash -ic '...'`: only an interactive shell reads `~/.bashrc`, which loads the
+keys file and puts `claude` on PATH. A plain `bash -c` gets neither, so Claude roles fail and a scan runs
+without `GITHUB_TOKEN`.
 
 ### 5. After a run (in the container)
 
@@ -454,7 +482,7 @@ step 3 too, cloning InferPilot to `/workspace/inferpilot` (pip shows the output 
 
 InferPilot is a workflow: `inferpilot.js` holds the control flow, `roles/` the agent instructions,
 `knowledge/` the method, `templates/` the artifacts. In Claude Code, name `inferpilot.js` and its arguments
-in one sentence, as in [step 4](#4-start-claude-code-and-give-it-a-task-inside-the-container): its Workflow tool runs it.
+in one sentence, as in [step 4](#4-give-it-a-task-inside-the-container-with-claude-code-or-with-cursor): its Workflow tool runs it.
 Anywhere else InferPilot's own runner, `runtime/run.mjs` (Node 20+), runs it with each role on a
 command-line agent: `--backend claude` runs `claude -p`, and `--backend cursor` runs the Cursor CLI
 (`agent -p`) on the account it was logged in with (`agent login`) or on `CURSOR_API_KEY`. In a container,

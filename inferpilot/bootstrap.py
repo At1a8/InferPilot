@@ -1081,7 +1081,7 @@ def next_steps(s: dict, statuses: dict, found: dict | None = None, path_env: str
               if ok]
     if runner:
         lead = "Or run" if not claude_only and s.get("claude", True) else "Run"
-        steps.append(["%s a task on InferPilot's own runner, every role on %s (README, Ways to run it):"
+        steps.append(["%s a task on InferPilot's own runner, every role on %s (README step 4):"
                       % (lead, " or ".join({"cursor": "the Cursor CLI", "claude": "claude -p"}[b] for b in runner))]
                      + [hl("cd %s && node runtime/run.mjs inferpilot.js --backend %s --args '{\"mode\": \"scan\", "
                            "\"inferpilot_dir\": \"%s\"}'" % (s["home"], b, s["home"])) for b in runner])

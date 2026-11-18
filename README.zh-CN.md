@@ -116,20 +116,35 @@ bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/script
 
 ### 3. 在容器里配置 InferPilot（每个容器做一次）
 
-这一步把 InferPilot 放进容器的 `/workspace`，并让容器能运行它，具体做什么见下表：
+这一步把 InferPilot 放进容器的 `/workspace`，并让容器能运行它，具体做什么见下面第二张表。默认只配置 Claude Code；加 `--cursor` 会同时配置 Cursor CLI，用来在 Cursor 上跑任务（第 4 步）：
 
 ```bash
 [ -d /workspace/inferpilot/.git ] || git clone https://github.com/At1a8/inferpilot /workspace/inferpilot
-cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap
+cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap     # 或加 --cursor，见下表
 source ~/.bashrc
 claude --version    # 装在这个容器里的 Claude Code
 ```
 
+| 用什么跑任务 | bootstrap 命令 | 安装的内容 |
+|---|---|---|
+| Claude Code（默认） | `python3 -B -m inferpilot.bootstrap` | Claude Code |
+| Claude Code 和 Cursor | `python3 -B -m inferpilot.bootstrap --cursor` | Claude Code、Node.js 和 Cursor CLI（`agent`） |
+| 只用 Cursor | `python3 -B -m inferpilot.bootstrap --cursor --no-claude` | Node.js 和 Cursor CLI |
+
+`--runner` 在 Claude Code 之外再装 Node.js，用来在没有 Claude Code 会话时让每个角色跑在 `claude -p` 上（第 4 步）。Cursor app 的登录不会带进容器，所以容器里的 Cursor CLI 要登录一次（每个容器一次）：
+
+```bash
+NO_OPEN_BROWSER=1 agent login   # 在别处的浏览器里打开它打印出的链接并登录，大约 20 分钟内有效（按 q 显示二维码）
+agent status                    # Logged in as ...
+```
+
+或者在宿主机上你的 key 文件里设置 `CURSOR_API_KEY`（Cursor Dashboard 的 API Keys），之后启动的容器都会拿到。
+
 | 步骤 | 在新容器里做什么 |
 |---|---|
 | key | root 的 `~/.inferpilot_env`（run_docker.sh 从你的 home 挂进来），或者 `INFERPILOT_KEYS` 指定的文件。在挂载了 `/home` 的容器里，也用你 home 里的那份：先看 `INFERPILOT_HOST_HOME`，没有时发出警告，改用容器名对应的那个用户的 home（`<you>`、`<you>-0116`）。没有 key 文件时其余步骤照常完成，"下一步"会说明 key 该放在哪里 |
-| `claude` | 用 Claude Code 的原生安装器装在容器里（`~/.local/bin/claude`，并加到 `PATH`）：装的是最新版本，下载量较大（网速慢时几分钟没有输出，是在下载）。容器存在期间一直保持这个版本（`DISABLE_AUTOUPDATER=1`）；新容器会装最新的 |
-| Claude Code 配置 | 在 root 的 `~/.claude.json` 里预先回答首次启动的问题：完成引导、信任 `/workspace/inferpilot`、接受 bypass permissions 模式，用 `ANTHROPIC_API_KEY` 时还批准使用这个 key。文件里的其他内容保留；和 root 的其他东西一样，它随容器删除 |
+| `claude` | （加 `--no-claude` 时不装）用 Claude Code 的原生安装器装在容器里（`~/.local/bin/claude`，并加到 `PATH`）：装的是最新版本，下载量较大（网速慢时几分钟没有输出，是在下载）。容器存在期间一直保持这个版本（`DISABLE_AUTOUPDATER=1`）；新容器会装最新的 |
+| Claude Code 配置 | （加 `--no-claude` 时跳过）在 root 的 `~/.claude.json` 里预先回答首次启动的问题：完成引导、信任 `/workspace/inferpilot`、接受 bypass permissions 模式，用 `ANTHROPIC_API_KEY` 时还批准使用这个 key。文件里的其他内容保留；和 root 的其他东西一样，它随容器删除 |
 | git | 信任宿主机挂载目录里的 checkout，它们属于你而不是 root（`safe.directory '*'`） |
 | git 身份 | root 以 key 文件（或环境变量）里的 `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` 提交，所以不会出现作者为 `root@<本机主机名>` 的提交；两者都没有时，它会提示，不会自己编一个 |
 | shell | 在 root 的 `~/.bashrc` 里设置 `PYTHONDONTWRITEBYTECODE=1`（宿主机挂载目录里的 checkout 不会出现 root 所有的 `__pycache__`）和 `DISABLE_AUTOUPDATER=1`，并加载 key 文件，之后才放进去的也会加载；设置了 `LLM_GATEWAY_KEY` 且没有 `ANTHROPIC_BASE_URL` 时，让 Claude Code 走 AMD LLM 网关 |
@@ -140,7 +155,17 @@ claude --version    # 装在这个容器里的 Claude Code
 
 只有 `/workspace/inferpilot` 还不存在时才会克隆；bootstrap 从不写入 key。
 
-### 4. 启动 Claude Code 并交给它任务（容器内）
+### 4. 交给它任务（容器内）：用 Claude Code 或 Cursor
+
+Claude Code 在它的 Workflow 工具里运行 `inferpilot.js`。Cursor 没有这样的工具：在 Cursor 上，由 InferPilot 自己的 runner `runtime/run.mjs` 运行 `inferpilot.js`，每个角色都跑在 Cursor CLI 上。两种方式交给它的任务相同，就是[运行](#运行)一节里的参数：
+
+| 用 | 第 3 步怎么配置 | 怎么启动 | 怎么交给它任务 |
+|---|---|---|---|
+| Claude Code | `bootstrap` | `IS_SANDBOX=1 claude --dangerously-skip-permissions` | 在它的输入框里用一句话说出任务 |
+| Cursor CLI | `bootstrap --cursor`，`agent login` | `node runtime/run.mjs inferpilot.js --backend cursor ...` | 把参数写进一个 JSON 文件 |
+| Cursor app | `bootstrap --cursor`，`agent login` | 由它的 agent 启动 runner | 在 app 的对话里用一句话说出任务 |
+
+#### 用 Claude Code
 
 ```bash
 cd /workspace/inferpilot && IS_SANDBOX=1 claude --dangerously-skip-permissions
@@ -187,38 +212,30 @@ echo 'use /workspace/inferpilot/inferpilot.js with mode=scan, inferpilot_dir=/wo
 tmux capture-pane -p -t inferpilot | tail -40
 ```
 
-### 运行方式
-
-第 3–4 步配置并使用的是默认方式。其他方式的区别在于：由谁运行 `inferpilot.js`，每个角色跑在什么上，以及第 3 步的 bootstrap 要多加哪个选项：
-
-| 方式 | `inferpilot.js` 由谁运行 | 每个角色跑在 | 第 3 步多加 | 登录方式 | 怎样开始一个任务 |
-|---|---|---|---|---|---|
-| Claude Code（第 4 步） | Claude Code 的 Workflow 工具 | Claude Code 的 agent | 不加 | key 文件里的 key（第 1 步） | 在 Claude Code 里用一句话说出任务 |
-| runner，角色用 Claude | `runtime/run.mjs` | `claude -p` | `--runner` | key 文件里的 key（第 1 步） | `node runtime/run.mjs inferpilot.js --backend claude ...` |
-| runner，角色用 Cursor | `runtime/run.mjs` | Cursor CLI，`agent -p` | `--cursor`；加 `--no-claude` 时不装 Claude Code | 每个容器 `agent login` 一次，或在 key 文件里设置 `CURSOR_API_KEY` | `node runtime/run.mjs inferpilot.js --backend cursor ...` |
-| Cursor app，或 Cursor CLI 的对话界面 | 由那个 agent 启动的 runner | 上面两种 runner backend 之一 | 同所用的 backend | 同所用的 backend | 对 agent 用一句话说出任务 |
-
-在容器的 shell 里（新开一个，或者先 `source ~/.bashrc`）用 scan 任务试一下两种 runner backend。所有角色跑在 Claude Code 上（`claude -p`），用你 key 文件里的 key：
+**runner 上的 Claude 角色。** 没有 Claude Code 会话时，runner 也可以让每个角色跑在 `claude -p` 上（bootstrap 加 `--runner` 装上所需的 Node.js），启动方式和下面 Cursor 的一样：
 
 ```bash
-cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap --runner
-mkdir -p exp && echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
+cd /workspace/inferpilot && mkdir -p exp
+echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
 nohup node runtime/run.mjs inferpilot.js --backend claude --args-file exp/scan.json --result-file exp/scan.result.json > exp/scan.log 2>&1 &
 ```
 
-所有角色跑在 Cursor 上（`agent -p`），每个容器登录一次：
+#### 用 Cursor
+
+**在容器的 shell 里。** Cursor CLI 登录后（第 3 步），把任务参数写进文件，在后台启动 runner；它让每个角色跑在 `agent -p` 上：
 
 ```bash
-cd /workspace/inferpilot && python3 -B -m inferpilot.bootstrap --cursor --no-claude
-NO_OPEN_BROWSER=1 agent login   # 在别处的浏览器里打开它打印出的链接并登录，大约 20 分钟内有效（按 q 显示二维码）
-agent status                    # Logged in as ...
-mkdir -p exp && echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
+cd /workspace/inferpilot && mkdir -p exp
+echo '{"mode": "scan", "inferpilot_dir": "/workspace/inferpilot"}' > exp/scan.json
 nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.json --result-file exp/scan.result.json > exp/scan.log 2>&1 &
+tail -f exp/scan.log    # Ctrl-C 只是退出查看，运行会继续
 ```
 
-运行过程看 `exp/scan.log`，最终结果在 `exp/scan.result.json`。在容器外执行时，每一行都要通过 `docker exec -i <容器> bash -ic '...'`：只有交互式 shell 才会读 `~/.bashrc`，它负责加载 key 文件、把 `claude` 加进 PATH。普通的 `bash -c` 两样都没有，Claude 角色会失败，scan 也会在没有 `GITHUB_TOKEN` 的情况下运行。
+文件里写的就是上面交给 Claude Code 的那些参数，格式为 JSON。在复现之后停下的那个 issue 任务写成 `{"mode": "issue", "task": "https://github.com/sgl-project/sglang/issues/41299", "inferpilot_dir": "/workspace/inferpilot", "model_path": "<weights>", "gpu_ids": "0", "stop_after": "Reproduce"}`；用一句话描述的写成 `{"inferpilot_dir": "/workspace/inferpilot", "request": "..."}`。`exp/scan.log` 写出每个阶段和每次 agent 调用，`exp/scan.result.json` 是最终结果：其中有 `status`；停下来等你的运行（`needs_input`、`awaiting_design_review`、`blocked`）会在报告里写明原因。把你的决定加进文件（`"answers": {...}`），再启动一次 runner。
 
-**从 Cursor app 使用。** Cursor 没有类似 Claude Code Workflow 工具的东西，所以它的 agent 不会自己运行 `inferpilot.js`，而是把任务写进文件、在后台启动 runner，并随时读取运行进展，具体做法写在本仓库根目录的 [`AGENTS.md`](AGENTS.md) 里（Cursor 会把这个文件当作规则加载）。在 app 里通过 Remote-SSH 打开 GPU 机器（agent 会通过 `docker exec` 在你的容器里执行每条命令），或者直接打开容器，然后像在 Claude Code 里一样用一句话说出任务。Cursor CLI 自己的对话界面（容器里的 `agent`）也读取同一个文件。app 的登录不会带进容器：容器里的 CLI 要用 `agent login` 登录一次，或者使用 `CURSOR_API_KEY`。角色跑在 Cursor 上时，代码和提示词会发到 Cursor 的服务，而不是 AMD 的 LLM 网关，并计入账户的用量。
+**从 Cursor app。** 它的 agent 同样不会自己运行 `inferpilot.js`：它把任务写进文件、在后台启动 runner，并随时读取运行进展，具体做法写在 checkout 根目录的 [`AGENTS.md`](AGENTS.md) 里。把一个 InferPilot 的 checkout 作为 app 的工作区打开，Cursor 就会把这个文件当作规则加载：可以通过 Remote-SSH 打开 GPU 机器上的任意一个克隆（比如你运行 run_docker.sh 的那个），agent 会在你的容器里执行每条命令；也可以直接连接到容器，打开 `/workspace/inferpilot`。然后像对 Claude Code 一样用一句话说出任务；agent 会追问这个模式需要而你没说的内容，并告诉你运行在哪里。它默认用 Cursor CLI；想让角色跑在 `claude -p` 上，跟它说一声即可（bootstrap 需要加 `--runner`）。Cursor CLI 自己的对话界面（容器里的 `agent`）也读取同一个文件。
+
+角色跑在 Cursor 上时，代码和提示词会发到 Cursor 的服务，而不是 AMD 的 LLM 网关，并计入账户的用量。在容器外，每条命令都要通过 `docker exec -i <容器> bash -ic '...'` 执行：只有交互式 shell 才会读 `~/.bashrc`，它负责加载 key 文件、把 `claude` 加进 PATH。普通的 `bash -c` 两样都没有，Claude 角色会失败，scan 也会在没有 `GITHUB_TOKEN` 的情况下运行。
 
 ### 5. 运行结束后（容器内）
 
@@ -271,7 +288,7 @@ docker cp <name>:/workspace/inferpilot/exp/<run> ~/
 
 ## 运行
 
-InferPilot 是一个工作流：`inferpilot.js` 负责控制流，`roles/` 是 agent 的指令，`knowledge/` 是方法，`templates/` 是产物模板。在 Claude Code 里，用一句话说出 `inferpilot.js` 和它的参数即可，就像 [第 4 步](#4-启动-claude-code-并交给它任务容器内)那样，由它的 Workflow 工具执行。在其他地方，由 InferPilot 自带的 runner `runtime/run.mjs`（Node 20+）执行，每个角色交给一个命令行 agent：`--backend claude` 运行 `claude -p`，`--backend cursor` 运行 Cursor CLI（`agent -p`），用 `agent login` 登录的账号或 `CURSOR_API_KEY`。在容器里，`python3 -B -m inferpilot.bootstrap --cursor` 会装好 Node.js 和 Cursor CLI；`NO_OPEN_BROWSER=1 agent login` 会打印一个链接，在别处的浏览器里打开就能登录。dry run 用的也是这个 runner。
+InferPilot 是一个工作流：`inferpilot.js` 负责控制流，`roles/` 是 agent 的指令，`knowledge/` 是方法，`templates/` 是产物模板。在 Claude Code 里，用一句话说出 `inferpilot.js` 和它的参数即可，就像 [第 4 步](#4-交给它任务容器内用-claude-code-或-cursor)那样，由它的 Workflow 工具执行。在其他地方，由 InferPilot 自带的 runner `runtime/run.mjs`（Node 20+）执行，每个角色交给一个命令行 agent：`--backend claude` 运行 `claude -p`，`--backend cursor` 运行 Cursor CLI（`agent -p`），用 `agent login` 登录的账号或 `CURSOR_API_KEY`。在容器里，`python3 -B -m inferpilot.bootstrap --cursor` 会装好 Node.js 和 Cursor CLI；`NO_OPEN_BROWSER=1 agent login` 会打印一个链接，在别处的浏览器里打开就能登录。dry run 用的也是这个 runner。
 
 ```bash
 node runtime/run.mjs inferpilot.js --backend cursor \
