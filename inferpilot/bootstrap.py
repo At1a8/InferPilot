@@ -8,8 +8,7 @@ and your keys come in as one file: scripts/run_docker.sh mounts your ~/.inferpil
 
 Every step checks first, keeps what is already there and installs or creates only what is missing.
 Nothing is deleted, overwritten or re-cloned: a step that could only proceed by changing existing
-state warns and leaves it alone. The one exception is the image's own sglang checkout, which the
-framework step puts on main once, discarding only the image build's changes to its packaging files.
+state warns and leaves it alone.
 
   checkout      clone InferPilot to $INFERPILOT_HOME, unless run inside a checkout or one is already there
   keys          (root in a container) find your keys file: INFERPILOT_KEYS, else ~/.inferpilot_env, where
@@ -27,10 +26,11 @@ framework step puts on main once, discarding only the image build's changes to i
                 self-update, the keys file loaded, and with LLM_GATEWAY_KEY Claude Code on the AMD LLM
                 gateway
   framework     the image's /sgl-workspace/sglang by default, which the image installs sglang from in
-                editable mode: still as the image left it, it is put on main and pulled, so the current
-                main is what runs and what tasks branch from; in a container started from a given IMAGE
-                (INFERPILOT_IMAGE_PINNED=1) it is left as the image has it; --framework-dir names a host
-                checkout instead, cloned with its whole history if missing
+                editable mode, left as it is: scripts/run_docker.sh puts it on the newest main in a new
+                container from the daily image, and a container from a given IMAGE, or one entered
+                again, keeps its code. Uncommitted changes there are reported, since a task's Setup stops
+                on them; --framework-dir names a host checkout instead, cloned with its whole history if
+                missing
   evalscope     (root in a container) evalscope for scripts/eval_accuracy.sh, in a venv of its own
                 (/opt/evalscope, linked as /usr/local/bin/evalscope): installed into the image's Python it
                 would downgrade packages sglang ships with. One already on PATH is kept
@@ -80,9 +80,11 @@ RC_BEGIN = "# >>> inferpilot: Claude Code CLI on PATH >>>"
 RC_END = "# <<< inferpilot: Claude Code CLI on PATH <<<"
 ENV_BEGIN = "# >>> inferpilot: root in the container >>>"
 ENV_END = "# <<< inferpilot: root in the container <<<"
-# scripts/run_docker.sh names a container after your login unless told otherwise (alice, or alice-0116
-# for the next task): in a container that mounts /home without INFERPILOT_HOST_HOME, that user's home is yours.
+# scripts/run_docker.sh names a new container after your login unless told otherwise (inferpilot_alice_1118_k3x9;
+# older ones alice, or alice-0116): in a container that mounts /home without INFERPILOT_HOST_HOME, that user's
+# home is yours.
 HOMES = "/home"
+NAME_PREFIX = "inferpilot_"
 NAME_SEPARATORS = "-_."
 # Root in the container must not leave root-owned __pycache__ in checkouts on host mounts; Claude Code
 # stays at the version installed here for the container's life (a new container gets the newest).
@@ -95,9 +97,9 @@ APPROVED_KEY_CHARS = 20
 AMD_GATEWAY_URL = "https://llm-api.amd.com/Unified"
 # sglang images ship a full-history checkout of sglang and install sglang from it in editable mode; tasks
 # work in it, each on its own branch. The image's build rewrites its packaging files (python/pyproject.toml
-# becomes the ROCm one) and leaves it detached at the commit it built.
+# becomes the ROCm one) and leaves it detached at the commit it built; scripts/run_docker.sh puts it on main
+# in a new container from the daily image, and the bootstrap never changes it.
 IMAGE_SGLANG = "/sgl-workspace/sglang"
-PACKAGING = re.compile(r"(^|/)pyproject[^/]*\.toml$")
 # scripts/eval_accuracy.sh reaches the server over HTTP, so evalscope needs nothing of sglang's Python, and
 # installed into it, it would change it: evalscope 1.15 downgrades datasets and fsspec below the image's.
 EVALSCOPE_VENV = "/opt/evalscope"
@@ -216,7 +218,6 @@ def settings(env=None, opts=None) -> dict:
         "host_home": _expand(env["INFERPILOT_HOST_HOME"], env) if env.get("INFERPILOT_HOST_HOME") else "",
         "shell": env.get("SHELL") or "",
         "framework_dir": _expand(framework_dir, env) if framework_dir else "",
-        "image_pinned": env.get("INFERPILOT_IMAGE_PINNED") == "1",
         "framework_repo": opts.get("framework_repo") or env.get("INFERPILOT_FRAMEWORK_REPO") or DEFAULT_FRAMEWORK_REPO,
         "evalscope_version": env.get("EVALSCOPE_VERSION") or "",
         "evalscope_venv": _expand(env.get("EVALSCOPE_VENV") or EVALSCOPE_VENV, env),
@@ -324,19 +325,23 @@ def container_name(env=None) -> str:
 
 def home_from_container_name(name: str, homes: str | None = None) -> str:
     """The home of the user a container is named after: <user>, or <user> with a suffix after - _ or .
-    (the longest such user). Only a home with a keys file in it counts (README step 1)."""
+    (the longest such user), also after the inferpilot_ that begins the names scripts/run_docker.sh makes up.
+    Only a home with a keys file in it counts (README step 1)."""
     homes = HOMES if homes is None else homes
     try:
         users = os.listdir(homes)
     except OSError:
         return ""
-    best = ""
-    for u in users:
-        if len(u) <= len(best) or not (name == u or (name.startswith(u) and name[len(u)] in NAME_SEPARATORS)):
-            continue
-        if os.path.isfile(os.path.join(homes, u, KEYS_FILE)):
-            best = u
-    return os.path.join(homes, best) if best else ""
+    for n in ([name[len(NAME_PREFIX):]] if name.startswith(NAME_PREFIX) else []) + [name]:
+        best = ""
+        for u in users:
+            if len(u) <= len(best) or not (n == u or (n.startswith(u) and n[len(u)] in NAME_SEPARATORS)):
+                continue
+            if os.path.isfile(os.path.join(homes, u, KEYS_FILE)):
+                best = u
+        if best:
+            return os.path.join(homes, best)
+    return ""
 
 
 def find_host_home(s: dict, env=None) -> str:
@@ -642,51 +647,6 @@ def image_checkout() -> str:
     return IMAGE_SGLANG if os.path.isdir(os.path.join(IMAGE_SGLANG, ".git")) else ""
 
 
-def installed_commit() -> str:
-    """The commit the image installed sglang at, from its version (0.5.23.dev20261105+gf3532057e1)."""
-    try:
-        import importlib.metadata
-        m = re.search(r"\+g([0-9a-f]{7,})", importlib.metadata.version("sglang"))
-    except Exception:
-        return ""
-    return m.group(1) if m else ""
-
-
-def follow_main(d: str) -> tuple[str, str]:
-    """Put the image's checkout on main once: discard the build's packaging changes, check out main, pull.
-    Only a checkout as the image left it is touched: detached at the commit sglang was installed at, with
-    nothing but packaging files changed. One on a branch is already past this (Setup takes it from there)."""
-    rc, branch, _ = _out(["git", "-C", d, "symbolic-ref", "-q", "--short", "HEAD"])
-    _, head, _ = _out(["git", "-C", d, "log", "-1", "--format=%h %cs"])
-    if rc == 0 and branch:
-        log("framework: kept %s on %s (%s); the image's checkout, which tasks branch from" % (d, branch, head))
-        return "kept", "%s on %s" % (d, branch)
-    sha, built = (head.split() or [""])[0], installed_commit()
-    if built and sha and not (sha.startswith(built) or built.startswith(sha)):
-        warn("framework: %s is detached at %s, not at the commit the image installed (%s); left as it is"
-             % (d, head, built))
-        return "skipped", "detached at %s" % head
-    _, changed, _ = _out(["git", "-C", d, "diff", "--name-only", "HEAD"])
-    files = [f for f in changed.splitlines() if f]
-    other = [f for f in files if not PACKAGING.search(f)]
-    if other:
-        warn("framework: %s has changes beyond the image's packaging files (%s); left as it is, and Setup "
-             "stops on it" % (d, ", ".join(other[:5])))
-        return "skipped", "changed: %s" % ", ".join(other[:5])
-    if files and _run(["git", "-C", d, "checkout", "HEAD", "--"] + files).returncode != 0:
-        warn("framework: could not discard the image's packaging changes in %s" % d)
-        return "failed", "git checkout HEAD -- <packaging files>"
-    if _run(["git", "-C", d, "checkout", "main"]).returncode != 0:
-        warn("framework: could not check out main in %s" % d)
-        return "failed", "git checkout main"
-    if _run(["git", "-C", d, "pull", "--ff-only"]).returncode != 0:
-        warn("framework: git pull failed in %s; main stays where it was, and Setup fetches before every task" % d)
-    _, head, _ = _out(["git", "-C", d, "log", "-1", "--format=%h %cs"])
-    log("framework: %s now on main (%s)%s; never `pip install -e` from it: its pyproject.toml is upstream's"
-        % (d, head, ", the image's changes to %s discarded" % ", ".join(files) if files else ""))
-    return "updated", "%s on main (%s)" % (d, head)
-
-
 def ensure_framework(s: dict) -> tuple[str, str]:
     d = s["framework_dir"] or image_checkout()
     if not d:
@@ -700,8 +660,13 @@ def ensure_framework(s: dict) -> tuple[str, str]:
                  "It is left as it is (`git -C %s fetch --unshallow` would deepen it)" % (d, d))
         if origin and _repo_key(origin) != _repo_key(s["framework_repo"]):
             warn("framework: %s tracks %s, not %s; kept as it is" % (d, origin, s["framework_repo"]))
-        if d == IMAGE_SGLANG and not s["image_pinned"]:
-            return follow_main(d)
+        if d == IMAGE_SGLANG:
+            _, changed, _ = _out(["git", "-C", d, "status", "--porcelain", "--untracked-files=no"])
+            files = [line[2:].strip() for line in changed.splitlines() if line.strip()]
+            if files:
+                warn("framework: %s has uncommitted changes (%s%s), left as they are; a task's Setup stops on them. "
+                     "Only a new container from the daily image starts on the newest main (scripts/run_docker.sh "
+                     "without IMAGE)" % (d, ", ".join(files[:4]), ", ..." if len(files) > 4 else ""))
         log("framework: kept %s (%s)" % (d, head or "no commits"))
         return "kept", d
     if os.path.isdir(d) and os.listdir(d):

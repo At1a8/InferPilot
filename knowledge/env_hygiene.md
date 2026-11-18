@@ -43,9 +43,11 @@ belongs to a host user, and the rules below are about those.
   `python -m sglang.launch_server` runs whatever is checked out there.
 - That checkout has the whole history and is InferPilot's default `framework_dir`, and each task works in it
   on its own branch. The image leaves it detached at the commit it built, with the build's changes to
-  the packaging files (`python/pyproject.toml` becomes the ROCm one); setup (README step 3) discards
-  those, checks out main and pulls, once per container. Never `pip install -e` from it afterwards: its
-  `pyproject.toml` is upstream's, which would pull CUDA packages into the ROCm environment.
+  the packaging files (`python/pyproject.toml` becomes the ROCm one). `scripts/run_docker.sh` (README
+  step 2) discards those, checks out main and pulls when it creates a container from the daily image; a
+  container from a given image keeps them, and one entered again keeps its code as it was left. Never
+  `pip install -e` from it afterwards: its `pyproject.toml` is upstream's, which would pull CUDA packages
+  into the ROCm environment.
 - The checkout is the container's, and a task's branch and commits stay in it; the PR engineer writes
   them to `RUN_DIR/patches`, so the change can leave the container with the run directory (README step
   5). Run directories are the container's too, in `<inferpilot_dir>/exp`. A task starts only from a clean

@@ -116,7 +116,7 @@ Every step can be run again: it checks first, keeps what is already there and ad
 missing, and run_docker.sh, run again, takes you back into the container. In the commands,
 `check || action` runs the action only when the check fails: on a new machine every action runs, and
 a second run skips them. Nothing is deleted, overwritten or re-cloned, apart from the image build's
-packaging changes in `/sgl-workspace/sglang` (step 3).
+packaging changes in `/sgl-workspace/sglang` of a new container from the daily image (step 2).
 
 ### What the host needs
 
@@ -173,7 +173,7 @@ its own `/root/.inferpilot_env`).
 ### 2. Start a container (host)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts/run_docker.sh)    # NAME defaults to your user name
+bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts/run_docker.sh)    # a new container; NAME=<name> to come back to one
 ```
 
 This fetches [`scripts/run_docker.sh`](scripts/run_docker.sh) and runs it, so the host needs no copy of
@@ -186,6 +186,13 @@ clean-room re-implementation). Your keys also come in as root's `~/.inferpilot_e
 Unlike many such scripts it does not mount the host's Docker socket (`DOCKER_SOCKET=1` does): it would put
 every container on the host within the agents' reach.
 
+What it does depends on whether `NAME` names an existing container and whether `IMAGE` is given:
+
+| | no `IMAGE` | `IMAGE` given |
+|---|---|---|
+| no `NAME`, or no container `NAME` | a new container from the newest daily image; in its `/sgl-workspace/sglang`: `git checkout -- .`, `git checkout main`, `git pull` | a new container from `IMAGE`; its code as the image has it |
+| container `NAME` exists | you enter the old container of that name, its code as it was left, with a warning that the name is taken, giving its name and image | the same; when its image is not `IMAGE`, the warning says that it is another image version too |
+
 - **Image.** Tasks test the newest sglang, so the launcher detects the host GPU and starts from the newest
   matching daily ROCm 10 `rocm/sgl-dev` build: `rocm10-mi30x` for gfx942 (MI300/MI308/MI325) and
   `rocm10-mi35x` for gfx950 (MI350/MI355); a GPU with no ROCm 10 image (on Docker Hub, or here when
@@ -194,33 +201,41 @@ every container on the host within the agents' reach.
   `v0.5.23-rocm10-mi35x-20261103`; the `miles` images on the same page are for reinforcement learning
   and are skipped). A new day's image is pulled at its first use, about 43 GB. `IMAGE_VARIANT` overrides detection and fallback, for example
   `IMAGE_VARIANT=rocm724-mi30x`; for a fixed image, use `IMAGE=rocm/sgl-dev:<tag>`, whose
-  `/sgl-workspace/sglang` step 3 then leaves exactly as the image has it. A container keeps the
+  `/sgl-workspace/sglang` is then left exactly as the image has it. A container keeps the
   image it started from: run_docker.sh says so when you come back to one whose image is no longer the
   newest daily one, and a task there stops at Setup, before it creates anything, to ask whether to run
   on it anyway (`image_ok`), unless the task names that image (`image`). A scan goes on and names its
   image in the report.
 - **What is tested.** The image provides PyTorch, aiter, sgl-kernel and its own sglang checkout,
   `/sgl-workspace/sglang`, with the whole history, which it installs sglang from in editable mode: what
-  runs is what is checked out there, so there is no sglang to clone or name. Step 3 puts it on the
-  current main; each task then works in it on its own branch from the newest main, which Setup fetches
-  first. A baseline at the base commit and a scan of the current main read worktrees of the same
+  runs is what is checked out there, so there is no sglang to clone or name. A new container from the
+  daily image starts with it on the current main: run_docker.sh discards the image build's changes there,
+  checks out main and pulls. Never `pip install -e` from it afterwards: its `pyproject.toml` is then
+  upstream's, which would pull CUDA packages. A container from a given `IMAGE`, or one you come back to,
+  keeps its code as it is. Each task works in it on its own branch from the newest main, which Setup
+  fetches first. A baseline at the base commit and a scan of the current main read worktrees of the same
   repository under the run directory (about 0.2 GB each). The run records the image, the image's sglang
   version and the task's base commit.
-- **One container per task.** Run again with the same `NAME`, run_docker.sh takes you back into that
-  container, started again if it was stopped, with `/workspace` as you left it: it never removes a
-  container. Give the next task a new container under another name (`NAME=<name>`), from the newest
-  image; `docker rm -f <name>` removes one you are done with, and its `/workspace` with it. However many
+- **One container per task.** Without `NAME`, every run starts a new container, named
+  `inferpilot_<you>_<MMDD>_<4 random letters or digits>` (the date in UTC+8; a name no container has) and
+  labelled `inferpilot.user=<you>`; run_docker.sh prints its name and image, the command that brings you back
+  (`NAME=<name> scripts/run_docker.sh`) and your other InferPilot containers. With `NAME` of an existing
+  container it takes you back into it, started again if it was stopped, with `/workspace` as you left it:
+  it never removes a container or changes its code. The shell is a `docker exec` into the container, so
+  leaving it leaves the container running (`docker stop <name>` stops it). `docker rm -f <name>` removes
+  one you are done with, and its `/workspace` with it; each one keeps its image (about 43 GB) on the
+  host until then. However many
   containers there are, one InferPilot task runs on a machine at a time ([Running it](#running-it)). A
   run_docker.sh of your own works too: mount your keys as root's `~/.inferpilot_env`
   (`-v $HOME/.inferpilot_env:/root/.inferpilot_env:ro`), or name the file with `INFERPILOT_KEYS`; in a container that
   mounts `/home`, the bootstrap also finds it in your home there (step 3).
 - **Without a terminal.** Under a job scheduler (`srun`), in CI or from an agent's shell there is no
-  terminal for `docker run -it`: run_docker.sh then starts the container in the background and prints
+  terminal for a shell: run_docker.sh then leaves the container running in the background and prints
   the `docker exec` that enters it (`DETACH=0` or `1` overrides the guess). Where the Docker daemon
   refuses `--privileged`, `PRIVILEGED=0` leaves it out; the GPUs still come through `/dev/kfd` and
   `/dev/dri`, but the container cannot write `/proc/sys`. Where it refuses a mount of all of `/home`,
-  `MOUNT_HOME=0` leaves it out, and `EXTRA_MOUNTS=$HOME` brings back only yours. When it starts the
-  container in the background, run_docker.sh says which of these a refusal calls for.
+  `MOUNT_HOME=0` leaves it out, and `EXTRA_MOUNTS=$HOME` brings back only yours. run_docker.sh says
+  which of these a refusal calls for.
 
 `claude` is not there yet (`claude: command not found`): step 3 installs it.
 
@@ -244,7 +259,7 @@ claude --version    # installed in this container
 | git | trusts checkouts on host mounts, which belong to you, not root (`safe.directory '*'`) |
 | git identity | root commits as `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` from the keys file (or the environment), so no commit reads `root@<this host>`; with neither it says so and sets nothing |
 | shell | root's `~/.bashrc` gets `PYTHONDONTWRITEBYTECODE=1` (no root-owned `__pycache__` in checkouts on host mounts) and `DISABLE_AUTOUPDATER=1`, and loads the keys file, also one put in place later; with `LLM_GATEWAY_KEY` and no `ANTHROPIC_BASE_URL`, it points Claude Code at the AMD LLM gateway |
-| framework | the image's `/sgl-workspace/sglang`, still as the image left it (detached at the commit it built, its packaging files rewritten for ROCm), is put on main: the packaging changes discarded, then `git checkout main` and `git pull`. Never `pip install -e` from it afterwards: its `pyproject.toml` is then upstream's, which would pull CUDA packages. A checkout already on a branch, or with other changes, is left as it is, and so is the checkout in a container started from a given `IMAGE` (a task's Setup then stops on its packaging changes until you deal with them); `--framework-dir` names a host checkout instead (used as it is, or cloned with its whole history when missing) |
+| framework | the image's `/sgl-workspace/sglang`, left as it is: run_docker.sh has put it on the current main in a new container from the daily image (step 2), and a container from a given `IMAGE`, or one you came back to, keeps its code. Uncommitted changes there are reported, since a task's Setup stops on them until you deal with them (in a container from a given `IMAGE`, the image build's packaging changes); `--framework-dir` names a host checkout instead (used as it is, or cloned with its whole history when missing) |
 | evalscope | for `scripts/eval_accuracy.sh`: installed in a venv of its own, `/opt/evalscope` (about a minute and 1.2 GB), and linked as `/usr/local/bin/evalscope`. Not in the image's Python, where it would downgrade `datasets` and `fsspec` below what sglang ships with; an `evalscope` already on `PATH` is kept |
 | checks | GPUs, sglang, evalscope, API access, `GITHUB_TOKEN`, counting what the keys file sets (detect only) |
 
@@ -369,7 +384,7 @@ step 3 too, cloning InferPilot to `/workspace/inferpilot` (pip shows the output 
 | Variable | Used by | Default |
 |---|---|---|
 | `IMAGE` | `scripts/run_docker.sh` | the newest daily `rocm/sgl-dev` image of `IMAGE_VARIANT` (the newest local one when Docker Hub cannot be reached) |
-| `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS`, `MOUNT_HOME` | `scripts/run_docker.sh` | detected from gfx942/gfx950 (fallback MI35x), ROCm 10, else 7.2.4, else 7.2.0; your user name; more directories to mount, space-separated; `0` leaves `/home` out |
+| `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS`, `MOUNT_HOME` | `scripts/run_docker.sh` | detected from gfx942/gfx950 (fallback MI35x), ROCm 10, else 7.2.4, else 7.2.0; a new container's `inferpilot_<you>_<MMDD>_<random>`; more directories to mount, space-separated; `0` leaves `/home` out |
 | `DOCKER_SOCKET` | `scripts/run_docker.sh` | unset; `1` also mounts the host's Docker socket and `docker` |
 | `DETACH`, `PRIVILEGED` | `scripts/run_docker.sh` | unset: in the background when there is no terminal, else an interactive shell; `PRIVILEGED=0` leaves out `--privileged` |
 | `INFERPILOT_LOCK_FILE` | `scripts/run_lock.py` | `/dev/shm/inferpilot-run.lock`, the machine's one-task lock |

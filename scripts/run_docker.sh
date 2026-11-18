@@ -2,9 +2,10 @@
 # Start a ROCm container for InferPilot, or get back into it, and open a root shell in its /workspace
 # (README step 2).
 #
-#   scripts/run_docker.sh                                # newest daily for the GPU: ROCm 10, else 7.2.4, else 7.2.0
+#   scripts/run_docker.sh                                # a new container from the newest daily for the GPU
+#   NAME=<name> scripts/run_docker.sh                    # back into container <name>, or a new one of that name
 #   IMAGE_VARIANT=rocm724-mi30x scripts/run_docker.sh    # exactly this GPU and ROCm version
-#   IMAGE=rocm/sgl-dev:<tag> NAME=<name> scripts/run_docker.sh
+#   IMAGE=rocm/sgl-dev:<tag> scripts/run_docker.sh       # a new container from this image
 #   EXTRA_MOUNTS="/home/<you>/models" scripts/run_docker.sh   # more host directories, at the same paths
 #   DOCKER_SOCKET=1 scripts/run_docker.sh                # also mount the host's Docker socket
 #   MOUNT_HOME=0 scripts/run_docker.sh                   # leave /home out (a clean-room task)
@@ -14,13 +15,26 @@
 #
 # Each container keeps its own /workspace, where InferPilot and its runs live, and its own copy of the image's
 # /sgl-workspace/sglang, the code tasks change: apart from every other container's, for as long as the
-# container exists. A new container starts from the newest daily image, pulled at its first use; with
-# IMAGE given, from that image, whose /sgl-workspace/sglang README step 3 then leaves as it is
-# (INFERPILOT_IMAGE_PINNED=1). A container named NAME is never removed: run again, this starts it if it was stopped and opens a shell in
-# it, /workspace as it was left, and says so when its image is no longer the newest daily one (tasks there
-# stop at Setup to ask). A new task gets a new container under another NAME; `docker rm -f <name>`
-# removes one you are done with, and its /workspace with it. Run README step 3 once in every new
-# container: it installs Claude Code there.
+# container exists. Only a new container from the daily image has that code changed, and only once:
+#
+#                      no IMAGE                                   IMAGE given
+#   no NAME, or no     new, from the newest daily image, pulled   new, from IMAGE (INFERPILOT_IMAGE_PINNED=1);
+#   container NAME     at its first use; then in its sglang:      its sglang as the image has it
+#                      git checkout -- . && git checkout main
+#                      && git pull
+#   container NAME     the old container of that name entered,    the old container of that name entered, its
+#                      its code as it was left; warns that the    code as it was left; warns that the name is
+#                      name is taken, with its name and image     taken, with its name and image, and when that
+#                                                                 image is not IMAGE, that too
+#
+# Without NAME a new container is named inferpilot_<you>_<MMDD>_<4 random letters or digits> (the date in UTC+8), a
+# name no container has, and
+# labelled inferpilot.user=<you>; a new container's name and image, the way back into it and your other such
+# containers are printed. A container is never removed: run again with its NAME, this starts it if it was stopped and opens
+# a shell in it, /workspace as it was left, and says so when its image is no longer the newest daily one (tasks
+# there stop at Setup to ask). The shell is a `docker exec` into the container's own bash, so leaving it leaves
+# the container running. A new task gets a new container; `docker rm -f <name>` removes one you are done with,
+# and its /workspace with it. Run README step 3 once in every new container: it installs Claude Code there.
 #
 # /home and the data directories that exist (/data, /mnt, ...) are mounted at the same paths. InferPilot's
 # agents run as root with permissions auto-approved, so they can read every home on the machine and the
@@ -29,15 +43,19 @@
 # The host's Docker socket is not mounted by default: it would let the agents stop or start any container
 # on the host, and InferPilot inside the container does not need it.
 #
-# `docker run -it` needs a terminal. Without one (srun, CI, an agent's shell) the container starts in the
+# The shell needs a terminal. Without one (srun, CI, an agent's shell) the container is left running in the
 # background and the script prints the `docker exec` that enters it; DETACH=0 or 1 overrides the guess.
 VARIANT=${IMAGE_VARIANT:-}
 PINNED=$([ -n "$IMAGE" ] && echo 1 || echo 0)
-NAME=${NAME:-${SUDO_USER:-$USER}}
+ME=${SUDO_USER:-${USER:-$(id -un 2>/dev/null)}}
+ME=${ME//[^a-zA-Z0-9_.-]/_}
+[[ $ME =~ ^[a-zA-Z0-9] ]] || ME="u$ME"
 HOST_HOME=$HOME
 [ -n "$SUDO_USER" ] && HOST_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 SUDO=$([ -w /var/run/docker.sock ] || echo sudo)
 RAW=https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts
+SELF=$0  # how to run this again, for the hints: read from curl, it has no path of its own
+case "$SELF" in /dev/fd/*|/proc/*|bash|-bash|*/bash|sh|-sh|*/sh) SELF="bash <(curl -fsSL $RAW/run_docker.sh)" ;; esac
 if [ -z "$DETACH" ]; then
   if [ -t 0 ]; then DETACH=0; else DETACH=1; fi
 fi
@@ -45,6 +63,53 @@ fi
 entered() {  # what to run when this script opened no shell
   echo "run_docker.sh: container $NAME is running; enter it with:" \
     "${SUDO:+sudo }docker exec -it -w /workspace -e INFERPILOT_CONTAINER=$NAME $NAME bash" >&2
+}
+
+new_name() {  # inferpilot_<you>_<MMDD in UTC+8>_<4 random letters or digits>, a name no container has
+  local name i
+  for i in 1 2 3 4 5 6 7 8; do
+    name="inferpilot_${ME}_$(TZ=Asia/Shanghai date +%m%d)_$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 4)"
+    $SUDO docker inspect --type container "$name" >/dev/null 2>&1 || { echo "$name"; return 0; }
+  done
+  return 1
+}
+
+way_back() {  # after a new container: its name, the way back into it, and your other ones
+  local n img age st others=""
+  echo "run_docker.sh: this is container $NAME (image $IMAGE); come back to it with: NAME=$NAME $SELF" >&2
+  while IFS='|' read -r n img age st; do
+    [ -n "$n" ] && [ "$n" != "$NAME" ] && others+="  $n  $img  (created $age; $st)"$'\n'
+  done < <($SUDO docker ps -a --filter "label=inferpilot.user=$ME" \
+             --format '{{.Names}}|{{.Image}}|{{.RunningFor}}|{{.Status}}' 2>/dev/null)
+  [ -z "$others" ] || printf 'run_docker.sh: your other InferPilot containers (`%sdocker rm -f <name>` removes one you are done with, and its /workspace):\n%s' \
+    "${SUDO:+sudo }" "$others" >&2
+}
+
+norm_image() {  # one spelling of an image: docker.io/library/x and x are both x:latest
+  local i=${1#docker.io/}
+  i=${i#library/}
+  case ${i##*/} in *:*|*@*) ;; *) i="$i:latest" ;; esac
+  echo "$i"
+}
+
+warn() {  # in bold yellow on a terminal
+  if [ -t 2 ]; then
+    printf '\033[1;33mrun_docker.sh: WARNING: %s\033[0m\n' "$*" >&2
+  else
+    echo "run_docker.sh: WARNING: $*" >&2
+  fi
+}
+
+follow_main() {  # a new container from the daily image: its sglang on the newest main
+  local out
+  echo "run_docker.sh: in /sgl-workspace/sglang: git checkout -- . && git checkout main && git pull" >&2
+  if out=$($SUDO docker exec -w /sgl-workspace/sglang "$NAME" bash -c \
+      'git checkout -- . && git checkout -q main && git pull -q && git log -1 --format="%h %cs"' 2>&1); then
+    echo "run_docker.sh: /sgl-workspace/sglang is on main at ${out##*$'\n'}; never \`pip install -e\` from it:" \
+      "its pyproject.toml is upstream's" >&2
+  else
+    warn "could not put /sgl-workspace/sglang on the newest main: ${out##*$'\n'}"
+  fi
 }
 
 latest_image() {  # scripts/latest_image.py next to this script, else the one on GitHub
@@ -73,19 +138,27 @@ newest_local() {  # the newest local daily image of a variant
     grep -E ":v[0-9][0-9a-z.]*-$1-[0-9]{8}\$" | awk -F- '{print $NF, $0}' | sort | tail -n 1 | cut -d' ' -f2
 }
 
-if OLD=$($SUDO docker inspect -f '{{.Config.Image}}' "$NAME" 2>/dev/null); then
-  if [ -n "$IMAGE" ] && [ "$IMAGE" != "$OLD" ]; then
-    echo "run_docker.sh: container $NAME runs $OLD, not $IMAGE. Pick another NAME, or remove it first" \
-      "(\`${SUDO:+sudo }docker rm -f $NAME\`, which deletes its /workspace)" >&2
-    exit 1
+if [ -z "$NAME" ]; then
+  NAME=$(new_name) || { echo "run_docker.sh: found no free container name; set NAME=<name>" >&2; exit 1; }
+fi
+
+if OLD=$($SUDO docker inspect --type container -f '{{.Config.Image}}' "$NAME" 2>/dev/null); then
+  if [ -z "$IMAGE" ]; then
+    warn "the name $NAME is taken: you enter the old container of that name (name $NAME, image $OLD), not a" \
+      "new one, so its /sgl-workspace/sglang is as it was left, not put on the newest main. For a new one, run" \
+      "without NAME: $SELF"
+  elif [ "$(norm_image "$IMAGE")" != "$(norm_image "$OLD")" ]; then
+    warn "the name $NAME is taken: you enter the old container of that name (name $NAME, image $OLD, not" \
+      "$IMAGE: another image version than the one you asked for), not a new one; its code is as it was left." \
+      "For a new one from $IMAGE, run without NAME: IMAGE=$IMAGE $SELF"
+  else
+    warn "the name $NAME is taken: you enter the old container of that name (name $NAME, image $OLD), not a" \
+      "new one; its code is as it was left. For a new one from $IMAGE, run without NAME: IMAGE=$IMAGE $SELF"
   fi
-  echo "run_docker.sh: back into container $NAME ($OLD), /workspace as it was left" >&2
   CMP=$(latest_image --compare "$OLD" 2>/dev/null)
   case "$CMP" in
     older\ *) echo "run_docker.sh: $OLD is not the newest daily image any more; that is ${CMP#older }. Tasks in" \
-                "this container stop at Setup to ask. For the newest sglang, start a new container:" \
-                "NAME=$NAME-$(date +%m%d) $0 (or remove this one first: \`${SUDO:+sudo }docker rm -f $NAME\`," \
-                "which deletes its /workspace)" >&2 ;;
+                "this container stop at Setup to ask. For the newest sglang, start a new container: $SELF" >&2 ;;
   esac
   $SUDO docker start "$NAME" >/dev/null || exit 1
   [ "$DETACH" = 1 ] && { entered; exit 0; }
@@ -137,10 +210,12 @@ OPTS=("${PRIV[@]}" --ipc=host --network=host --device=/dev/kfd --device=/dev/dri
   -e INFERPILOT_IMAGE_PINNED="$PINNED" -e INFERPILOT_CONTAINER="$NAME"
   "${HOME_ENV[@]}"
   --shm-size=512G --ulimit memlock=-1 --ulimit stack=67108864
-  --entrypoint /bin/bash --name "$NAME" "$IMAGE")
+  --label "inferpilot.user=$ME" --entrypoint /bin/bash --name "$NAME" "$IMAGE")
 
-[ "$DETACH" = 1 ] || exec $SUDO docker run -it "${OPTS[@]}"
-# -dit: the same bash as an interactive run, kept alive by its open stdin, so `docker start` works the same
+# Pulled here, in sight: `docker run -dit` below keeps its output, and a new day's image is about 43 GB.
+$SUDO docker image inspect "$IMAGE" >/dev/null 2>&1 || $SUDO docker pull "$IMAGE" || exit 1
+# -dit: the same bash as an interactive run, kept alive by its open stdin, so `docker start` works the same; the
+# shell you get is a `docker exec` into it, as when you come back, after the daily image's sglang is on main.
 if ! OUT=$($SUDO docker run -dit "${OPTS[@]}" 2>&1); then
   echo "$OUT" >&2
   case "$OUT" in
@@ -150,4 +225,7 @@ if ! OUT=$($SUDO docker run -dit "${OPTS[@]}" 2>&1); then
   esac
   exit 1
 fi
-entered
+[ "$PINNED" = 1 ] || follow_main
+way_back
+[ "$DETACH" = 1 ] && { entered; exit 0; }
+exec $SUDO docker exec -it -w /workspace -e INFERPILOT_CONTAINER="$NAME" "$NAME" bash

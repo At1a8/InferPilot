@@ -46,8 +46,9 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
    - It must be clean: `git -C <framework_dir> status --porcelain --untracked-files=no` prints nothing.
      Changes there (a task that died, someone's edits) stop the run: return `baseline_status: "fail"`
      with the files in `baseline`, and never stash, reset or discard them. Still detached at the image's commit with only `pyproject*.toml`
-     changed means README step 3 has not run in this container: say so, unless `$INFERPILOT_IMAGE_PINNED`
-     is `1`: the container was started from a given image, and step 3 leaves its checkout as that image has it.
+     changed means the container was not created by `scripts/run_docker.sh` from the daily image, which
+     starts it on main, or that putting it on main failed there (the script warned): say so, and that
+     `$INFERPILOT_IMAGE_PINNED` is `1` when it was started from a given image.
    - `git -C <framework_dir> fetch origin`, then `git -C <framework_dir> checkout -b inferpilot/<slug> <base>`
      (the base commit the task names, default `origin/main`); on a retry or a resume, check out the
      branch that is already there.
