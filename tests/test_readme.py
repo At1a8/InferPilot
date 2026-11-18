@@ -1,5 +1,6 @@
 """README.md and README.zh-CN.md stay in step: each links to the other, every link to a heading lands
-on one, and both show the same commands and the same names in their tables. Offline.
+on one, both show the same commands and the same names in their tables, and section by section the same
+headings, inline code, numbers, links and table shapes. Offline.
 
     python3 -m unittest discover -s tests
 """
@@ -55,6 +56,62 @@ def table_names(text):
     return names
 
 
+# Inline code the translation translates: a placeholder's words (<your email>, <你的邮箱>) count as <>, and
+# these spans are the same text in the two languages.
+TRANSLATED = {"检查 || 动作": "check || action"}
+
+
+def sections(text):
+    """(heading level, body without code blocks) for the top and every heading, in order."""
+    body = prose(text)
+    levels = [""] + re.findall(r"^(#{1,6}) ", body, re.M)
+    return list(zip(levels, re.split(r"^#{1,6} .+$", body, flags=re.M)))
+
+
+def code_spans(body):
+    spans = set()
+    for span in re.findall(r"`([^`]+)`", body):
+        span = re.sub(r"<[^<>`]*>", "<>", " ".join(span.split()))
+        spans.add(TRANSLATED.get(span, span))
+    return spans
+
+
+def numbers(body):
+    body = re.sub(r"\]\([^)]*\)", "]", re.sub(r"`[^`]*`", "", body))
+    return set(re.findall(r"(?<![\w.])\d+(?:\.\d+)?(?![\w.])", body))
+
+
+def heading_numbers(text):
+    """Anchor -> the heading's place in the README: anchors are translated with their headings."""
+    seen, out = {}, {}
+    for i, heading in enumerate(re.findall(r"^#{1,6} (.+)$", prose(text), re.M)):
+        s = slug(heading)
+        k = seen.get(s, 0)
+        out[s if k == 0 else "%s-%d" % (s, k)] = i
+        seen[s] = k + 1
+    return out
+
+
+def link_targets(body, places, other):
+    """Link targets, with an anchor as the heading it lands on and the other language's README as one name."""
+    def target(t):
+        if t.startswith("#"):
+            return "#heading-%s" % places.get(t[1:], t)
+        return "<the other README>" if t == other else t
+    return {target(t) for t in re.findall(r"\]\(([^)\s]+)\)", body)}
+
+
+def table_shapes(text):
+    shapes, rows = [], []
+    for line in prose(text).splitlines() + [""]:
+        if line.startswith("|"):
+            rows.append(line.count("|"))
+        elif rows:
+            shapes.append((len(rows), rows[0]))
+            rows = []
+    return shapes
+
+
 class ReadmeTest(unittest.TestCase):
     def test_each_links_to_the_other(self):
         self.assertIn("[简体中文](README.zh-CN.md)", EN)
@@ -73,6 +130,25 @@ class ReadmeTest(unittest.TestCase):
     def test_same_names_in_the_tables(self):
         self.assertGreater(len(table_names(EN)), 50)
         self.assertEqual(table_names(EN) ^ table_names(ZH), set())
+
+    def test_same_headings(self):
+        en, zh = sections(EN), sections(ZH)
+        self.assertGreater(len(en), 15)
+        self.assertEqual([level for level, _ in en], [level for level, _ in zh])
+
+    def test_same_inline_code_numbers_and_links_section_by_section(self):
+        headings = ["(top)"] + re.findall(r"^#{1,6} (.+)$", prose(EN), re.M)
+        en_places, zh_places = heading_numbers(EN), heading_numbers(ZH)
+        for title, (_, en), (_, zh) in zip(headings, sections(EN), sections(ZH)):
+            with self.subTest(section=title):
+                self.assertEqual(code_spans(en) ^ code_spans(zh), set(), "inline code only one language has")
+                self.assertEqual(numbers(en) ^ numbers(zh), set(), "numbers only one language has")
+                self.assertEqual(link_targets(en, en_places, "README.zh-CN.md") ^ link_targets(zh, zh_places, "README.md"),
+                                 set(), "links only one language has")
+
+    def test_same_table_shapes(self):
+        self.assertGreater(len(table_shapes(EN)), 10)
+        self.assertEqual(table_shapes(EN), table_shapes(ZH))
 
 
 if __name__ == "__main__":

@@ -276,11 +276,13 @@ docker cp <name>:/workspace/inferpilot/exp/<run> ~/
 | `INFERPILOT_HOME` | bootstrap | `./inferpilot`，或你所在的 checkout |
 | `INFERPILOT_KEYS` | bootstrap | root 的 `~/.inferpilot_env`，也就是 run_docker.sh 挂载你那份的位置：容器里的 shell 加载的 key 文件 |
 | `INFERPILOT_HOST_HOME` | `scripts/run_docker.sh`（挂载了 `/home` 时）、bootstrap | 在挂载了 `/home` 的容器里，指你在那里的 home，bootstrap 到这里找 key 文件（没有它时，用容器名对应的那个用户的 home） |
+| `INFERPILOT_CONTAINER` | `scripts/run_docker.sh` 设置；bootstrap、`scripts/run_lock.py` | 容器名（没有它时，挂载了 socket 就问 Docker）：bootstrap 到它对应的那个用户的 home 里找 key 文件，任务锁把它记为持有者 |
 | `INFERPILOT_REPO_URL`、`INFERPILOT_REF` | bootstrap | `https://github.com/At1a8/inferpilot.git`，它的默认分支 |
 | `CLAUDE_VERSION`、`CLAUDE_BIN_DIR` | bootstrap | `latest`，`~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code、bootstrap | 不设置（`~`）：Claude Code 自己的变量，指它的配置所在的目录；bootstrap 把首次启动的回答写在那里 |
 | `EVALSCOPE_VERSION`、`EVALSCOPE_VENV` | bootstrap | `latest`，`/opt/evalscope` |
 | `INFERPILOT_CLAUDE`、`INFERPILOT_CURSOR`、`INFERPILOT_RUNNER`、`INFERPILOT_NODE_VERSION` | bootstrap | 不设置；设为 `1` 时分别等同于 `--claude`、`--cursor`、`--runner`（设为 `0` 表示关闭；前两个都没有时装 Claude Code）；默认装最新的 Node.js LTS（`22` 表示最新的 22.x，也可以写确切的 `v22.11.0`） |
+| `INFERPILOT_CLAUDE_BIN`、`INFERPILOT_CURSOR_BIN` | `runtime/run.mjs` | `PATH` 上的 `claude`、`agent`：`--backend claude` 和 `--backend cursor` 运行的 CLI |
 | `INFERPILOT_GIT_NAME`、`INFERPILOT_GIT_EMAIL` | `~/.inferpilot_env`、bootstrap | 不设置；容器里 root 提交时用的身份 |
 | `INFERPILOT_REPO_TOKEN` | `~/.inferpilot_env`、`scripts/propose_knowledge.py` | 不设置；只对 InferPilot 自己仓库有 Contents、Pull requests 读写权限的 fine-grained token，curator 用它提 PR |
 | `LLM_GATEWAY_KEY` | `~/.inferpilot_env`、容器的 shell 配置 | 不设置；设置后 Claude Code 走 AMD LLM 网关，除非 `ANTHROPIC_BASE_URL` 指定了别的地址 |
@@ -362,14 +364,25 @@ python3 scripts/run_lock.py release --force   # 那个运行已经中断时，�
 
 ## 测试
 
-提交前运行 `tests/run_all.sh`：先检查每个脚本的语法，再跑下面三套测试，离线、不需要 GPU，几秒钟就跑完（需要 Python 3.10+ 和 Node.js 20+）。CI 会在每个 pull request 和每次推到 main 时，在 GitHub 的机器上跑同样的内容（[`.github/workflows/tests.yml`](.github/workflows/tests.yml)）。
+提交前运行 `tests/run_all.sh`：离线、不需要 GPU，十秒左右跑完（需要 Python 3.10+ 和 Node.js 20+；装了 shellcheck 就用上）。CI 在 GitHub 的机器上运行它（[`.github/workflows/tests.yml`](.github/workflows/tests.yml)）：pull request 跑基础测试和改动涉及的任务组；推到 main、每天夜里和手动触发时全部都跑。
+
+基础测试每次改动都跑：每个脚本的语法、shellcheck、runner、两个 backend 的对照，以及下表中保持各部分一致的检查。任务组（`feature`、`issue`、`ci`、`perf`、`scan`、`kernel`）加上该任务的 dry-run 场景和它所用脚本的单元测试，只在改动涉及该任务时才跑：该任务会执行的 `inferpilot.js` 代码、它调用的角色，或这些角色读的文件（[`tests/groups.json`](tests/groups.json)）。改动所有任务共用的部分（`runtime/`、dry run 和它的 fixtures、CI、`inferpilot.js` 主流程执行的代码）时，每个组都跑。
 
 ```bash
-tests/run_all.sh                                  # 全部跑一遍；失败时会说明是哪一步、怎么失败的
-node tests/dry_run.mjs                            # 在 InferPilot 的 runner 上走遍 inferpilot.js 的每条控制路径，不需要 GPU
-node tests/runtime_selftest.mjs                   # runner 本身：schema 检查、全局函数、命令行 backend；离线运行
-python3 -m unittest discover -s tests             # 脚本的解析与规则、bootstrap、Claude Code 对 workflow 的规则、两份 README 的一致性；离线运行
+tests/run_all.sh                                  # 基础测试和每个组；失败时会说明是哪一步、怎么失败的
+tests/run_all.sh --changed                        # 基础测试和你自 origin/main 以来的改动涉及的组，并说明原因
+tests/run_all.sh --group perf,kernel              # 基础测试和这几个组
+node tests/dry_run.mjs --only scan,roles          # 只跑名字以 scan: 和 roles: 开头的 dry-run 场景
 ```
+
+| 保持一致的内容 | 由谁检查 |
+|---|---|
+| 两个 backend：`claude` 和 `cursor` 上的提示词、阶段、重试、超时和结果都相同 | `tests/backend_parity.mjs` |
+| 两份 README：逐节对照标题、命令、行内代码、数字、链接和表格 | `tests/test_readme.py` |
+| workflow 与角色：进入的每个阶段都在 `meta.phases` 里；每种模式的路线就是它实际走的路线，也是两份 README 列出的路线；回答必须有的每个字段都写在对应角色的 PHASE 一节里 | `tests/dry_run.mjs` |
+| 代码与文档：setup、`run_docker.sh` 和 runner 读的每个变量都写在 README 里，其他脚本在自己开头写明；README 和 `AGENTS.md` 给出的每个参数都存在 | `tests/test_docs.py` |
+| 公开仓库：没有 token、私钥、内部主机名、私有网段地址、真实的 home 目录或本机机器名 | `tests/test_hygiene.py` |
+| 测试划分：每个 dry-run 场景和单元测试都属于基础测试或某个组 | `tests/test_groups.py` |
 
 ## 目录结构
 
@@ -398,7 +411,7 @@ inferpilot/
 │                            # restore_owner.sh、run_in_tmux.sh
 ├── inferpilot/bootstrap.py  # 第 3 步的配置脚本，在容器内运行；可以重复执行
 ├── setup.py, pyproject.toml # 打包；pip 构建 wheel 时 setup.py 会运行 bootstrap
-├── tests/                   # run_all.sh；inferpilot.js 的 dry run，runner 的自测，脚本、bootstrap、Claude Code workflow 规则和 README 的单元测试
+├── tests/                   # run_all.sh、groups.json；inferpilot.js 的 dry run，runner 的自测，两个 backend 的对照，脚本、bootstrap 和文档的单元测试
 ├── .github/                 # CI（workflows/tests.yml 运行 tests/run_all.sh）和 pull request 模板
 ├── README.md, README.zh-CN.md
 └── docs/design.md

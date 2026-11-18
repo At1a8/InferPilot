@@ -145,7 +145,8 @@ FAILED=0
 SUMMARY=""
 
 run_one() {  # <set>
-    local ds=$1 batch work_dir log cache_arg="" limit_arg="" args_arg="" eb="" tail_cfg gen_cfg judge_args rc accept rep line
+    local ds=$1 batch work_dir log eb="" tail_cfg gen_cfg judge_args rc accept rep line
+    local -a cache_arg=() limit_arg=() args_arg=()
     dataset_profile "${ds}"
     batch=${BATCH:-${DS_BATCH}}
     work_dir="${RESULT_ROOT}/${TAG}_${ds}"
@@ -169,11 +170,11 @@ run_one() {  # <set>
         return
     fi
     if [ -n "${CACHE_DIR:-}" ]; then
-        cache_arg="--use-cache ${CACHE_DIR}"
-        [ "${RERUN_REVIEW:-0}" = 1 ] && cache_arg="${cache_arg} --rerun-review"
+        cache_arg=(--use-cache "${CACHE_DIR}")
+        [ "${RERUN_REVIEW:-0}" = 1 ] && cache_arg+=(--rerun-review)
     fi
-    [ -n "${LIMIT:-}" ] && limit_arg="--limit ${LIMIT}"
-    [ -n "${DS_ARGS}" ] && args_arg="--dataset-args ${DS_ARGS}"
+    [ -n "${LIMIT:-}" ] && limit_arg=(--limit "${LIMIT}")
+    [ -n "${DS_ARGS}" ] && args_arg=(--dataset-args "${DS_ARGS}")
 
     # extra_body is spread into the request's top level, so reasoning_effort must be a value the server
     # accepts; top_k is an sglang extension and only reaches the server through extra_body.
@@ -196,22 +197,21 @@ run_one() {  # <set>
 
     # The gateway wants its key in a header as well, which evalscope's CLI passes through model_args.
     judge_args="{\"model_id\": \"${JUDGE_MODEL}\", \"api_url\": \"${JUDGE_URL}\", \"api_key\": \"${JUDGE_KEY}\", \"model_args\": {\"default_headers\": {\"Ocp-Apim-Subscription-Key\": \"${JUDGE_KEY}\", \"user\": \"${JUDGE_NTID}\"}}}"
-    # shellcheck disable=SC2086
     "${EVALSCOPE}" eval \
         --model "${MODEL}" \
         --api-url "${API_URL}" \
         --api-key EMPTY_KEY \
         --datasets "${ds}" \
         --dataset-hub "${DATASET_HUB}" \
-        ${args_arg} \
+        "${args_arg[@]}" \
         --generation-config "${gen_cfg}" \
         --judge-strategy auto \
         --judge-model-args "${judge_args}" \
         --eval-batch-size "${batch}" \
         --stream \
         --ignore-errors \
-        ${limit_arg} \
-        ${cache_arg} \
+        "${limit_arg[@]}" \
+        "${cache_arg[@]}" \
         --work-dir "${work_dir}" \
         --repeats 1 > "${log}" 2>&1
     rc=$?
