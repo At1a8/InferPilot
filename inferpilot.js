@@ -37,11 +37,11 @@ export const meta = {
 const RAW = args || {};
 const MODES = ['feature', 'issue', 'ci', 'perf', 'scan'];
 // The phases a run of each mode passes when nothing stops it early, logged as its route so that the log
-// shows how far a run is (runtime/run.mjs numbers its phases from it). Intake, an issue's Bisect, Kernel,
-// Investigate, and Performance for an issue that is not about performance, come on top when needed.
+// shows how far a run is (runtime/run.mjs numbers its phases from it). Intake, an issue's Bisect, Kernel and
+// Investigate come on top when needed; an issue about performance logs its route again, with Performance.
 const ROUTES = {
   feature: ['Setup', 'Spec', 'Recon', 'Design', 'Implement', 'Verify', 'Performance', 'Review', 'PR', 'Report'],
-  issue: ['Setup', 'Triage', 'Reproduce', 'Diagnose', 'Implement', 'Verify', 'Review', 'PR', 'Report'],
+  issue: ['Setup', 'Triage', 'Reproduce', 'Diagnose', 'Implement', 'Verify', 'Review', 'PR', 'Reply', 'Report'],
   ci: ['Setup', 'Classify', 'Bisect', 'Implement', 'Verify', 'Review', 'PR', 'Report'],
   perf: ['Setup', 'Profile', 'Plan', 'Implement', 'Verify', 'Performance', 'Review', 'PR', 'Report'],
   scan: ['Collect', 'Dispatch', 'Report'],

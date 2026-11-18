@@ -1,6 +1,7 @@
 // InferPilot's workflow runner: runs inferpilot.js outside Claude Code, with the globals Claude Code's
 // Workflow tool gives a script (agent, parallel, pipeline, phase, log, workflow, args, budget). Every
-// agent() call goes to a backend: { name, async runAgent({prompt, label, cwd, env, model, timeoutMs}) -> {text} }.
+// agent() call goes to a backend: { name, async runAgent({prompt, label, cwd, env, model, timeoutMs, onProgress})
+// -> {text, usage} }, where onProgress(line) hears each tool call and usage, when known, is {total, ...} tokens.
 import { readFile } from 'node:fs/promises';
 import { extractJson, outputContract, validate } from './schema.mjs';
 
@@ -37,8 +38,11 @@ export function scriptBody(src) {
 
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
 
-export const fmtTokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : `${n}`)
-  .replace(/\.0(?=[kM])/, '');
+export const fmtTokens = (n) => {
+  if (n >= 999950) return `${(n / 1e6).toFixed(1).replace(/\.0$/, '')}M`;
+  if (n >= 1000) return `${(n / 1e3).toFixed(1).replace(/\.0$/, '')}k`;
+  return `${n}`;
+};
 export const fmtMinutes = (ms) => {
   const m = Math.round(ms / 60000);
   return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
@@ -75,8 +79,9 @@ export function createRuntime({
     log(`=== ${head} ===${state.done ? `  so far: ${soFar()}` : ''}`);
   };
 
+  // A whole line "Route: ...", after an optional "[tag] ": the same words inside a longer message do not count.
   const scriptLog = (msg) => {
-    const m = /\bRoute: (.+)$/.exec(String(msg));
+    const m = /^(?:\[[^\]\n]+\] )?Route: ([^\n]+)$/.exec(String(msg));
     if (m) route = m[1].split('→').map((s) => s.trim()).filter(Boolean);
     log(msg);
   };

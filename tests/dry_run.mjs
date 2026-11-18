@@ -428,6 +428,8 @@ const scenarios = [
     const r = await run({ mode: 'issue', task: 'https://github.com/sgl-project/sglang/issues/38849' });
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
     check(eqList(r.phases, ['Setup', 'Triage', 'Reproduce', 'Diagnose', 'Implement', 'Verify', 'Review', 'PR', 'Reply', 'Report']), `phases ${r.phases}`);
+    check(r.heads[8].startsWith('=== PHASE 9/10 [#########-]: Reply ===') && r.heads[9].startsWith('=== PHASE 10/10 [##########]: Report ==='),
+      `the issue route numbers Reply and Report: ${r.heads[8]} | ${r.heads[9]}`);
     const v = r.calls.find((c) => c.key === 'verify_engineer:verify');
     check(v && JSON.stringify(v.ins.extra_gates).includes('issue_repro'), 'issue_repro gate passed to verify');
     check(r.result.priority === 'P0', 'priority recorded');

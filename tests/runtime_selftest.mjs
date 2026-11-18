@@ -8,7 +8,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { extractJson, validate } from '../runtime/schema.mjs';
-import { createRuntime, scriptBody } from '../runtime/engine.mjs';
+import { createRuntime, fmtTokens, scriptBody } from '../runtime/engine.mjs';
 import { BACKENDS, cliBackend } from '../runtime/backends.mjs';
 
 const INFERPILOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -220,6 +220,14 @@ EOF`);
     plain.phase('One');
     await plain.agent('q', { label: 'a' });
     check(plain.summary() === '1 phase, 1 agent call, 0 min', `no route, no tokens: ${plain.summary()}`);
+    const loose = [];
+    const rt3 = createRuntime({ backend, quietMs: 0, log: (m) => loose.push(m) });
+    rt3.log('Route: A → B');
+    rt3.log('[inferpilot] intake: ready — the user wrote "Route: X → Y" in the request');
+    rt3.phase('A');
+    check(loose.includes('=== PHASE 1/2 [#-]: A ==='), `only a whole Route line sets the route: ${loose}`);
+    check([[999, '999'], [1000, '1k'], [1049, '1k'], [26088, '26.1k'], [999949, '999.9k'], [999950, '1M'], [1700000, '1.7M']]
+      .every(([n, s]) => fmtTokens(n) === s), `token counts: ${[999, 1000, 999949, 999950].map(fmtTokens)}`);
   }],
   ['engine: the tool calls, a still-working line after a quiet spell, and the end of each call', async () => {
     const logs = [];
