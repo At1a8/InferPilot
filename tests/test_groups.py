@@ -77,6 +77,29 @@ class PlacementTest(unittest.TestCase):
                          [n for s in js.stmts for n in range(s["first"], s["last"] + 1)], "a line in no statement or two")
 
 
+class WorkflowTest(unittest.TestCase):
+    """.github/workflows/tests.yml: a check per task group, run when the change reaches it, and tests-finish
+    waits for every job."""
+
+    def setUp(self):
+        wf = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+        parts = re.split(r"^  ([a-z-]+):\n", wf.split("\njobs:\n", 1)[1], flags=re.M)
+        self.jobs = dict(zip(parts[1::2], parts[2::2]))
+
+    def test_a_job_per_task_group_that_runs_it_when_the_change_reaches_it(self):
+        for g in G.TASKS:
+            job = self.jobs.get(g, "")
+            self.assertIn("name: 'group: %s'" % g, job, "no job for the task group %s" % g)
+            self.assertIn("if: contains(fromJSON(needs.changes.outputs.groups), '%s')" % g, job, g)
+            self.assertIn("dry-run --only %s)" % g, job, g)
+            self.assertIn("unittest --only %s\n" % g, job, g)
+
+    def test_tests_finish_waits_for_every_job(self):
+        needs = re.search(r"needs: \[([^\]]*)\]", self.jobs["finish"]).group(1).split(", ")
+        self.assertEqual(sorted(needs), sorted(j for j in self.jobs if j != "finish"))
+        self.assertIn("if: always()", self.jobs["finish"])
+
+
 class SelectionTest(unittest.TestCase):
     def setUp(self):
         self.js = G.script()
@@ -108,7 +131,7 @@ class SelectionTest(unittest.TestCase):
             "roles/scout.md": {"scan"}, "scripts/scan_upstream.py": {"scan"}, "scripts/_github.py": {"issue", "ci", "scan"},
             "knowledge/feature_skills/some-skill/SKILL.md": {"feature"}, "knowledge/kernels/some/x.md": {"kernel"},
             "roles/intake.md": ALL, "runtime/engine.mjs": ALL, "tests/dry_run.mjs": ALL, "tests/fixtures/answers.mjs": ALL,
-            ".github/workflows/tests.yml": ALL, "tests/groups.json": ALL,
+            ".github/workflows/tests.yml": ALL, ".github/actions/setup/action.yml": ALL, "tests/groups.json": ALL,
         }
         for path, want in cases.items():
             self.assertEqual(G.reached(path, None, self.js), want, path)
@@ -137,6 +160,8 @@ class SelectionTest(unittest.TestCase):
         self.assertIn("test_scripts.ScanUpstreamTest", scan)
         self.assertNotIn("test_scripts.FindSkillTest", scan)
         self.assertEqual(G.dry_run_prefixes(["scan"]), G.GROUPS["basic"]["dry_run"] + ["scan"])
+        self.assertEqual(G.dry_run_prefixes(["scan"], only=True), ["scan"])
+        self.assertEqual({".".join(t.id().split(".")[:2]) for t in G.unit_tests(["scan"], only=True)}, set(G.GROUPS["scan"]["unittest"]))
 
 
 if __name__ == "__main__":

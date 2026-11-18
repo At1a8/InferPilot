@@ -1,7 +1,8 @@
-# tests/run_all.sh on GitHub's runners: offline, no GPU, no secrets. A pull request runs basic and the task
-# groups its changes reach (--changed); a push to main, the nightly run and a manual run run every group.
-# Once with the oldest Python and Node.js InferPilot supports (a host's), once with the newest (the
-# container's Python, the Node.js LTS bootstrap --runner installs).
+# The tests on GitHub's runners (offline, no GPU, no secrets), one check per part, as a pull request's page
+# lists them: basic's steps every time, each task group when the change reaches it (else skipped: see
+# tests/groups.json), the whole of tests/run_all.sh on the oldest Python and Node.js InferPilot supports
+# (a host's), and tests-finish, green when every job that ran passed. A push to main, the nightly run and
+# a manual run run every group.
 name: tests
 
 on:
@@ -21,31 +22,181 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  tests:
-    name: tests (Python ${{ matrix.python }}, Node.js ${{ matrix.node }})
+  changes:
+    name: 'changes: the task groups this runs'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - python: '3.10'
-            node: '20'
-          - python: '3.12'
-            node: 'lts/*'
+    timeout-minutes: 5
+    outputs:
+      groups: ${{ steps.pick.outputs.groups }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # --changed diffs against where the branch left its base
-      - uses: actions/setup-python@v7
-        with:
-          python-version: ${{ matrix.python }}
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ matrix.node }}
-      - name: tests/run_all.sh
+      - uses: ./.github/actions/setup
+      - id: pick
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.base_ref }}
         run: |
+          if [ "$EVENT" = pull_request ]; then
+            groups=$(python3 -B tests/groups.py select --changed "origin/$BASE" 2> why.txt)
+          else
+            groups=$(python3 -B tests/groups.py select --all 2> why.txt)
+          fi
+          echo "groups=$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1].split()))' "$groups")" >> "$GITHUB_OUTPUT"
+          { echo "Task groups: ${groups:-none} (basic always)"; echo; echo '```'; cat why.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          cat why.txt
+
+  syntax:
+    name: 'basic: syntax and shellcheck'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: tests/syntax.sh
+      - run: shellcheck -S warning scripts/*.sh tests/*.sh
+
+  runner:
+    name: 'basic: runner'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: node tests/runtime_selftest.mjs
+
+  backends:
+    name: 'basic: both backends'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: node tests/backend_parity.mjs
+
+  dry-run:
+    name: 'basic: dry run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: node tests/dry_run.mjs --only "$(python3 -B tests/groups.py dry-run)"
+
+  unit:
+    name: 'basic: unit tests'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: python3 -B tests/groups.py unittest
+
+  feature:
+    name: 'group: feature'
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.groups), 'feature')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: node tests/dry_run.mjs --only "$(python3 -B tests/groups.py dry-run --only feature)"
+      - run: python3 -B tests/groups.py unittest --only feature
+
+  issue:
+    name: 'group: issue'
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.groups), 'issue')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: node tests/dry_run.mjs --only "$(python3 -B tests/groups.py dry-run --only issue)"
+      - run: python3 -B tests/groups.py unittest --only issue
+
+  ci:
+    name: 'group: ci'
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.groups), 'ci')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: node tests/dry_run.mjs --only "$(python3 -B tests/groups.py dry-run --only ci)"
+      - run: python3 -B tests/groups.py unittest --only ci
+
+  perf:
+    name: 'group: perf'
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.groups), 'perf')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: node tests/dry_run.mjs --only "$(python3 -B tests/groups.py dry-run --only perf)"
+      - run: python3 -B tests/groups.py unittest --only perf
+
+  scan:
+    name: 'group: scan'
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.groups), 'scan')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: node tests/dry_run.mjs --only "$(python3 -B tests/groups.py dry-run --only scan)"
+      - run: python3 -B tests/groups.py unittest --only scan
+
+  kernel:
+    name: 'group: kernel'
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.groups), 'kernel')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: node tests/dry_run.mjs --only "$(python3 -B tests/groups.py dry-run --only kernel)"
+      - run: python3 -B tests/groups.py unittest --only kernel
+
+  oldest:
+    name: 'all of run_all.sh on Python 3.10, Node.js 20'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          python: '3.10'
+          node: '20'
+      - env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+        run: |
           if [ "$EVENT" = pull_request ]; then tests/run_all.sh --changed "origin/$BASE"; else tests/run_all.sh; fi
+
+  finish:
+    name: tests-finish
+    needs: [changes, syntax, runner, backends, dry-run, unit, feature, issue, ci, perf, scan, kernel, oldest]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, sys
+          needs = json.loads(os.environ["NEEDS"])
+          for job, v in sorted(needs.items()):
+              print("%-9s %s" % (v["result"], job))
+          sys.exit(any(v["result"] not in ("success", "skipped") for v in needs.values()))
+          EOF

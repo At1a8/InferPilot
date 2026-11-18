@@ -616,9 +616,12 @@ restores `knowledge/` in the checkout, so later runs read only merged knowledge.
 ## Tests
 
 Before you push, run `tests/run_all.sh`: offline, without a GPU, in about ten seconds (Python 3.10+ and
-Node.js 20+; shellcheck when installed). CI runs it on GitHub's runners
-([`.github/workflows/tests.yml`](.github/workflows/tests.yml)): for a pull request, basic and the task groups
-its changes reach; for a push to main, every night and on demand, all of it.
+Node.js 20+; shellcheck when installed). CI runs the same on GitHub's runners
+([`.github/workflows/tests.yml`](.github/workflows/tests.yml)), one check per part on a pull request's page:
+`changes` (the task groups the pull request reaches, with each file's reason in its summary), basic's five
+steps, one per task group (skipped when the change does not reach it), the whole of `tests/run_all.sh` on
+Python 3.10 and Node.js 20, and `tests-finish`, green when every job that ran passed. A push to main, every
+night and on demand run every group.
 
 Basic runs for every change: the syntax of every script, shellcheck, the runner, the two backends side by
 side, and the checks below that keep the parts in step. A task group (`feature`, `issue`, `ci`, `perf`,
@@ -641,7 +644,11 @@ node tests/dry_run.mjs --only scan,roles          # only the dry-run scenarios n
 | workflow and roles: every phase entered is in `meta.phases`; each mode's route is what it walks and what the READMEs list; every field an answer must have is named in its role's PHASE section | `tests/dry_run.mjs` |
 | code and docs: every variable that setup, `run_docker.sh` and the runner read is in the READMEs, and other scripts name theirs; every flag the READMEs and `AGENTS.md` give exists | `tests/test_docs.py` |
 | the public repository: no token or key, internal host, private address, real home or storage directory, or the name of this machine or its siblings | `tests/test_hygiene.py` |
-| the split: every dry-run scenario and unit test is in basic or a group | `tests/test_groups.py` |
+| the split: every dry-run scenario and unit test is in basic or a group, and CI has a check per group | `tests/test_groups.py` |
+
+To make merging wait for the tests, add a branch protection rule for `main` in the repository's Settings →
+Branches (or a ruleset in Settings → Rules), turn on *Require status checks to pass before merging* and add
+`tests-finish`, which is listed once it has run on a pull request.
 
 ## Layout
 
