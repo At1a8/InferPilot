@@ -57,10 +57,12 @@ const rt = createRuntime({
 });
 try {
   const result = await rt.runScript(resolve(script), args);
+  rt.log(`=== END: ${rt.summary()} ===`);
   const text = JSON.stringify(result, null, 2);
   if (typeof opts['result-file'] === 'string') writeFileSync(opts['result-file'], `${text}\n`);
   process.stdout.write(`${text}\n`);
 } catch (e) {
+  rt.log(`=== END (failed): ${rt.summary()} ===`);
   process.stderr.write(`run failed: ${e && e.stack ? e.stack : e}\n`);
   process.exit(1);
 }

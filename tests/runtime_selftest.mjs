@@ -8,7 +8,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { extractJson, validate } from '../runtime/schema.mjs';
-import { createRuntime, scriptBody } from '../runtime/engine.mjs';
+import { createRuntime, fmtTokens, scriptBody } from '../runtime/engine.mjs';
 import { BACKENDS, cliBackend } from '../runtime/backends.mjs';
 
 const INFERPILOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -180,6 +180,54 @@ EOF`);
     const erred = fakeCli('erred.sh', `echo '${JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: 'quota exceeded' })}'`);
     await rejects(cliBackend('fake', { preset: preset(erred, 'arg', { events: BACKENDS.cursor.events }) }).runAgent({ prompt: 'p', label: 'e' }),
       /ended in an error: quota exceeded/, 'a result that is an error');
+  }],
+  ['backends: the tokens of a result event, under either CLI\'s names', async () => {
+    const claudeUsage = { type: 'result', is_error: false, result: 'a',
+      usage: { input_tokens: 10, output_tokens: 200, cache_read_input_tokens: 3000, cache_creation_input_tokens: 400 } };
+    const cursorUsage = { type: 'result', is_error: false, result: 'b',
+      usage: { inputTokens: 6, outputTokens: 295, cacheReadTokens: 21041, cacheWriteTokens: 4746 } };
+    const c = await cliBackend('fake', { preset: preset(fakeCli('cu.sh', `echo '${JSON.stringify(claudeUsage)}'`), 'arg',
+      { events: BACKENDS.claude.events }) }).runAgent({ prompt: 'p' });
+    check(JSON.stringify(c.usage) === JSON.stringify({ input: 10, output: 200, cache: 3400, total: 3610 }), `claude usage ${JSON.stringify(c.usage)}`);
+    const k = await cliBackend('fake', { preset: preset(fakeCli('ku.sh', `echo '${JSON.stringify(cursorUsage)}'`), 'arg',
+      { events: BACKENDS.cursor.events }) }).runAgent({ prompt: 'p' });
+    check(k.usage.total === 26088 && k.usage.output === 295, `cursor usage ${JSON.stringify(k.usage)}`);
+    const none = await cliBackend('fake', { preset: preset(fakeCli('nu.sh', OK_JSON), 'arg', { events: BACKENDS.cursor.events }) })
+      .runAgent({ prompt: 'p' });
+    check(none.usage === null, 'plain text: no tokens to report');
+  }],
+  ['engine: phases numbered along the route the script logs, tokens per call and for the run', async () => {
+    const logs = [];
+    let n = 0;
+    const backend = { name: 'fake', async runAgent() {
+      n++;
+      return { text: '```json\n{"ok": true}\n```', usage: { input: 0, output: 0, cache: 0, total: n === 1 ? 410000 : 1250000 } };
+    } };
+    const rt = createRuntime({ backend, quietMs: 0, log: (m) => logs.push(m) });
+    rt.log('[inferpilot] Route: Collect → Dispatch → Report');
+    rt.phase('Collect');
+    await rt.agent('q', { label: 'scout:collect', schema: SCHEMA });
+    rt.phase('Dispatch');
+    await rt.agent('q', { label: 'dispatcher:dispatch', schema: SCHEMA });
+    rt.phase('Bisect');
+    check(logs.includes('=== PHASE 1/3 [#--]: Collect ==='), `the first phase: ${logs}`);
+    check(logs.includes('  <- [Collect] scout:collect  done in 0 min, 410k tokens (run total 410k)'), `tokens of a call: ${logs}`);
+    check(logs.includes('=== PHASE 2/3 [##-]: Dispatch ===  so far: 1 agent call, 410k tokens, 0 min'), `so far: ${logs}`);
+    check(logs.includes('  <- [Dispatch] dispatcher:dispatch  done in 0 min, 1.3M tokens (run total 1.7M)'), `the run total: ${logs}`);
+    check(logs.some((l) => l.startsWith('=== PHASE (off the route): Bisect ===')), `a phase off the route: ${logs}`);
+    check(rt.summary() === '2/3 phases of the route, 2 agent calls, 1.7M tokens, 0 min', `summary: ${rt.summary()}`);
+    const plain = createRuntime({ backend: { name: 'fake', runAgent: async () => ({ text: 'x' }) }, quietMs: 0, log: quiet });
+    plain.phase('One');
+    await plain.agent('q', { label: 'a' });
+    check(plain.summary() === '1 phase, 1 agent call, 0 min', `no route, no tokens: ${plain.summary()}`);
+    const loose = [];
+    const rt3 = createRuntime({ backend, quietMs: 0, log: (m) => loose.push(m) });
+    rt3.log('Route: A → B');
+    rt3.log('[inferpilot] intake: ready — the user wrote "Route: X → Y" in the request');
+    rt3.phase('A');
+    check(loose.includes('=== PHASE 1/2 [#-]: A ==='), `only a whole Route line sets the route: ${loose}`);
+    check([[999, '999'], [1000, '1k'], [1049, '1k'], [26088, '26.1k'], [999949, '999.9k'], [999950, '1M'], [1700000, '1.7M']]
+      .every(([n, s]) => fmtTokens(n) === s), `token counts: ${[999, 1000, 999949, 999950].map(fmtTokens)}`);
   }],
   ['engine: the tool calls, a still-working line after a quiet spell, and the end of each call', async () => {
     const logs = [];

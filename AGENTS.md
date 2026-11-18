@@ -37,8 +37,10 @@ user's login as their name). Ask which one when there are several, or none.
 
 ## Watch it
 
-- `exp/<name>.log` names each phase and agent call, every tool call in it as it starts, a still-working
-  line after five quiet minutes and each call's end. The run directory is the newest
+- `exp/<name>.log` numbers each phase along the mode's route (`PHASE 2/3`, with the agent calls, tokens
+  and time so far), names each agent call and every tool call in it as it starts, adds a still-working line
+  after five quiet minutes, ends each call with its time and tokens, and the run with an `=== END` line. The
+  run directory is the newest
   `exp/<mode>_<slug>_<time>Z`.
 - In the run directory, `experiment_ledger.md` holds every measurement and decision; at the end comes
   `run_report.md` or `validation_report.md`. The result file holds the final `status` and `stopped_at`.

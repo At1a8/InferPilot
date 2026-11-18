@@ -395,8 +395,11 @@ The file holds, as JSON, the arguments the sentences above give Claude Code. The
 the reproduction is `{"mode": "issue", "task": "https://github.com/sgl-project/sglang/issues/41299",
 "inferpilot_dir": "/workspace/inferpilot", "model_path": "<weights>", "gpu_ids": "0", "stop_after": "Reproduce"}`;
 a request in plain words is `{"inferpilot_dir": "/workspace/inferpilot", "request": "..."}`. `exp/scan.log`
-names each phase and agent call, every tool call in it as it starts (a command, a file read or written), a
-still-working line after five quiet minutes and the call's end; `exp/scan.result.json` holds the run's end: the `status`, and the report of a
+numbers each phase along the mode's route, with what the run took so far
+(`=== PHASE 2/3 [##-]: Dispatch ===  so far: 1 agent call, 410k tokens, 4 min`), names each agent call and
+every tool call in it as it starts (a command, a file read or written), adds a still-working line after five
+quiet minutes, ends each call with its time and tokens (as the CLI counts them, cache included) and the run
+with one summary line; `exp/scan.result.json` holds the run's end: the `status`, and the report of a
 run that stopped for you (`needs_input`, `awaiting_design_review`, `blocked`), which says why. Add what you
 decide to the file (`"answers": {...}`) and start the runner again.
 

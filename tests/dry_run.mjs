@@ -98,14 +98,19 @@ function makeBackend(overrides) {
 
 async function run(args, overrides) {
   const phases = [];
+  const heads = [];
   const { backend, calls } = makeBackend(overrides);
   const rt = createRuntime({
     backend,
     concurrency: 2,
     schemaRetries: 0,
     log: (msg) => {
-      const m = /=== PHASE: (.*) ===/.exec(msg);
-      if (m) phases.push(m[1]);
+      // "=== PHASE: X ===", "=== PHASE 3/10 [###-------]: X ===" or "=== PHASE (off the route): X ==="
+      const m = /^=== PHASE(?: \d+\/\d+ \[[#-]+\]| \(off the route\))?: (.*?) ===/.exec(msg);
+      if (m) {
+        phases.push(m[1]);
+        heads.push(msg);
+      }
     },
   });
   const modeDefaults = {
@@ -113,7 +118,7 @@ async function run(args, overrides) {
     perf: { model_path: '/models/m', workload: '{"isl":8192,"osl":1024,"conc":64}', server_script: '/s/server.sh', client_script: '/s/client.sh' },
   }[args.mode] || {};
   const result = await rt.runScript(SCRIPT, { inferpilot_dir: INFERPILOT, framework_dir: '/tmp/sglang', agent_retries: 1, ...modeDefaults, ...args }, 0);
-  return { result, phases, calls, keys: calls.map((c) => c.key) };
+  return { result, phases, heads, calls, keys: calls.map((c) => c.key), summary: rt.summary() };
 }
 
 let failed = 0;
@@ -132,6 +137,9 @@ const scenarios = [
     const r = await run({ mode: 'feature', task: 'port HiSparse V2 to DeepSeek-V4.1' });
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
     check(eqList(r.phases, ['Setup', 'Spec', 'Recon', 'Design', 'Implement', 'Verify', 'Performance', 'Review', 'PR', 'Report']), `phases ${r.phases}`);
+    check(r.heads[0] === '=== PHASE 1/10 [#---------]: Setup ===' && r.heads[9].startsWith('=== PHASE 10/10 [##########]: Report ===  so far: '),
+      `phases numbered along the feature route: ${r.heads[0]} … ${r.heads[9]}`);
+    check(r.summary.startsWith('10/10 phases of the route, '), `summary ${r.summary}`);
     check(r.result.done.map((d) => d.wp).join() === 'WP1,WP2', `done ${JSON.stringify(r.result.done)}`);
     check(r.result.pr && r.result.pr.push_command === 'git push origin inferpilot/task', 'push command surfaced, not executed');
     check(r.keys.filter((k) => k === 'curator:learn').length === 1, 'curator runs once');
@@ -175,6 +183,8 @@ const scenarios = [
     });
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
     check(eqList(r.phases.slice(4, 9), ['Implement', 'Verify', 'Investigate', 'Implement', 'Verify']), `phases ${r.phases}`);
+    check(r.heads[6].startsWith('=== PHASE (off the route): Investigate ===') && r.heads[7].startsWith('=== PHASE 5/10 [#####-----]: Implement'),
+      `Investigate is off the route; Implement keeps its place: ${r.heads[6]} | ${r.heads[7]}`);
     check(r.result.done.map((d) => d.wp).join() === 'WP1,WP2,FIX1', `done ${JSON.stringify(r.result.done)}`);
   }],
   ['feature: baseline bug is recorded and the gate is re-judged', async () => {
@@ -418,6 +428,8 @@ const scenarios = [
     const r = await run({ mode: 'issue', task: 'https://github.com/sgl-project/sglang/issues/38849' });
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
     check(eqList(r.phases, ['Setup', 'Triage', 'Reproduce', 'Diagnose', 'Implement', 'Verify', 'Review', 'PR', 'Reply', 'Report']), `phases ${r.phases}`);
+    check(r.heads[8].startsWith('=== PHASE 9/10 [#########-]: Reply ===') && r.heads[9].startsWith('=== PHASE 10/10 [##########]: Report ==='),
+      `the issue route numbers Reply and Report: ${r.heads[8]} | ${r.heads[9]}`);
     const v = r.calls.find((c) => c.key === 'verify_engineer:verify');
     check(v && JSON.stringify(v.ins.extra_gates).includes('issue_repro'), 'issue_repro gate passed to verify');
     check(r.result.priority === 'P0', 'priority recorded');

@@ -36,6 +36,17 @@ export const meta = {
 // ---------------------------------------------------------------------------
 const RAW = args || {};
 const MODES = ['feature', 'issue', 'ci', 'perf', 'scan'];
+// The phases a run of each mode passes when nothing stops it early, logged as its route so that the log
+// shows how far a run is (runtime/run.mjs numbers its phases from it). Intake, an issue's Bisect, Kernel and
+// Investigate come on top when needed; an issue about performance logs its route again, with Performance.
+const ROUTES = {
+  feature: ['Setup', 'Spec', 'Recon', 'Design', 'Implement', 'Verify', 'Performance', 'Review', 'PR', 'Report'],
+  issue: ['Setup', 'Triage', 'Reproduce', 'Diagnose', 'Implement', 'Verify', 'Review', 'PR', 'Reply', 'Report'],
+  ci: ['Setup', 'Classify', 'Bisect', 'Implement', 'Verify', 'Review', 'PR', 'Report'],
+  perf: ['Setup', 'Profile', 'Plan', 'Implement', 'Verify', 'Performance', 'Review', 'PR', 'Report'],
+  scan: ['Collect', 'Dispatch', 'Report'],
+};
+const logRoute = (route) => log(`[inferpilot] Route: ${route.join(' → ')}`);
 // Kernel back ends: where kernel-level work goes (tuning a kernel InferPilot wrote for a feature, or a
 // kernel-level performance opportunity). knowledge/kernel_backends.md describes the contract.
 //   none     record the hand-off package in the report and run nothing (default)
@@ -1163,6 +1174,7 @@ async function runIssue() {
   }
   // A performance issue is fixed when the reported number comes back; the reproduction states it.
   const runPerf = tri.category === 'performance';
+  if (runPerf) logRoute(ROUTES.issue.flatMap((t) => (t === 'Verify' ? [t, 'Performance'] : [t])));
   const issueClaim = runPerf ? String(rep.perf_claim || '').trim() : '';
   if (runPerf && !issueClaim) {
     note('Reproduce', 'fail', 'a performance issue reproduced without a perf_claim: the number the fix must restore');
@@ -1320,4 +1332,5 @@ async function runScan() {
 
 const RUNNERS = { feature: runFeature, issue: runIssue, ci: runCi, perf: runPerf, scan: runScan };
 log(`[inferpilot] mode=${MODE} inferpilot_dir=${INFERPILOT} framework=${C.framework}${C.framework_dir ? ` (${C.framework_dir})` : ''}`);
+if (ROUTES[MODE]) logRoute(ROUTES[MODE]);
 return await RUNNERS[MODE]();
