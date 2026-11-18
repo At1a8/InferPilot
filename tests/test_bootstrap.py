@@ -259,7 +259,10 @@ class RunDockerTest(unittest.TestCase):
         fake = self.tmp / "bin"
         make_exe(fake / "docker").write_text(
             '#!/bin/sh\necho "$*" >> "$DOCKER_LOG"\n'
+            'if [ "$1" = inspect ] && [ -n "$FAKE_TAKEN_ONCE" ] && [ ! -e "$DOCKER_LOG.taken" ]; then '
+            ': > "$DOCKER_LOG.taken"; exit 0; fi\n'
             'if [ "$1" = inspect ]; then [ -n "$FAKE_IMAGE" ] || exit 1; echo "$FAKE_IMAGE"; fi\n'
+            'if [ "$1" = ps ] && [ -n "$FAKE_PS" ]; then printf "%s\\n" "$FAKE_PS"; fi\n'
             'if [ "$1 $2" = "image inspect" ] && [ -n "$FAKE_MISSING" ]; then exit 1; fi\n'
             'if [ "$1" = run ] && [ -n "$FAKE_DENY" ]; then echo "$FAKE_DENY" >&2; exit 125; fi\n'
             'if [ "$1 $2" = "exec -w" ]; then [ -z "$FAKE_PULL_FAIL" ] || { echo "$FAKE_PULL_FAIL" >&2; exit 1; }; '
@@ -272,9 +275,9 @@ class RunDockerTest(unittest.TestCase):
         self.path = "%s:%s" % (fake, os.environ.get("PATH", "/usr/bin:/bin"))
 
     def run_docker(self, existing="", image="", **extra):
-        # stdin is never a terminal here; DETACH=0 stands for the interactive case
+        # stdin is never a terminal here; DETACH=0 stands for the interactive case. NAME="" for a generated name.
         env = {"PATH": self.path, "HOME": str(self.tmp / "home"), "USER": "tester", "DOCKER_LOG": str(self.log),
-               "FAKE_IMAGE": existing, "IMAGE": image, "DETACH": "0", **extra}
+               "FAKE_IMAGE": existing, "IMAGE": image, "DETACH": "0", "NAME": "tester", **extra}
         r = subprocess.run(["bash", str(ROOT / "scripts" / "run_docker.sh")], env=env, capture_output=True, text=True,
                            stdin=subprocess.DEVNULL)
         self.stderr = r.stderr
@@ -319,15 +322,40 @@ class RunDockerTest(unittest.TestCase):
         main = ("exec -w /sgl-workspace/sglang tester bash -c git checkout -- . && git checkout -q main && git pull -q"
                 ' && git log -1 --format="%h %cs"')
         rc, calls = self.run_docker(PATH=self.daily())
-        self.assertEqual((rc, [c.split()[0] for c in calls[-3:]]), (0, ["run", "exec", "exec"]), self.stderr)
-        self.assertIn("-e INFERPILOT_IMAGE_PINNED=0", calls[-3])
-        self.assertEqual(calls[-2:], [main, "exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash"])
+        self.assertEqual((rc, [c.split()[0] for c in calls[-4:]]), (0, ["run", "exec", "ps", "exec"]), self.stderr)
+        self.assertIn("-e INFERPILOT_IMAGE_PINNED=0", calls[-4])
+        self.assertEqual((calls[-3], calls[-1]), (main, "exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash"))
         self.assertIn("/sgl-workspace/sglang is on main at b2cc023f23 2026-11-17", self.stderr)
         rc, calls = self.run_docker(image="rocm/sgl-dev:new")
-        self.assertEqual((rc, [c.split()[0] for c in calls]), (0, ["inspect", "image", "run", "exec"]),
+        self.assertEqual((rc, [c.split()[0] for c in calls]), (0, ["inspect", "image", "run", "ps", "exec"]),
                          "a given image's code stays")
         rc, calls = self.run_docker(PATH=self.daily(), DETACH="1")
-        self.assertEqual((rc, calls[-1]), (0, main), "without a terminal too")
+        self.assertEqual((rc, calls[-2]), (0, main), "without a terminal too")
+
+    def test_without_name_a_new_container_gets_a_name_no_container_has(self):
+        rc, calls = self.run_docker(image="rocm/sgl-dev:new", NAME="", FAKE_TAKEN_ONCE="1")
+        self.assertEqual(rc, 0, self.stderr)
+        tried = [c.split()[-1] for c in calls if c.startswith("inspect --type container ")]
+        self.assertEqual(len(tried), 2, "the first name is taken, the second is free")
+        for name in tried:
+            self.assertRegex(name, r"^tester_\d{4}_[a-z0-9]{4}$")
+        name = tried[1]
+        self.assertTrue(self.created(calls).endswith("--label inferpilot.user=tester --entrypoint /bin/bash --name %s "
+                                                     "rocm/sgl-dev:new" % name), self.created(calls))
+        self.assertIn("-e INFERPILOT_CONTAINER=%s" % name, self.created(calls))
+        self.assertEqual(calls[-1], "exec -it -w /workspace -e INFERPILOT_CONTAINER=%s %s bash" % (name, name))
+        self.assertIn("this is container %s; come back to it with: NAME=%s " % (name, name), self.stderr)
+
+    def test_a_new_container_lists_your_other_ones(self):
+        others = "tester_1101_ab12|rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261101|2 weeks ago|Exited (0) 3 days ago"
+        rc, _ = self.run_docker(image="rocm/sgl-dev:new", FAKE_PS=others + "\ntester|rocm/sgl-dev:new|1 second ago|Up 1 second")
+        self.assertEqual(rc, 0, self.stderr)
+        self.assertIn("your other InferPilot containers (`docker rm -f <name>` removes one you are done with", self.stderr)
+        self.assertIn("  tester_1101_ab12  rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261101  (created 2 weeks ago; Exited (0) "
+                      "3 days ago)", self.stderr)
+        self.assertNotIn("  tester  rocm/sgl-dev:new", self.stderr, "not the new one itself")
+        rc, _ = self.run_docker(image="rocm/sgl-dev:new")
+        self.assertNotIn("your other InferPilot containers", self.stderr)
 
     def test_a_missing_image_is_pulled_in_sight_first(self):
         rc, calls = self.run_docker(image="rocm/sgl-dev:new", FAKE_MISSING="1")
@@ -346,18 +374,18 @@ class RunDockerTest(unittest.TestCase):
         make_exe(fake_py / "python3").write_text('#!/bin/sh\necho "older rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261109"\n')
         env = {"PATH": "%s:%s" % (fake_py, self.path), "HOME": str(self.tmp / "home"), "USER": "tester",
                "DOCKER_LOG": str(self.log), "FAKE_IMAGE": "rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261105", "IMAGE": "",
-               "DETACH": "0"}
+               "DETACH": "0", "NAME": "tester"}
         r = subprocess.run(["bash", str(ROOT / "scripts" / "run_docker.sh")], env=env, capture_output=True, text=True,
                            stdin=subprocess.DEVNULL)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("not the newest daily image any more; that is rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261109", r.stderr)
-        self.assertIn("NAME=tester-", r.stderr)
+        self.assertIn("For the newest sglang, start a new container: %s" % (ROOT / "scripts" / "run_docker.sh"), r.stderr)
         self.assertTrue(self.log.read_text().splitlines()[-1].startswith("exec -it -w /workspace "), "it still goes in")
 
     def test_a_new_container_starts_in_workspace(self):
         rc, calls = self.run_docker(image="rocm/sgl-dev:new")
-        self.assertEqual((rc, len(calls), calls[2].split()[:2]), (0, 4, ["run", "-dit"]))
-        self.assertEqual(calls[3], "exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash")
+        self.assertEqual((rc, len(calls), calls[2].split()[:2]), (0, 5, ["run", "-dit"]))
+        self.assertEqual(calls[4], "exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash")
         run = calls[2]
         self.assertIn("-w /workspace", run)
         self.assertTrue(run.endswith("--name tester rocm/sgl-dev:new"), run)
@@ -393,8 +421,9 @@ class RunDockerTest(unittest.TestCase):
     def test_without_a_terminal_it_starts_detached_and_says_how_to_enter(self):
         enter = "docker exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash"
         rc, calls = self.run_docker(image="rocm/sgl-dev:new", DETACH="")
-        self.assertEqual((rc, calls[-1].split()[:2]), (0, ["run", "-dit"]), self.stderr)
-        self.assertTrue(calls[-1].endswith("--name tester rocm/sgl-dev:new"), calls[-1])
+        self.assertEqual((rc, self.created(calls).split()[:2]), (0, ["run", "-dit"]), self.stderr)
+        self.assertTrue(self.created(calls).endswith("--name tester rocm/sgl-dev:new"), calls)
+        self.assertFalse(calls[-1].startswith("exec -it"), "no shell opened")
         self.assertIn(enter, self.stderr)
 
         rc, calls = self.run_docker(existing="rocm/sgl-dev:new", DETACH="")

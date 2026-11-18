@@ -173,7 +173,7 @@ its own `/root/.inferpilot_env`).
 ### 2. Start a container (host)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts/run_docker.sh)    # NAME defaults to your user name
+bash <(curl -fsSL https://raw.githubusercontent.com/At1a8/inferpilot/main/scripts/run_docker.sh)    # a new container; NAME=<name> to come back to one
 ```
 
 This fetches [`scripts/run_docker.sh`](scripts/run_docker.sh) and runs it, so the host needs no copy of
@@ -186,11 +186,11 @@ clean-room re-implementation). Your keys also come in as root's `~/.inferpilot_e
 Unlike many such scripts it does not mount the host's Docker socket (`DOCKER_SOCKET=1` does): it would put
 every container on the host within the agents' reach.
 
-What it does depends on whether a container named `NAME` exists and whether `IMAGE` is given:
+What it does depends on whether `NAME` names an existing container and whether `IMAGE` is given:
 
 | | no `IMAGE` | `IMAGE` given |
 |---|---|---|
-| no container `NAME` | a new container from the newest daily image; in its `/sgl-workspace/sglang`: `git checkout -- .`, `git checkout main`, `git pull` | a new container from `IMAGE`; its code as the image has it |
+| no `NAME`, or no container `NAME` | a new container from the newest daily image; in its `/sgl-workspace/sglang`: `git checkout -- .`, `git checkout main`, `git pull` | a new container from `IMAGE`; its code as the image has it |
 | container `NAME` exists | you enter it, its code as it was left, with a warning that it is not a new container | you enter it, its code as it was left, with a warning that it is not a new container and, when it runs another image than `IMAGE`, not that image version either |
 
 - **Image.** Tasks test the newest sglang, so the launcher detects the host GPU and starts from the newest
@@ -216,11 +216,15 @@ What it does depends on whether a container named `NAME` exists and whether `IMA
   fetches first. A baseline at the base commit and a scan of the current main read worktrees of the same
   repository under the run directory (about 0.2 GB each). The run records the image, the image's sglang
   version and the task's base commit.
-- **One container per task.** Run again with the same `NAME`, run_docker.sh takes you back into that
-  container, started again if it was stopped, with `/workspace` as you left it: it never removes a
-  container or changes its code. The shell is a `docker exec` into the container, so leaving it leaves
-  the container running (`docker stop <name>` stops it). Give the next task a new container under another name (`NAME=<name>`), from the newest
-  image; `docker rm -f <name>` removes one you are done with, and its `/workspace` with it. However many
+- **One container per task.** Without `NAME`, every run starts a new container, named
+  `<you>_<MMDD>_<4 random letters or digits>` (the UTC date; a name no container has) and labelled
+  `inferpilot.user=<you>`; run_docker.sh prints its name, the command that brings you back
+  (`NAME=<name> scripts/run_docker.sh`) and your other InferPilot containers. With `NAME` of an existing
+  container it takes you back into it, started again if it was stopped, with `/workspace` as you left it:
+  it never removes a container or changes its code. The shell is a `docker exec` into the container, so
+  leaving it leaves the container running (`docker stop <name>` stops it). `docker rm -f <name>` removes
+  one you are done with, and its `/workspace` with it; each one keeps its image (about 43 GB) on the
+  host until then. However many
   containers there are, one InferPilot task runs on a machine at a time ([Running it](#running-it)). A
   run_docker.sh of your own works too: mount your keys as root's `~/.inferpilot_env`
   (`-v $HOME/.inferpilot_env:/root/.inferpilot_env:ro`), or name the file with `INFERPILOT_KEYS`; in a container that
@@ -380,7 +384,7 @@ step 3 too, cloning InferPilot to `/workspace/inferpilot` (pip shows the output 
 | Variable | Used by | Default |
 |---|---|---|
 | `IMAGE` | `scripts/run_docker.sh` | the newest daily `rocm/sgl-dev` image of `IMAGE_VARIANT` (the newest local one when Docker Hub cannot be reached) |
-| `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS`, `MOUNT_HOME` | `scripts/run_docker.sh` | detected from gfx942/gfx950 (fallback MI35x), ROCm 10, else 7.2.4, else 7.2.0; your user name; more directories to mount, space-separated; `0` leaves `/home` out |
+| `IMAGE_VARIANT`, `NAME`, `EXTRA_MOUNTS`, `MOUNT_HOME` | `scripts/run_docker.sh` | detected from gfx942/gfx950 (fallback MI35x), ROCm 10, else 7.2.4, else 7.2.0; a new container's `<you>_<MMDD>_<random>`; more directories to mount, space-separated; `0` leaves `/home` out |
 | `DOCKER_SOCKET` | `scripts/run_docker.sh` | unset; `1` also mounts the host's Docker socket and `docker` |
 | `DETACH`, `PRIVILEGED` | `scripts/run_docker.sh` | unset: in the background when there is no terminal, else an interactive shell; `PRIVILEGED=0` leaves out `--privileged` |
 | `INFERPILOT_LOCK_FILE` | `scripts/run_lock.py` | `/dev/shm/inferpilot-run.lock`, the machine's one-task lock |
