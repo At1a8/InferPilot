@@ -191,7 +191,7 @@ What it does depends on whether `NAME` names an existing container and whether `
 | | no `IMAGE` | `IMAGE` given |
 |---|---|---|
 | no `NAME`, or no container `NAME` | a new container from the newest daily image; in its `/sgl-workspace/sglang`: `git checkout -- .`, `git checkout main`, `git pull` | a new container from `IMAGE`; its code as the image has it |
-| container `NAME` exists | you enter it, its code as it was left, with a warning that it is not a new container | you enter it, its code as it was left, with a warning that it is not a new container and, when it runs another image than `IMAGE`, not that image version either |
+| container `NAME` exists | you enter the old container of that name, its code as it was left, with a warning that the name is taken, giving its name and image | the same; when its image is not `IMAGE`, the warning says that it is another image version too |
 
 - **Image.** Tasks test the newest sglang, so the launcher detects the host GPU and starts from the newest
   matching daily ROCm 10 `rocm/sgl-dev` build: `rocm10-mi30x` for gfx942 (MI300/MI308/MI325) and
@@ -217,8 +217,8 @@ What it does depends on whether `NAME` names an existing container and whether `
   repository under the run directory (about 0.2 GB each). The run records the image, the image's sglang
   version and the task's base commit.
 - **One container per task.** Without `NAME`, every run starts a new container, named
-  `inferpilot_<you>_<MMDD>_<4 random letters or digits>` (the UTC date; a name no container has) and labelled
-  `inferpilot.user=<you>`; run_docker.sh prints its name, the command that brings you back
+  `inferpilot_<you>_<MMDD>_<4 random letters or digits>` (the date in UTC+8; a name no container has) and
+  labelled `inferpilot.user=<you>`; run_docker.sh prints its name and image, the command that brings you back
   (`NAME=<name> scripts/run_docker.sh`) and your other InferPilot containers. With `NAME` of an existing
   container it takes you back into it, started again if it was stopped, with `/workspace` as you left it:
   it never removes a container or changes its code. The shell is a `docker exec` into the container, so

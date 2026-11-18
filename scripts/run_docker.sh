@@ -22,14 +22,15 @@
 #   container NAME     at its first use; then in its sglang:      its sglang as the image has it
 #                      git checkout -- . && git checkout main
 #                      && git pull
-#   container NAME     entered, its code as it was left; warns    entered, its code as it was left; warns that
-#                      that it is not a new container             it is not a new container, and when it runs
-#                                                                 another image than IMAGE, that too
+#   container NAME     the old container of that name entered,    the old container of that name entered, its
+#                      its code as it was left; warns that the    code as it was left; warns that the name is
+#                      name is taken, with its name and image     taken, with its name and image, and when that
+#                                                                 image is not IMAGE, that too
 #
-# Without NAME a new container is named inferpilot_<you>_<MMDD>_<4 random letters or digits> (the UTC date), a name
-# no container has, and
-# labelled inferpilot.user=<you>; a new container's name, the way back into it and your other such containers
-# are printed. A container is never removed: run again with its NAME, this starts it if it was stopped and opens
+# Without NAME a new container is named inferpilot_<you>_<MMDD>_<4 random letters or digits> (the date in UTC+8), a
+# name no container has, and
+# labelled inferpilot.user=<you>; a new container's name and image, the way back into it and your other such
+# containers are printed. A container is never removed: run again with its NAME, this starts it if it was stopped and opens
 # a shell in it, /workspace as it was left, and says so when its image is no longer the newest daily one (tasks
 # there stop at Setup to ask). The shell is a `docker exec` into the container's own bash, so leaving it leaves
 # the container running. A new task gets a new container; `docker rm -f <name>` removes one you are done with,
@@ -64,10 +65,10 @@ entered() {  # what to run when this script opened no shell
     "${SUDO:+sudo }docker exec -it -w /workspace -e INFERPILOT_CONTAINER=$NAME $NAME bash" >&2
 }
 
-new_name() {  # inferpilot_<you>_<MMDD, UTC>_<4 random letters or digits>, a name no container has
+new_name() {  # inferpilot_<you>_<MMDD in UTC+8>_<4 random letters or digits>, a name no container has
   local name i
   for i in 1 2 3 4 5 6 7 8; do
-    name="inferpilot_${ME}_$(date -u +%m%d)_$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 4)"
+    name="inferpilot_${ME}_$(TZ=Asia/Shanghai date +%m%d)_$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 4)"
     $SUDO docker inspect --type container "$name" >/dev/null 2>&1 || { echo "$name"; return 0; }
   done
   return 1
@@ -75,7 +76,7 @@ new_name() {  # inferpilot_<you>_<MMDD, UTC>_<4 random letters or digits>, a nam
 
 way_back() {  # after a new container: its name, the way back into it, and your other ones
   local n img age st others=""
-  echo "run_docker.sh: this is container $NAME; come back to it with: NAME=$NAME $SELF" >&2
+  echo "run_docker.sh: this is container $NAME (image $IMAGE); come back to it with: NAME=$NAME $SELF" >&2
   while IFS='|' read -r n img age st; do
     [ -n "$n" ] && [ "$n" != "$NAME" ] && others+="  $n  $img  (created $age; $st)"$'\n'
   done < <($SUDO docker ps -a --filter "label=inferpilot.user=$ME" \
@@ -136,18 +137,17 @@ fi
 
 if OLD=$($SUDO docker inspect -f '{{.Config.Image}}' "$NAME" 2>/dev/null); then
   if [ -z "$IMAGE" ]; then
-    warn "container $NAME already exists ($OLD): you enter it, not a new container, so its" \
-      "/sgl-workspace/sglang is as it was left, not put on the newest main. For a new one, run without NAME:" \
-      "$SELF"
+    warn "the name $NAME is taken: you enter the old container of that name (name $NAME, image $OLD), not a" \
+      "new one, so its /sgl-workspace/sglang is as it was left, not put on the newest main. For a new one, run" \
+      "without NAME: $SELF"
   elif [ "$IMAGE" != "$OLD" ]; then
-    warn "container $NAME already exists: you enter it, not a new container, and it runs $OLD, not $IMAGE:" \
-      "another image version than the one you asked for. Its code is as it was left. For a new one from" \
-      "$IMAGE, run without NAME: IMAGE=$IMAGE $SELF"
+    warn "the name $NAME is taken: you enter the old container of that name (name $NAME, image $OLD, not" \
+      "$IMAGE: another image version than the one you asked for), not a new one; its code is as it was left." \
+      "For a new one from $IMAGE, run without NAME: IMAGE=$IMAGE $SELF"
   else
-    warn "container $NAME already exists ($OLD): you enter it, not a new container; its code is as it was" \
-      "left. For a new one from $IMAGE, run without NAME: IMAGE=$IMAGE $SELF"
+    warn "the name $NAME is taken: you enter the old container of that name (name $NAME, image $OLD), not a" \
+      "new one; its code is as it was left. For a new one from $IMAGE, run without NAME: IMAGE=$IMAGE $SELF"
   fi
-  echo "run_docker.sh: back into container $NAME ($OLD), /workspace as it was left" >&2
   CMP=$(latest_image --compare "$OLD" 2>/dev/null)
   case "$CMP" in
     older\ *) echo "run_docker.sh: $OLD is not the newest daily image any more; that is ${CMP#older }. Tasks in" \

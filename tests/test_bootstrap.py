@@ -311,18 +311,17 @@ class RunDockerTest(unittest.TestCase):
         inspect = "inspect -f {{.Config.Image}} tester"
         enter = [inspect, "start tester", "exec -it -w /workspace -e INFERPILOT_CONTAINER=tester tester bash"]
         self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", PATH=self.daily()), (0, enter))
-        self.assertIn("WARNING: container tester already exists (rocm/sgl-dev:old): you enter it, not a new container",
+        taken = "WARNING: the name tester is taken: you enter the old container of that name (name tester, image "
+        self.assertIn(taken + "rocm/sgl-dev:old), not a new one, so its /sgl-workspace/sglang is as it was left",
                       self.stderr)
         self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", image="rocm/sgl-dev:old", PATH=self.daily()),
                          (0, enter))
-        self.assertIn("WARNING: container tester already exists (rocm/sgl-dev:old): you enter it, not a new container;",
-                      self.stderr)
+        self.assertIn(taken + "rocm/sgl-dev:old), not a new one; its code is as it was left", self.stderr)
         self.assertNotIn("another image version", self.stderr)
         self.assertEqual(self.run_docker(existing="rocm/sgl-dev:old", image="rocm/sgl-dev:new", PATH=self.daily()),
                          (0, enter))
-        self.assertIn("WARNING: container tester already exists: you enter it, not a new container, and it runs "
-                      "rocm/sgl-dev:old, not rocm/sgl-dev:new: another image version than the one you asked for",
-                      self.stderr)
+        self.assertIn(taken + "rocm/sgl-dev:old, not rocm/sgl-dev:new: another image version than the one you asked "
+                      "for), not a new one", self.stderr)
         self.assertEqual(self.stderr.count("WARNING"), 1, "one warning says both")
 
     def test_a_new_container_from_the_daily_image_starts_on_the_newest_main(self):
@@ -340,18 +339,24 @@ class RunDockerTest(unittest.TestCase):
         self.assertEqual((rc, calls[-2]), (0, main), "without a terminal too")
 
     def test_without_name_a_new_container_gets_a_name_no_container_has(self):
+        today = lambda: subprocess.run(["date", "+%m%d"], env={"TZ": "Asia/Shanghai"}, capture_output=True,
+                                       text=True).stdout.strip()
+        days = {today()}
         rc, calls = self.run_docker(image="rocm/sgl-dev:new", NAME="", FAKE_TAKEN_ONCE="1")
+        days.add(today())
         self.assertEqual(rc, 0, self.stderr)
         tried = [c.split()[-1] for c in calls if c.startswith("inspect --type container ")]
         self.assertEqual(len(tried), 2, "the first name is taken, the second is free")
         for name in tried:
             self.assertRegex(name, r"^inferpilot_tester_\d{4}_[a-z0-9]{4}$")
+            self.assertIn(name.split("_")[2], days, "the date in UTC+8")
         name = tried[1]
         self.assertTrue(self.created(calls).endswith("--label inferpilot.user=tester --entrypoint /bin/bash --name %s "
                                                      "rocm/sgl-dev:new" % name), self.created(calls))
         self.assertIn("-e INFERPILOT_CONTAINER=%s" % name, self.created(calls))
         self.assertEqual(calls[-1], "exec -it -w /workspace -e INFERPILOT_CONTAINER=%s %s bash" % (name, name))
-        self.assertIn("this is container %s; come back to it with: NAME=%s " % (name, name), self.stderr)
+        self.assertIn("this is container %s (image rocm/sgl-dev:new); come back to it with: NAME=%s " % (name, name),
+                      self.stderr)
 
     def test_a_new_container_lists_your_other_ones(self):
         others = "inferpilot_tester_1101_ab12|rocm/sgl-dev:v0.5.23-rocm10-mi35x-20261101|2 weeks ago|Exited (0) 3 days ago"
