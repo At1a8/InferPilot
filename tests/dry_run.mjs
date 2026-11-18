@@ -16,6 +16,18 @@ const onlyAt = process.argv.indexOf('--only');
 const ONLY = onlyAt > 0 ? new Set(String(process.argv[onlyAt + 1] || '').split(',').filter(Boolean)) : null;
 // role:PHASE -> the fields its answer must have, from the output contract of every prompt any scenario sent.
 const CONTRACTS = new Map();
+// Every phase a run entered, and the modes each scenario prefix's runs ran, as they happened.
+const ENTERED = new Set();
+const MODES_RUN = new Map();
+let SCENARIO = '';
+const CALL_SITE = /call\(['"]([a-z_]+)['"], ['"]([a-z_]+)['"]/g;
+// A role doc's section for one PHASE (## PHASE=bisect, not ## PHASE=bisect_fix), '' when it has none.
+function phaseSection(doc, ph) {
+  const m = new RegExp(`^## PHASE=${ph}(?![\\w])`, 'm').exec(doc);
+  if (!m) return '';
+  const end = doc.indexOf('\n## ', m.index + 1);
+  return doc.slice(m.index, end < 0 ? undefined : end);
+}
 
 function makeBackend(overrides) {
   const calls = [];
@@ -53,6 +65,7 @@ async function run(args, overrides) {
       if (m) {
         phases.push(m[1]);
         heads.push(msg);
+        ENTERED.add(m[1]);
       }
       const r = /^\[inferpilot\] Route: (.+)$/.exec(msg);
       if (r) route = r[1].split('→').map((t) => t.trim());
@@ -60,6 +73,8 @@ async function run(args, overrides) {
   });
   const modeDefaults = MODE_DEFAULTS[args.mode] || {};
   const result = await rt.runScript(SCRIPT, { inferpilot_dir: INFERPILOT, framework_dir: '/tmp/sglang', agent_retries: 1, ...modeDefaults, ...args }, 0);
+  const prefix = SCENARIO.split(':')[0];
+  if (result && result.mode) MODES_RUN.set(prefix, (MODES_RUN.get(prefix) || new Set()).add(result.mode));
   return { result, phases, heads, route, calls, keys: calls.map((c) => c.key), summary: rt.summary() };
 }
 
@@ -770,29 +785,27 @@ const scenarios = [
     check(r.result.status === 'blocked' && r.result.stopped_at === 'Performance', `status ${r.result.status}`);
     check(!r.keys.includes('implementer:rollback'), 'an untrusted measurement rolls nothing back');
   }],
-  ['phases: every phase inferpilot.js enters is in meta.phases, which Claude Code shows, and every one listed is entered', async () => {
-    const src = readFileSync(SCRIPT, 'utf8');
-    const listed = [...src.matchAll(/^ {4}\{ title: '([A-Za-z]+)', detail:/gm)].map((m) => m[1]);
-    const entered = new Set([...src.matchAll(/enter\('([A-Za-z]+)'\)/g)].map((m) => m[1]));
-    check(listed.length >= 15 && entered.size >= 15, `found ${listed.length} listed, ${entered.size} entered`);
-    for (const p of entered) check(listed.includes(p), `${p} is entered but missing from meta.phases`);
-    for (const p of listed) check(entered.has(p), `meta.phases lists ${p}, which nothing enters`);
-  }],
   ['routes: the route each mode logs is what its straight path walks, and what both READMEs list', async () => {
-    // A README's Phases column per mode: what always runs, and what runs only when it applies, "(Kernel)".
+    // A README's Modes table, the one whose header begins "| Mode |" ("| 模式 |"): per mode, each step of its
+    // Phases column by name, and whether it runs only when it applies, "(Kernel)".
     const table = (file) => {
       const out = {};
-      for (const m of readFileSync(path.join(INFERPILOT, file), 'utf8').matchAll(/^\| `([a-z]+)` \|[^|]*\| ([^|]*→[^|]*) \|/gm)) {
-        const always = [];
-        for (const step of m[2].split('→').map((t) => t.trim())) {
-          if (!/^[(（]/.test(step)) always.push(step.replace(/\s*[(（].*$/, ''));
-        }
-        out[m[1]] = always;
+      const lines = readFileSync(path.join(INFERPILOT, file), 'utf8').split('\n');
+      for (let k = lines.findIndex((l) => /^\| (Mode|模式) \|/.test(l)) + 2; k > 1 && lines[k] && lines[k].startsWith('|'); k++) {
+        const [, mode, , phases] = lines[k].split('|').map((c) => c.trim());
+        out[mode.replace(/`/g, '')] = phases.split('→').map((t) => t.trim())
+          .map((step) => ({ name: (/[A-Za-z]+/.exec(step) || [''])[0], optional: /^[(（]/.test(step) }));
       }
       return out;
     };
     const en = table('README.md');
     const zh = table('README.zh-CN.md');
+    const always = (steps) => (steps || []).filter((s) => !s.optional).map((s) => s.name);
+    const modes = JSON.parse((/^const MODES = (\[[^\]]*\]);/m.exec(readFileSync(SCRIPT, 'utf8')) || [, '[]'])[1].replace(/'/g, '"'));
+    check(eqList(Object.keys(en), modes) && eqList(Object.keys(zh), modes), `MODES ${modes} | README.md ${Object.keys(en)} | README.zh-CN.md ${Object.keys(zh)}`);
+    for (const mode of modes) {
+      check(JSON.stringify(en[mode]) === JSON.stringify(zh[mode]), `${mode}: the two READMEs list other steps: ${JSON.stringify(en[mode])} | ${JSON.stringify(zh[mode])}`);
+    }
     const straight = {
       feature: { mode: 'feature', task: 'port HiSparse V2 to DeepSeek-V4.1' },
       issue: { mode: 'issue', task: 'https://github.com/sgl-project/sglang/issues/38849' },
@@ -800,21 +813,21 @@ const scenarios = [
       perf: { mode: 'perf', task: 'p', apply_prs: ['#46329'] },
       scan: { mode: 'scan', framework_dir: '' },
     };
+    for (const mode of modes) check(straight[mode], `${mode}: the routes check has no straight path for it`);
     for (const [mode, args] of Object.entries(straight)) {
       const r = await run(args);
       check(r.route.length >= 3 && eqList(r.route, r.phases), `${mode}: route ${r.route} | walked ${r.phases}`);
-      check(eqList(en[mode], r.route), `${mode}: README.md lists ${en[mode]} | route ${r.route}`);
-      check(eqList(zh[mode], r.route), `${mode}: README.zh-CN.md lists ${zh[mode]} | route ${r.route}`);
+      check(eqList(always(en[mode]), r.route), `${mode}: README.md lists ${always(en[mode])} | route ${r.route}`);
     }
   }],
   ['roles: every role and PHASE inferpilot.js calls is documented', async () => {
     const src = readFileSync(SCRIPT, 'utf8');
-    const sites = [...src.matchAll(/call\('([a-z_]+)', '([a-z_]+)'/g)].map((m) => [m[1], m[2]]);
+    const sites = [...src.matchAll(CALL_SITE)].map((m) => [m[1], m[2]]);
     check(sites.length >= 20, `found ${sites.length} call sites`);
     for (const [role, ph] of sites) {
       const f = path.join(INFERPILOT, 'roles', `${role}.md`);
       const doc = existsSync(f) ? readFileSync(f, 'utf8') : '';
-      check(doc.includes(`## PHASE=${ph}`), `roles/${role}.md documents PHASE=${ph}`);
+      check(phaseSection(doc, ph), `roles/${role}.md documents PHASE=${ph}`);
       check(DEFAULTS[`${role}:${ph}`] !== undefined, `dry run scripts an answer for ${role}:${ph}`);
     }
   }],
@@ -916,16 +929,35 @@ const scenarios = [
   }],
   ['roles: every field an answer must have is named where its role documents the PHASE', async () => {
     const src = readFileSync(SCRIPT, 'utf8');
-    const sites = new Set([...src.matchAll(/call\('([a-z_]+)', '([a-z_]+)'/g)].map((m) => `${m[1]}:${m[2]}`));
+    const sites = new Set([...src.matchAll(CALL_SITE)].map((m) => `${m[1]}:${m[2]}`));
     if (!ONLY) for (const key of sites) check(CONTRACTS.has(key), `no scenario sends ${key} a prompt`);
     for (const [key, required] of CONTRACTS) {
       const [role, ph] = key.split(':');
-      const doc = readFileSync(path.join(INFERPILOT, 'roles', `${role}.md`), 'utf8');
-      const start = doc.indexOf(`## PHASE=${ph}`);
-      const end = doc.indexOf('\n## ', start + 1);
-      const section = start < 0 ? '' : doc.slice(start, end < 0 ? undefined : end);
+      const section = phaseSection(readFileSync(path.join(INFERPILOT, 'roles', `${role}.md`), 'utf8'), ph);
       for (const field of required) {
-        check(new RegExp(`\\b${field}\\b`).test(section), `roles/${role}.md PHASE=${ph} does not name ${field}, which the answer must have`);
+        // As a key or in code ("culprit", `culprit`), not a word of the prose around it.
+        check(new RegExp(`["\`]${field}["\`]`).test(section), `roles/${role}.md PHASE=${ph} does not name ${field}, which the answer must have`);
+      }
+    }
+  }],
+  ['phases: every phase a run entered is in meta.phases, which Claude Code shows; in a whole dry run, every listed one is entered', async () => {
+    const src = readFileSync(SCRIPT, 'utf8');
+    const meta = src.slice(0, src.indexOf('\n};') + 3);
+    const listed = [...meta.matchAll(/\{ title: '([^']+)', detail:/g)].map((m) => m[1]);
+    check(listed.length >= 15 && ENTERED.size > 0, `found ${listed.length} listed, ${ENTERED.size} entered`);
+    for (const p of ENTERED) check(listed.includes(p), `a run entered ${p}, which meta.phases does not list`);
+    if (!ONLY) for (const p of listed) check(ENTERED.has(p), `meta.phases lists ${p}, which no scenario enters`);
+  }],
+  ['groups: the runner of every mode a task group\'s scenarios ran is one of its entry points (tests/groups.json)', async () => {
+    const groups = JSON.parse(readFileSync(path.join(INFERPILOT, 'tests', 'groups.json'), 'utf8'));
+    const table = /^const RUNNERS = \{([^}]*)\}/m.exec(readFileSync(SCRIPT, 'utf8'));
+    const runners = Object.fromEntries([...(table ? table[1] : '').matchAll(/(\w+): (\w+)/g)].map((m) => [m[1], m[2]]));
+    check(Object.keys(runners).length >= 5, `found the runners ${JSON.stringify(runners)}`);
+    for (const [g, spec] of Object.entries(groups)) {
+      for (const prefix of g === 'basic' ? [] : spec.dry_run) {
+        for (const mode of MODES_RUN.get(prefix) || []) {
+          check(spec.code.includes(runners[mode]), `${prefix}: its scenarios ran ${mode}; add ${runners[mode]} to ${g}'s code`);
+        }
       }
     }
   }],
@@ -940,6 +972,7 @@ if (ONLY && (!ONLY.size || [...ONLY].some((p) => !PREFIXES.has(p)))) {
 for (const [name, fn] of scenarios) {
   if (ONLY && !ONLY.has(name.split(':')[0])) continue;
   const before = failed;
+  SCENARIO = name;
   try {
     await fn();
   } catch (e) {

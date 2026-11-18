@@ -623,11 +623,11 @@ node tests/dry_run.mjs --only scan,roles          # only the dry-run scenarios n
 
 | Kept in step | Checked by |
 |---|---|
-| the two backends: the same prompts, phases, retries, timeouts and result on `claude` and `cursor` | `tests/backend_parity.mjs` |
+| the two backends: the same prompts, phases, retries, timeouts, models and result on `claude` and `cursor` | `tests/backend_parity.mjs` |
 | the two READMEs: section by section the same headings, commands, inline code, numbers, links and tables | `tests/test_readme.py` |
 | workflow and roles: every phase entered is in `meta.phases`; each mode's route is what it walks and what the READMEs list; every field an answer must have is named in its role's PHASE section | `tests/dry_run.mjs` |
 | code and docs: every variable that setup, `run_docker.sh` and the runner read is in the READMEs, and other scripts name theirs; every flag the READMEs and `AGENTS.md` give exists | `tests/test_docs.py` |
-| the public repository: no token, private key, internal host, private address, real home directory or this machine's name | `tests/test_hygiene.py` |
+| the public repository: no token or key, internal host, private address, real home or storage directory, or the name of this machine or its siblings | `tests/test_hygiene.py` |
 | the split: every dry-run scenario and unit test is in basic or a group | `tests/test_groups.py` |
 
 ## Layout

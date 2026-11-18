@@ -2,12 +2,13 @@
 // and on `--backend cursor`. Stand-in CLIs answer as the dry run scripts (tests/fixtures/answers.mjs),
 // each reading its prompt the way the real CLI gets it and printing that CLI's own stream-json. Both
 // backends must hand the roles the same prompts in the same order and end with the same result; a role
-// that fails, a prompt too long for one argument and a timeout must come out alike too. Offline, no model.
+// that fails, a prompt too long for one argument, a timeout and the models must come out alike too, and
+// each CLI gets its own flags and environment. Offline, no model.
 //
 //   node tests/backend_parity.mjs
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { MODE_DEFAULTS } from './fixtures/answers.mjs';
@@ -27,7 +28,7 @@ if (pointer) prompt = readFileSync(pointer[1], 'utf8');
 const m = ROLE_RE.exec(prompt);
 const key = m ? m[1] + ':' + m[2] : 'none';
 appendFileSync(process.env.STANDIN_LOG, JSON.stringify({ key, prompt, args: process.argv.slice(2, as === 'claude' ? undefined : -1),
-  via: as === 'claude' ? 'stdin' : pointer ? 'file' : 'argument' }) + '\\n');
+  via: as === 'claude' ? 'stdin' : pointer ? 'file' : 'argument', sandbox: process.env.IS_SANDBOX || '' }) + '\\n');
 if (process.env.STANDIN_SLEEP_MS) await new Promise((r) => setTimeout(r, Number(process.env.STANDIN_SLEEP_MS)));
 if (key === process.env.STANDIN_FAIL) {
   process.stderr.write('Error: ' + key + ' failed on purpose\\n');
@@ -62,10 +63,12 @@ let n = 0;
 // One run of a workflow script on one backend: its exit code, result, phases, and what the CLI was given.
 function runOn(backend, script, args, { env = {}, flags = [] } = {}) {
   const log = path.join(TMP, `calls-${++n}-${backend}.jsonl`);
+  // IS_SANDBOX only from the backend (a container's shell may export it); a long prompt's file in TMP.
+  const { IS_SANDBOX, ...inherited } = process.env;
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', backend,
       '--concurrency', '1', '--args', JSON.stringify(args), ...flags], {
-      env: { ...process.env, INFERPILOT_CLAUDE_BIN: BIN.claude, INFERPILOT_CURSOR_BIN: BIN.cursor, STANDIN_LOG: log, ...env },
+      env: { ...inherited, TMPDIR: TMP, INFERPILOT_CLAUDE_BIN: BIN.claude, INFERPILOT_CURSOR_BIN: BIN.cursor, STANDIN_LOG: log, ...env },
     });
     let out = '';
     let err = '';
@@ -136,15 +139,30 @@ const scenarios = [
     alike('failing role', c, k);
   }],
   ['a prompt too long for one argument reaches both CLIs whole', async () => {
+    // 128 KiB: past the most Linux takes in a single argument.
     const script = path.join(TMP, 'long.js');
     writeFileSync(script, `export const meta = { name: 'long', description: 'a long prompt', phases: [] };
 phase('Collect');
-const r = await agent('You are the scout. PHASE=collect.\\n' + 'x'.repeat(150 * 1024), { label: 'long' });
+const r = await agent('You are the scout. PHASE=collect.\\n' + 'x'.repeat(128 * 1024), { label: 'long' });
 return { status: r.includes('candidates') ? 'done' : 'no' };`);
     const [c, k] = await Promise.all(['claude', 'cursor'].map((b) => runOn(b, script, {})));
     check(k.calls[0] && k.calls[0].via === 'file', `the Cursor CLI gets it through a file: ${k.calls[0] && k.calls[0].via}`);
-    check(c.calls[0] && c.calls[0].prompt.length > 150 * 1024, 'claude gets it on stdin, whole');
+    check(c.calls[0] && c.calls[0].prompt.length > 128 * 1024, 'claude gets it on stdin, whole');
     alike('long prompt', c, k);
+    const left = readdirSync(TMP).filter((f) => f.startsWith('inferpilot-prompt-'));
+    check(left.length === 0, `the prompt's file is removed once the CLI is done: ${left}`);
+  }],
+  ['a model and a review model reach both CLIs as --model; Claude Code runs with IS_SANDBOX', async () => {
+    const t = taskArgs({ mode: 'ci', task: 'tracker cluster _check ImportError', review_model: 'm-review' });
+    const [c, k] = await Promise.all(['claude', 'cursor'].map((b) => runOn(b, INFERPILOT_JS, t, { flags: ['--model', 'm-main'] })));
+    alike('models', c, k);
+    const model = (x) => (x.args.indexOf('--model') < 0 ? '' : x.args[x.args.indexOf('--model') + 1]);
+    for (const [b, r] of [['claude', c], ['cursor', k]]) {
+      const reviews = r.calls.filter((x) => x.key === 'reviewer:review');
+      check(reviews.length > 0 && reviews.every((x) => model(x) === 'm-review'), `${b}: the reviewer's model: ${reviews.map(model)}`);
+      check(r.calls.every((x) => x.key === 'reviewer:review' || model(x) === 'm-main'), `${b}: the other roles' models: ${[...new Set(r.calls.map(model))]}`);
+    }
+    check(c.calls.length > 0 && c.calls.every((x) => x.sandbox === '1'), `Claude Code runs with IS_SANDBOX=1: ${[...new Set(c.calls.map((x) => x.sandbox))]}`);
   }],
   ['a timeout ends both runs alike', async () => {
     const script = path.join(TMP, 'slow.js');

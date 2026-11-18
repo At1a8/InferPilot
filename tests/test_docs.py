@@ -18,69 +18,133 @@ BASH = {"SECONDS", "RANDOM", "LINENO", "BASH_SOURCE", "BASH_REMATCH", "PIPESTATU
 # Their variables are the READMEs' to document; any other script documents its own.
 USER_FACING = ["inferpilot/bootstrap.py", "setup.py", "scripts/run_docker.sh", "runtime/*.mjs"]
 ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
-HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
+HEREDOC = re.compile(r"<<-?\s*(\\?)(['\"]?)([A-Za-z_]\w*)\2")
+FUNCTION = re.compile(r"^[ \t]*(?:function[ \t]+)?([A-Za-z_][\w-]*)[ \t]*\(\)[ \t]*\{", re.M)
 
 
 def shell_code(text):
-    """What bash expands: comments, single-quoted strings and quoted heredocs left out."""
-    out, i, n, dq = [], 0, len(text), False
+    """What bash expands: comments, single-quoted and $'...' strings and quoted heredocs left out. A $(...)
+    inside double quotes is code again, with quotes of its own."""
+    out, i, n, stack = [], 0, len(text), []  # '"': inside double quotes; a number: inside such a $( ), its depth
     while i < n:
         c = text[i]
-        heredoc = HEREDOC.match(text, i) if c == "<" and not dq else None
-        if heredoc:
-            body = text.find("\n", i)
-            end = re.compile(r"^\s*%s$" % heredoc.group(2), re.M).search(text, body + 1) if body >= 0 else None
-            stop = end.end() if end else n
-            if not heredoc.group(1):
-                out.append(text[body:stop] if body >= 0 else "")
-            i = stop
-            continue
+        dq = bool(stack) and stack[-1] == '"'
+        if not dq:
+            line = text[text.rfind("\n", 0, i) + 1:i]
+            heredoc = HEREDOC.match(text, i) if c == "<" and text[i - 1:i] != "<" and not text.startswith("<<<", i) \
+                and line.count("((") <= line.count("))") else None
+            if heredoc:
+                body = text.find("\n", i)
+                end = re.compile(r"^\s*%s$" % heredoc.group(3), re.M).search(text, body + 1) if body >= 0 else None
+                stop = end.end() if end else n
+                if not (heredoc.group(1) or heredoc.group(2)):
+                    out.append(text[body:stop] if body >= 0 else "")
+                i = stop
+                continue
+            if c == "'" or text.startswith("$'", i):
+                j = i + (2 if c == "$" else 1)
+                while j < n and text[j] != "'":
+                    j += 2 if c == "$" and text[j] == "\\" else 1
+                i = j + 1
+                continue
+            if c == "#" and (i == 0 or text[i - 1] in " \t\n;("):
+                j = text.find("\n", i)
+                i = n if j < 0 else j
+                continue
         if c == "\\" and i + 1 < n:
             out.append(text[i:i + 2])
             i += 2
             continue
-        if c == "'" and not dq:
-            j = text.find("'", i + 1)
-            i = n if j < 0 else j + 1
-            continue
         if c == '"':
-            dq = not dq
-        elif c == "#" and not dq and (i == 0 or text[i - 1] in " \t\n;"):
-            j = text.find("\n", i)
-            i = n if j < 0 else j
+            stack.pop() if dq else stack.append('"')
+        elif dq and text.startswith("$(", i) and not text.startswith("$((", i):
+            stack.append(0)
+            out.append("$(")
+            i += 2
             continue
+        elif stack and not dq and c in "()":
+            if c == "(":
+                stack[-1] += 1
+            elif stack[-1] == 0:
+                stack.pop()
+            else:
+                stack[-1] -= 1
         out.append(c)
         i += 1
     return "".join(out)
 
 
+def runs_at(code):
+    """Where each position of a script runs: in a function's body, where the function is first called (from
+    the top level, or from a function called there); elsewhere, where it stands."""
+    bodies = {}
+    for m in FUNCTION.finditer(code):
+        depth, j = 1, m.end()
+        while j < len(code) and depth:
+            depth += {"{": 1, "}": -1}.get(code[j], 0)
+            j += 1
+        bodies[m.group(1)] = (m.start(), m.end(), j)
+
+    def inside(pos):
+        names = [f for f, (_, a, b) in bodies.items() if a <= pos < b]
+        return max(names, key=lambda f: bodies[f][1]) if names else None
+
+    called = {}
+
+    def first_call(name, seen=()):
+        if name not in called:
+            if name in seen:
+                return len(code)
+            start, _, _ = bodies[name]
+            sites = [m.start() for m in re.finditer(r"(?<![\w-])%s(?![\w-])" % re.escape(name), code) if m.start() != code.find(name, start)]
+            called[name] = min([s if inside(s) is None else first_call(inside(s), seen + (name,)) for s in sites] or [len(code)])
+        return called[name]
+
+    return lambda pos: pos if inside(pos) is None else first_call(inside(pos))
+
+
 def shell_inputs(text):
-    """Variables a script takes from its environment: read before it first sets them, or never set, or
-    set from themselves with a default (X=${X:-...})."""
+    """Variables a script takes from its environment: read before it first sets them (when it runs), or never
+    set, or set from themselves with a default (X=${X:-...})."""
     code = shell_code(text)
+    when = runs_at(code)
     reads, sets = {}, {}
-    for m in re.finditer(r"\$\{?[#!]?([A-Z][A-Z0-9_]*)", code):
-        reads.setdefault(m.group(1), m.start())
+    for m in re.finditer(r"\$\{?[#!]?([A-Z][A-Z0-9_]*)|\bprintenv\s+([A-Z][A-Z0-9_]*)", code):
+        name = m.group(1) or m.group(2)
+        reads[name] = min(reads.get(name, len(code)), when(m.start()))
+    for m in re.finditer(r"\(\((.*?)\)\)", code, re.S):  # (( X > 0 )) reads X without a $
+        for name in re.findall(r"(?<![\w$])([A-Z][A-Z0-9_]*)(?!\w)", m.group(1)):
+            reads[name] = min(reads.get(name, len(code)), when(m.start()))
     for m in re.finditer(r"(?<![\w$.{/-])([A-Z][A-Z0-9_]*)(?:\[[^\]]*\])?\+?=|"
                          r"\b(?:local|declare|typeset|readonly|for|mapfile|printf -v)\s+(?:-\w+\s+)*([A-Z][A-Z0-9_]*)\b|"
                          r"\bread\s+(?:-\w+\s+(?:\S+\s+)?)*([A-Z][A-Z0-9_ ]*)", code):
         for name in (m.group(3) or "").split() or [m.group(1) or m.group(2)]:
-            sets.setdefault(name, m.start())
+            sets[name] = min(sets.get(name, len(code)), when(m.start()))
     defaulted = set(re.findall(r"\b([A-Z][A-Z0-9_]*)=\"?\$\{\1:?[-=]", code))
     return {v for v, at in reads.items() if v not in sets or at < sets[v] or v in defaulted} - STANDARD - BASH
 
 
 def python_inputs(text):
-    """Keys of env.get(...), environ[...] and getenv(...): a string, or the loop variable over a module's
-    tuple of them (for v in IDENTITY_VARS)."""
+    """Keys the environment is read with: env.get/setdefault/pop(...), environ[...], getenv(...) and
+    "X" in environ, under any name environ or getenv is imported or bound as. A key is a string, a module
+    constant holding one, or the loop variable over a module's tuple of them (for v in IDENTITY_VARS);
+    setting a variable for a child (environ["X"] = ...) is not reading it."""
     tree = ast.parse(text)
-    consts = {}
+    strings, consts = {}, {}
+    envs, getenvs = {"env", "environ"}, {"getenv"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "os":
+            envs |= {a.asname for a in node.names if a.name == "environ" and a.asname}
+            getenvs |= {a.asname for a in node.names if a.name == "getenv" and a.asname}
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Attribute) and node.value.attr == "environ":
+            envs |= {t.id for t in node.targets if isinstance(t, ast.Name)}
     for node in tree.body:
-        if isinstance(node, ast.Assign) and isinstance(node.value, (ast.Tuple, ast.List, ast.Set)):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    consts[target.id] = [e.value for e in node.value.elts
-                                         if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+        if isinstance(node, ast.Assign):
+            for target in [t for t in node.targets if isinstance(t, ast.Name)]:
+                if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                    strings[target.id] = node.value.value
+                elif isinstance(node.value, (ast.Tuple, ast.List, ast.Set)):
+                    consts[target.id] = [e.value for e in node.value.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
     looped = {}
     for node in ast.walk(tree):
         if isinstance(node, (ast.For, ast.comprehension)) and isinstance(node.iter, ast.Name) \
@@ -88,28 +152,41 @@ def python_inputs(text):
             looped.setdefault(node.target.id, []).extend(consts.get(node.iter.id, []))
 
     def is_env(n):
-        return isinstance(n, ast.Name) and n.id in ("env", "environ") or isinstance(n, ast.Attribute) and n.attr == "environ"
+        return isinstance(n, ast.Name) and n.id in envs or isinstance(n, ast.Attribute) and n.attr == "environ"
 
     out = set()
     for node in ast.walk(tree):
         key = None
         if isinstance(node, ast.Call) and node.args:
             f = node.func
-            if isinstance(f, ast.Attribute) and f.attr == "get" and is_env(f.value) \
-                    or getattr(f, "attr", getattr(f, "id", "")) == "getenv":
+            if isinstance(f, ast.Attribute) and f.attr in ("get", "setdefault", "pop") and is_env(f.value) \
+                    or isinstance(f, ast.Attribute) and f.attr == "getenv" or isinstance(f, ast.Name) and f.id in getenvs:
                 key = node.args[0]
-        elif isinstance(node, ast.Subscript) and is_env(node.value):
+        elif isinstance(node, ast.Subscript) and is_env(node.value) and isinstance(node.ctx, ast.Load):
             key = node.slice
+        elif isinstance(node, ast.Compare) and any(isinstance(o, (ast.In, ast.NotIn)) for o in node.ops) \
+                and any(is_env(c) for c in node.comparators):
+            key = node.left
         if isinstance(key, ast.Constant) and isinstance(key.value, str):
             out.add(key.value)
         elif isinstance(key, ast.Name):
-            out.update(looped.get(key.id, []))
+            out.update(looped.get(key.id, []) + ([strings[key.id]] if key.id in strings else []))
     return {n for n in out if ENV_NAME.match(n)} - STANDARD
 
 
 def js_inputs(text):
-    return {a or b or c for a, b, c in re.findall(
-        r"process\.env\.([A-Z][A-Z0-9_]*)|process\.env\[['\"]([A-Z][A-Z0-9_]*)|binEnv: '([A-Z][A-Z0-9_]*)'", text)} - STANDARD
+    names = {a or b or c for a, b, c in re.findall(
+        r"process\.env\.([A-Z][A-Z0-9_]*)|process\.env\[['\"]([A-Z][A-Z0-9_]*)|binEnv: '([A-Z][A-Z0-9_]*)'", text)}
+    for group in re.findall(r"\{([^{}]*)\}\s*=\s*process\.env\b", text):  # const { A, B: b } = process.env
+        names |= {part.split(":")[0].strip() for part in group.split(",")} - {""}
+    return {n for n in names if ENV_NAME.match(n)} - STANDARD
+
+
+def argparse_flags(path):
+    """Every --flag an add_argument(...) call of the file declares, in any of its names."""
+    return {a.value for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_argument"
+            for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str) and a.value.startswith("--")}
 
 
 def inputs(path):
@@ -177,8 +254,7 @@ class EnvironmentTest(unittest.TestCase):
 
 class FlagsTest(unittest.TestCase):
     def test_bootstrap_flags_the_docs_give_exist_and_every_one_is_documented(self):
-        defined = set(re.findall(r"add_argument\(\s*\"(--[a-z][a-z0-9-]*)\"",
-                                 (ROOT / "inferpilot" / "bootstrap.py").read_text(encoding="utf-8")))
+        defined = argparse_flags(ROOT / "inferpilot" / "bootstrap.py")
         self.assertTrue(defined)
         for name, text in (("README.md", EN), ("README.zh-CN.md", ZH), ("AGENTS.md", (ROOT / "AGENTS.md").read_text(encoding="utf-8"))):
             for flag in sorted(flags_in(text, "inferpilot.bootstrap") - defined):

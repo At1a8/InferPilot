@@ -1,6 +1,6 @@
 """README.md and README.zh-CN.md stay in step: each links to the other, every link to a heading lands
-on one, both show the same commands and the same names in their tables, and section by section the same
-headings, inline code, numbers, links and table shapes. Offline.
+on one, both show the same commands, the same names in their tables, the same layout, section by section
+the same headings, inline code, numbers and links, and table by table the same rows. Offline.
 
     python3 -m unittest discover -s tests
 """
@@ -77,8 +77,9 @@ def code_spans(body):
 
 
 def numbers(body):
+    """The numbers in the prose, wherever they stand (第3步 as much as step 3)."""
     body = re.sub(r"\]\([^)]*\)", "]", re.sub(r"`[^`]*`", "", body))
-    return set(re.findall(r"(?<![\w.])\d+(?:\.\d+)?(?![\w.])", body))
+    return set(re.findall(r"(?<![A-Za-z0-9_.])\d+(?:\.\d+)?(?![A-Za-z0-9_.])", body))
 
 
 def heading_numbers(text):
@@ -101,15 +102,36 @@ def link_targets(body, places, other):
     return {target(t) for t in re.findall(r"\]\(([^)\s]+)\)", body)}
 
 
-def table_shapes(text):
-    shapes, rows = [], []
+def cells(row):
+    """A table row's cells; a | inside inline code (`a || b`) does not split one."""
+    out, cur, code = [], "", False
+    for ch in row.strip().strip("|"):
+        code ^= ch == "`"
+        if ch == "|" and not code:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    return out + [cur]
+
+
+def table_rows(text):
+    """Every table as its rows: each row's number of cells and the inline code in it."""
+    tables, rows = [], []
     for line in prose(text).splitlines() + [""]:
         if line.startswith("|"):
-            rows.append(line.count("|"))
+            row = cells(line)
+            rows.append((len(row), sorted(code_spans(line))))
         elif rows:
-            shapes.append((len(rows), rows[0]))
+            tables.append(rows)
             rows = []
-    return shapes
+    return tables
+
+
+def layout(text):
+    """The entries of the Layout block (├── inferpilot.js ...), in order."""
+    return [entry for block in re.findall(r"^```[^\n]*\n(.*?)^```", text, re.M | re.S) if "├── " in block
+            for entry in re.findall(r"[├└]── (\S+)", block)]
 
 
 class ReadmeTest(unittest.TestCase):
@@ -146,9 +168,16 @@ class ReadmeTest(unittest.TestCase):
                 self.assertEqual(link_targets(en, en_places, "README.zh-CN.md") ^ link_targets(zh, zh_places, "README.md"),
                                  set(), "links only one language has")
 
-    def test_same_table_shapes(self):
-        self.assertGreater(len(table_shapes(EN)), 10)
-        self.assertEqual(table_shapes(EN), table_shapes(ZH))
+    def test_same_tables_row_by_row(self):
+        en, zh = table_rows(EN), table_rows(ZH)
+        self.assertGreater(len(en), 10)
+        self.assertEqual(len(en), len(zh), "tables")
+        for k, (a, b) in enumerate(zip(en, zh), 1):
+            self.assertEqual(a, b, "table %d: rows of other sizes, or inline code in another row" % k)
+
+    def test_same_layout(self):
+        self.assertGreater(len(layout(EN)), 10)
+        self.assertEqual(layout(EN), layout(ZH))
 
 
 if __name__ == "__main__":

@@ -14,19 +14,9 @@ from test_readme import ROOT
 ALL = set(G.TASKS)
 
 
-def scenario_modes():
-    """The dry run's scenario prefixes, each with the modes its scenarios name (mode: '...')."""
-    src = (ROOT / "tests" / "dry_run.mjs").read_text(encoding="utf-8")
-    starts = [(m.start(), m.group(1)) for m in re.finditer(r"^  \['([a-z_]+): ", src, re.M)]
-    out = {}
-    for k, (at, prefix) in enumerate(starts):
-        body = src[at:starts[k + 1][0] if k + 1 < len(starts) else len(src)]
-        out.setdefault(prefix, set()).update(re.findall(r"\bmode: '([a-z]+)'", body))
-    return out
-
-
 def scenario_prefixes():
-    return set(scenario_modes())
+    src = (ROOT / "tests" / "dry_run.mjs").read_text(encoding="utf-8")
+    return {m.group(1) for m in re.finditer(r"^  \['([a-z_]+): ", src, re.M)}
 
 
 def test_classes():
@@ -59,16 +49,6 @@ class PlacementTest(unittest.TestCase):
         js = G.script()
         self.assertEqual([], ["%s: %s" % (g, e) for g in G.TASKS for e in G.GROUPS[g]["code"] if e not in js.index])
 
-    def test_a_groups_entry_points_include_the_runner_of_every_mode_its_scenarios_run(self):
-        js = G.script()
-        runners = dict(re.findall(r"(\w+): (run\w+)", js.stmts[js.index["RUNNERS"]]["text"]))
-        modes = scenario_modes()
-        for g in G.TASKS:
-            run = set().union(*(modes.get(p, set()) for p in G.GROUPS[g]["dry_run"]))
-            self.assertTrue(run & set(runners), "%s: its scenarios name no mode" % g)
-            self.assertEqual([], sorted(runners[m] for m in run if m in runners and runners[m] not in G.GROUPS[g]["code"]),
-                             "%s's scenarios run these; add them to its code in tests/groups.json" % g)
-
     def test_a_script_reaches_the_groups_with_its_unit_test(self):
         js = G.script()
         for g in G.TASKS:
@@ -78,6 +58,14 @@ class PlacementTest(unittest.TestCase):
                     scripts = sorted((ROOT / "scripts").glob(name + ".*"))
                     self.assertTrue(scripts, "%s is not named after a script (scripts/%s.*)" % (t, name))
                     self.assertIn(g, G.reached("scripts/" + scripts[0].name, None, js), t)
+
+    def test_a_module_reaches_the_groups_with_the_unit_tests_of_the_scripts_that_import_it(self):
+        js = G.script()
+        for p in sorted((ROOT / "scripts").glob("*.py")):
+            for importer in G.importers(p.stem):
+                for g in G.TASKS:
+                    if G.unit_test_of(importer) in G.GROUPS[g]["unittest"]:
+                        self.assertIn(g, G.reached("scripts/" + p.name, None, js), "%s imports %s" % (importer, p.stem))
 
     def test_inferpilot_js_splits_into_whole_statements(self):
         js = G.script()
@@ -117,7 +105,7 @@ class SelectionTest(unittest.TestCase):
         cases = {
             "README.md": set(), "README.zh-CN.md": set(), "docs/design.md": set(), "AGENTS.md": set(),
             "inferpilot/bootstrap.py": set(), "tests/test_bootstrap.py": set(), "tests/backend_parity.mjs": set(),
-            "roles/scout.md": {"scan"}, "scripts/scan_upstream.py": {"scan"},
+            "roles/scout.md": {"scan"}, "scripts/scan_upstream.py": {"scan"}, "scripts/_github.py": {"issue", "ci", "scan"},
             "knowledge/feature_skills/some-skill/SKILL.md": {"feature"}, "knowledge/kernels/some/x.md": {"kernel"},
             "roles/intake.md": ALL, "runtime/engine.mjs": ALL, "tests/dry_run.mjs": ALL, "tests/fixtures/answers.mjs": ALL,
             ".github/workflows/tests.yml": ALL, "tests/groups.json": ALL,

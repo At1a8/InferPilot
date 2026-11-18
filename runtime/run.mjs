@@ -10,6 +10,7 @@
 //   --concurrency <n>             agent calls at once (default 4)
 //   --agent-timeout-ms <ms>       kill an agent run after this long (default 0: inferpilot.js's own timeouts)
 //   --schema-retries <n>          asks again for an answer that does not match its schema (default 2)
+//   --help                        this usage
 //
 // INFERPILOT_CLAUDE_BIN and INFERPILOT_CURSOR_BIN name the CLIs when they are not `claude` and `agent` on PATH.
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -29,15 +30,16 @@ function parse(argv) {
   return out;
 }
 
-const FLAGS = ['backend', 'model', 'args', 'args-file', 'result-file', 'concurrency', 'agent-timeout-ms', 'schema-retries'];
-const usage = () => {
-  process.stderr.write('usage: node runtime/run.mjs <script.js> --backend claude|cursor [--model <id>] '
+const FLAGS = ['backend', 'model', 'args', 'args-file', 'result-file', 'concurrency', 'agent-timeout-ms', 'schema-retries', 'help'];
+const usage = (code = 2) => {
+  (code ? process.stderr : process.stdout).write('usage: node runtime/run.mjs <script.js> --backend claude|cursor [--model <id>] '
     + '(--args <json> | --args-file <path>) [--result-file <path>] [--concurrency <n>] '
-    + '[--agent-timeout-ms <ms>] [--schema-retries <n>]\n');
-  process.exit(2);
+    + '[--agent-timeout-ms <ms>] [--schema-retries <n>] [--help]\n');
+  process.exit(code);
 };
 
 const opts = parse(process.argv.slice(2));
+if (opts.help) usage(0);
 const script = opts._[0];
 const unknown = Object.keys(opts).filter((k) => k !== '_' && !FLAGS.includes(k));
 if (unknown.length) process.stderr.write(`unknown ${unknown.map((k) => `--${k}`).join(', ')}\n`);

@@ -19,6 +19,7 @@ python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null \
 node -e 'process.exit(Number(process.versions.node.split(".")[0]) < 20 ? 1 : 0)' 2>/dev/null \
   || { echo "tests/run_all.sh: needs Node.js 20 or newer (bootstrap --runner installs it in a container)" >&2; exit 2; }
 
+[ $# -le 2 ] || usage
 every=$(python3 -B tests/groups.py select --all) || exit 2
 case "${1:-}" in
   "") groups=$every ;;

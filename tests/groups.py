@@ -13,6 +13,7 @@ group, and so does any change to inferpilot.js this cannot place.
     python3 tests/groups.py dry-run feature perf           # the dry run's --only: basic's and theirs
     python3 tests/groups.py unittest feature perf          # run basic's unit tests and theirs
 """
+import ast
 import fnmatch
 import json
 import re
@@ -27,7 +28,7 @@ TASKS = [g for g in GROUPS if g != "basic"]
 # What the roles read while a task runs: a change reaches the tasks whose code calls a role that names it.
 ASSETS = ["roles/*", "knowledge/*", "templates/*", "scripts/*"]
 IDENT = re.compile(r"[A-Za-z_$][\w$]*")
-DECL = re.compile(r"(?:export\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)|(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=")
+DECL = re.compile(r"(?:export\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)|(?:export\s+)?(?:const|let|var)\s")
 BEFORE_REGEX = set("(,=:[!&|?{};+-*%<>~^") | {"", "return", "typeof", "case", "do", "else", "in", "of", "new", "delete",
                                               "void", "throw", "await", "yield"}
 
@@ -35,7 +36,13 @@ BEFORE_REGEX = set("(,=:[!&|?{};+-*%<>~^") | {"", "return", "typeof", "case", "d
 def code_only(src):
     """src with comments, strings and regular expressions blanked, newlines kept so lines still count, and
     the ${...} of template literals kept: the text in which a name is a reference."""
-    out, n = list(src), len(src)
+    return scan(src)[0]
+
+
+def scan(src):
+    """code_only's text, and the offsets of the newlines inside template literals' text: the line after one
+    goes on with a literal, whatever it begins with."""
+    out, n, inside = list(src), len(src), set()
 
     def blank(a, b):
         for k in range(a, min(b, n)):
@@ -44,16 +51,16 @@ def code_only(src):
 
     def template(i):  # from just after ` or a ${...}'s }: where code resumes, and whether inside a ${
         j = i
-        while j < n:
+        while j < n and src[j] != "`" and not src.startswith("${", j):
             if src[j] == "\\":
-                j += 2
-            elif src[j] == "`" or src.startswith("${", j):
-                blank(i, j)
-                return (j + 1, False) if src[j] == "`" else (j + 2, True)
-            else:
                 j += 1
-        blank(i, n)
-        return n, False
+            if j < n and src[j] == "\n":
+                inside.add(j)
+            j += 1
+        blank(i, j)
+        if j >= n:
+            return n, False
+        return (j + 1, False) if src[j] == "`" else (j + 2, True)
 
     i, depth, opened, prev = 0, 0, [], ""
     while i < n:
@@ -87,27 +94,58 @@ def code_only(src):
                 elif src[j] in "[]":
                     in_class = src[j] == "["
                 j += 1
+            if j >= n or src[j] == "\n":  # no closing slash on its line: a division after all
+                i, prev = i + 1, c
+                continue
             blank(i + 1, j)
             i, prev = j + 1, "a"
             while i < n and src[i].isalpha():
                 i += 1
         elif word:
             i, prev = word.end(), word.group(0)
+        elif src.startswith("++", i) or src.startswith("--", i):
+            i += 2
+            if prev not in BEFORE_REGEX:  # x++ / y: what follows an operand's ++ is an operator
+                prev = "a"
         else:
             depth += {"{": 1, "}": -1}.get(c, 0)
             i, prev = i + 1, c
-    return "".join(out)
+    return "".join(out), inside
+
+
+def declared(code):
+    """The names a top-level statement declares: a function's, or each of a const/let/var's; [] for other
+    statements, and for a destructuring, whose names this does not read."""
+    m = DECL.match(code)
+    if not m:
+        return []
+    if m.group(1):
+        return [m.group(1)]
+    parts, cur, depth = [], "", 0
+    for ch in code[m.end():]:
+        depth += (ch in "([{") - (ch in ")]}")
+        if depth == 0 and ch in ",;":
+            parts.append(cur)
+            cur = ""
+            if ch == ";":
+                break
+        else:
+            cur += ch
+    names = [re.match(r"\s*([A-Za-z_$][\w$]*)\s*(?:=|$)", p) for p in parts + ([cur] if cur.strip() else [])]
+    return [d.group(1) for d in names] if names and all(names) else []
 
 
 class Script:
     """inferpilot.js as top-level statements, and which of them reach which task group."""
 
     def __init__(self, src):
-        code, lines = code_only(src).split("\n"), src.split("\n")
-        depth, top = 0, []
-        for line in code:
-            top.append(depth == 0)
+        text, inside = scan(src)
+        code, lines = text.split("\n"), src.split("\n")
+        depth, top, at = 0, [], 0
+        for line in code:  # a line begins at depth 0, outside a template literal
+            top.append(depth == 0 and at - 1 not in inside)
             depth += sum(line.count(c) for c in "([{") - sum(line.count(c) for c in ")]}")
+            at += len(line) + 1
         starts = [k for k, line in enumerate(code) if top[k] and line[:1].strip() and line[0] not in ")]}."]
         firsts = []
         for s in starts:  # a statement owns the comment lines right above it
@@ -117,11 +155,11 @@ class Script:
         self.stmts = []
         for k, s in enumerate(starts):
             last = (firsts[k + 1] if k + 1 < len(starts) else len(lines)) - 1
-            m = DECL.match(code[s])
-            self.stmts.append({"first": firsts[k] + 1, "last": last + 1, "name": m and (m.group(1) or m.group(2)),
-                               "code": "\n".join(code[s:last + 1]), "text": "\n".join(lines[firsts[k]:last + 1])})
-        self.index = {s["name"]: k for k, s in enumerate(self.stmts) if s["name"]}
-        self.uses = [{self.index[r] for r in set(IDENT.findall(s["code"])) if r in self.index and r != s["name"]}
+            body = "\n".join(code[s:last + 1])
+            self.stmts.append({"first": firsts[k] + 1, "last": last + 1, "names": declared(body),
+                               "code": body, "text": "\n".join(lines[firsts[k]:last + 1])})
+        self.index = {name: k for k, s in enumerate(self.stmts) for name in s["names"]}
+        self.uses = [{self.index[r] for r in set(IDENT.findall(s["code"])) if r in self.index and r not in s["names"]}
                      for s in self.stmts]
         self.used_by = [set() for _ in self.stmts]
         for k, refs in enumerate(self.uses):
@@ -129,7 +167,7 @@ class Script:
                 self.used_by[r].add(k)
         self.entries = {g: {self.index[e] for e in GROUPS[g]["code"] if e in self.index} for g in TASKS}
         stops = set().union(*self.entries.values())
-        main = [k for k, s in enumerate(self.stmts) if not s["name"]]
+        main = [k for k, s in enumerate(self.stmts) if not s["names"]]
         self.shared = self.closure(main, self.uses, stops) - stops
         self.reach = {g: self.closure(e, self.uses) | self.closure(e, self.used_by) for g, e in self.entries.items()}
 
@@ -149,7 +187,7 @@ class Script:
 
     def groups_of(self, k):
         """The groups statement k reaches: all of them for the main flow, code it runs, or code nothing reaches."""
-        if k is None or not self.stmts[k]["name"] or k in self.shared:
+        if k is None or not self.stmts[k]["names"] or k in self.shared:
             return set(TASKS)
         return {g for g, r in self.reach.items() if k in r} or set(TASKS)
 
@@ -163,6 +201,32 @@ def script():
 
 def matches(path, patterns):
     return any(fnmatch.fnmatch(path, p) for p in patterns)
+
+
+def unit_test_of(script_name):
+    """scripts/scan_ci.py's unit test: test_scripts.ScanCiTest."""
+    return "test_scripts.%sTest" % "".join(w.capitalize() for w in script_name.split("_"))
+
+
+def importers(name):
+    """The scripts that import scripts/<name>.py, directly or through each other."""
+    imports = {}
+    for p in (ROOT / "scripts").glob("*.py"):
+        mods = set()
+        for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                mods |= {a.name.split(".")[0] for a in node.names}
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                mods.add(node.module.split(".")[0])
+        imports[p.stem] = mods
+    out, todo = set(), [name]
+    while todo:
+        cur = todo.pop()
+        for s, mods in imports.items():
+            if cur in mods and s not in out and s != name:
+                out.add(s)
+                todo.append(s)
+    return out
 
 
 def reached(path, lines, js=None):
@@ -179,12 +243,12 @@ def reached(path, lines, js=None):
         roles = {Path(path).stem} if re.fullmatch(r"roles/[a-z_]+\.md", path) else set()
         if not path.startswith("roles/"):
             roles |= {p.stem for p in (ROOT / "roles").glob("*.md") if path in p.read_text(encoding="utf-8")}
-        for k in [k for r in roles for k in js.naming(r"\bcall\(\s*'%s'" % r)] + js.naming(re.escape(path)):
+        for k in [k for r in roles for k in js.naming(r"\bcall\(\s*['\"]%s['\"]" % r)] + js.naming(re.escape(path)):
             out |= js.groups_of(k)
-    script = re.fullmatch(r"scripts/(\w+)\.(?:py|sh)", path)
-    if script:  # the groups with its unit test, which is named after it
-        test = "test_scripts.%sTest" % "".join(w.capitalize() for w in script.group(1).split("_"))
-        out |= {g for g in TASKS if test in GROUPS[g]["unittest"]}
+    script = re.fullmatch(r"scripts/(\w+)\.(py|sh)", path)
+    if script:  # the groups with its unit test, named after it, and with those of the scripts that import it
+        for name in {script.group(1)} | (importers(script.group(1)) if script.group(2) == "py" else set()):
+            out |= {g for g in TASKS if unit_test_of(name) in GROUPS[g]["unittest"]}
     test = re.fullmatch(r"tests/(test_\w+)\.py", path)
     if test:
         out |= {g for g in TASKS if any(t.split(".")[0] == test.group(1) for t in GROUPS[g]["unittest"])}

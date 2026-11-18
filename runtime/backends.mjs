@@ -1,7 +1,7 @@
 // Agent backends for runtime/engine.mjs: one command-line agent run per agent() call. The agent's
 // tools (shell, files) run in the agent's own process, in the directory it was started from.
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -69,11 +69,14 @@ export const BACKENDS = {
   },
 };
 
+// The prompt as the CLI's last argument; one too long for an argument goes in a file in dir instead,
+// which is removed once the CLI is done.
 function promptArg(prompt, label) {
-  if (Buffer.byteLength(prompt) <= ARG_PROMPT_MAX) return prompt;
-  const file = join(mkdtempSync(join(tmpdir(), 'inferpilot-prompt-')), `${String(label).replace(/[^\w.-]+/g, '_')}.md`);
+  if (Buffer.byteLength(prompt) <= ARG_PROMPT_MAX) return { arg: prompt, dir: null };
+  const dir = mkdtempSync(join(tmpdir(), 'inferpilot-prompt-'));
+  const file = join(dir, `${String(label).replace(/[^\w.-]+/g, '_')}.md`);
   writeFileSync(file, prompt);
-  return `Your complete instructions are in ${file}. Read the whole file first, then follow it exactly.`;
+  return { arg: `Your complete instructions are in ${file}. Read the whole file first, then follow it exactly.`, dir };
 }
 
 export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[name] } = {}) {
@@ -88,7 +91,11 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
       const argv = [...preset.args];
       const m = model || defaultModel;
       if (m) argv.push(preset.modelFlag, m);
-      if (preset.promptVia === 'arg') argv.push(promptArg(prompt, label));
+      const viaArg = preset.promptVia === 'arg' ? promptArg(prompt, label) : { dir: null };
+      if (preset.promptVia === 'arg') argv.push(viaArg.arg);
+      const tidy = () => {
+        if (viaArg.dir) rmSync(viaArg.dir, { recursive: true, force: true });
+      };
       return new Promise((resolve, reject) => {
         // Its own process group, so a timeout also stops what the agent started.
         const child = spawn(bin, argv, {
@@ -142,10 +149,12 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
         child.stderr.on('data', (d) => { err = (err + d).slice(-65536); });
         child.on('error', (e) => {
           if (timer) clearTimeout(timer);
+          tidy();
           reject(new Error(`${name}: cannot run ${bin}: ${e.message}`));
         });
         child.on('close', (code, signal) => {
           if (timer) clearTimeout(timer);
+          tidy();
           if (preset.events && partial) take(partial);
           if (killed) reject(new Error(`${name} [${label}] timed out after ${Math.round(timeoutMs / 1000)} s`));
           else if (code !== 0) reject(new Error(`${name} [${label}] exited ${code ?? signal}: ${err.slice(-600)}`));

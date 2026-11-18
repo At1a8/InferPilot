@@ -377,11 +377,11 @@ node tests/dry_run.mjs --only scan,roles          # 只跑名字以 scan: 和 ro
 
 | 保持一致的内容 | 由谁检查 |
 |---|---|
-| 两个 backend：`claude` 和 `cursor` 上的提示词、阶段、重试、超时和结果都相同 | `tests/backend_parity.mjs` |
+| 两个 backend：`claude` 和 `cursor` 上的提示词、阶段、重试、超时、模型和结果都相同 | `tests/backend_parity.mjs` |
 | 两份 README：逐节对照标题、命令、行内代码、数字、链接和表格 | `tests/test_readme.py` |
 | workflow 与角色：进入的每个阶段都在 `meta.phases` 里；每种模式的路线就是它实际走的路线，也是两份 README 列出的路线；回答必须有的每个字段都写在对应角色的 PHASE 一节里 | `tests/dry_run.mjs` |
 | 代码与文档：setup、`run_docker.sh` 和 runner 读的每个变量都写在 README 里，其他脚本在自己开头写明；README 和 `AGENTS.md` 给出的每个参数都存在 | `tests/test_docs.py` |
-| 公开仓库：没有 token、私钥、内部主机名、私有网段地址、真实的 home 目录或本机机器名 | `tests/test_hygiene.py` |
+| 公开仓库：没有 token 或密钥、内部主机名、私有网段地址、真实的 home 或存储目录，也没有本机及同集群机器的名字 | `tests/test_hygiene.py` |
 | 测试划分：每个 dry-run 场景和单元测试都属于基础测试或某个组 | `tests/test_groups.py` |
 
 ## 目录结构
