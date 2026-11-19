@@ -35,7 +35,8 @@ role: advisory_prior
 ## When to use
 
 - Running, re-verifying or repairing Qwen3.5 DCP on current main: "Design on main" is the code as it
-  is now; #25090's original is under "As merged in #25090".
+  is now; #25090's original is under "As merged in #25090", and what became of its problems under
+  "Fixes for #25090's problems".
 - Bringing DCP to another model with MHA/GQA full attention on the Triton backend (Qwen3.6 is the L1
   example in `dispatch.md`), or to another attention backend on ROCm (the aiter backend's DCP, #34432,
   covers MLA only).
@@ -91,7 +92,7 @@ tokens.
 | The tree cache and the allocator share one page size | No: DCP enlarges the physical pages | paged allocation by the allocator's real page size; the invariant checker counts the slack |
 | Every rank of a DCP group holds the same KV heads | On main yes: #32858 replicates K/V within each DCP group, #34161 makes the Triton prefill pick each rank's heads. At b2c8f7a22e only when tp / kv_heads is a multiple of dcp (TP8 with dcp 2 or 4 here, not TP4 with dcp 4) | on main nothing to do; a new backend must pick the heads as #34161 does |
 
-## Design on main (7bb4884d73, 2026-11-19)
+## Design on main (c86973c11c, 2026-11-19)
 
 1. **Arguments and groups**: `dcp_size` (`--dcp-size` / `--decode-context-parallel-size`) in
    `arg_groups/fields/parallel.py`, with derived `attn_dcp_size` and `dcp_enabled`.
@@ -135,6 +136,50 @@ tokens.
   writes off under DCP (`models/utils.py`).
 - The TP-only GQA layout: K/V heads followed the TP shard, so a DCP group could mix KV heads.
 - CI: `test/registered/amd/test_qwen3p5_triton_dcp.py`, TP8 DCP2 with `--disable-radix-cache`.
+
+## Fixes for #25090's problems
+
+| Problem of #25090 | State on main | Fix |
+|---|---|---|
+| The TP-only K/V layout corrupts attention when a DCP group spans KV heads (TP4 DCP4) | fixed | #32858, then #34161 |
+| The DCP group builds an unused QuickAllReduce on ROCm (4 GiB per GPU at Kimi-K3 TP8/DCP8) | fixed | #34212 |
+| CI only without the radix cache | fixed | #41155: the nightly runs with it (0.953) |
+| Short contexts slower (total tok/s −12% at 1k, one request) | open | candidates below, unmeasured |
+| The startup log names `a2a` for MHA, which never uses it | open | resolve `ag_rs` for MHA DCP |
+| Performance recorded for one request at a time | open | G5 with a concurrency sweep |
+
+**GQA layout: fixed on main.** #32858 derives a K/V TP layout from `attn_tp_size / dcp_size`, builds
+the K/V projections replicated within each DCP group (no runtime K/V communication), sizes the MHA
+pool and the backend metadata from the local KV heads, and adds a four-rank Q-sharding /
+KV-replication test. Its GSM8K runs (GB300, Qwen3.5 NVFP4, TP4 DCP4, 200 questions): 0.880 before,
+0.980 after, 0.990 at TP4 DCP1. That left the Triton current-chunk prefill passing each local Q shard
+together with all the replicated KV heads, so the extend kernel inferred a local 4:1 mapping instead
+of the global 16:1. #34161 selects the contiguous KV-head range of each rank's Q shard before the
+kernel and adds a CPU test of the TP4/DCP4 mapping. Its GSM8K runs (Qwen3.5-397B-A17B-FP8, TP4 DCP4):
+0.772 and 0.751 in two full CI runs before, 0.954 on 1,314 questions on B300 after. On ROCm, main's
+nightly at TP4 DCP4 scores 0.953.
+
+**QuickAllReduce: fixed on main.** On ROCm `GroupCoordinator` built a QuickAllReduce communicator for
+every group with custom all-reduce, though DCP never dispatches to it (MHA: an all-gather and an FP32
+all-reduce; a2a: all-to-all). #34212 adds `use_quick_allreduce` and passes `False` for the DCP group.
+
+**Short contexts: candidates, unmeasured.** Per full-attention layer and decode step, the MHA path
+all-gathers Q along the heads, and `cp_lse_ag_out_rs_mha` all-reduces the rescaled FP32 output of all
+the group's heads before keeping this rank's slice. Two changes to measure against it at 1k–16k (G5),
+each with G2:
+1. reduce-scatter along the head dim instead of the all-reduce and slice:
+   `cp_group.reduce_scatter_along_dim(out, dim=1)`, the call the MLA reduce makes along dim 0, since
+   rank r's heads are contiguous at `[r·h, (r+1)·h)`. It moves about half the bytes of an all-reduce,
+   but ROCm's custom all-reduce may still be faster for small decode batches: time both;
+2. no Q all-gather: replicate the Q projection within the DCP group, as `--dcp-replicate-q-proj` does
+   for MLA with the a2a backend, at `dcp` times the Q-projection work.
+
+**The startup log.** `_dcp_comm_backend_default` resolves `a2a` on ROCm for every model (#39165), and
+the Triton MHA path ignores it. Resolve `ag_rs` when the model's DCP attention is MHA, or say in the
+flag's help that MHA ignores it.
+
+**Concurrency.** The PR measured one request per length: run G5 at concurrency 1–64 at 32k and longer,
+where DCP pays.
 
 ## Invariants
 
@@ -235,8 +280,9 @@ ITL and TTFT from the PR's runs (TP8 → TP8 DCP2): ITL 7.49 → 8.56 ms (1k), 8
 
 - The Triton MHA path has no `a2a` reduction: it all-gathers the LSE and all-reduces the output.
 - No sinks, sliding window or custom masks under DCP on Triton.
-- Short contexts lose (total tok/s −12% at 1k); performance recorded only for single requests at
-  b2c8f7a22e: no concurrency sweep, no TTFT gain, none on main.
+- Short contexts lose (total tok/s −12% at 1k): the candidates under "Fixes for #25090's problems" are
+  unmeasured. Performance recorded only for single requests at b2c8f7a22e: no concurrency sweep, no
+  TTFT gain, none on main.
 - DCP shards only the full-attention layers' KV; the Gated DeltaNet state is per request and stays as
   under TP.
 - G1, G3 and G4 not recorded with the PR; on main, accuracy only from the nightly's DCP arm.
@@ -270,4 +316,4 @@ None of its own: the CI test, `scripts/eval_accuracy.sh`, `../hisparse-v2/script
 - AMD nightly "Nightly Test (AMD)", run 44343550026 on main d89bc5b574: `test_qwen3p5_triton_dcp.py`
   scored 0.953; the DCP job's failures from 2026-11-15 to 11-17 came before any DCP code ran.
 - Hugging Face config of Qwen/Qwen3.5-397B-A17B-FP8 for the head counts and layer types.
-- main 7bb4884d73 (2026-11-19): the code under "Design on main".
+- main c86973c11c (2026-11-19): the code under "Design on main".
