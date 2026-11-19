@@ -4,7 +4,7 @@
 //   node tests/runtime_selftest.mjs
 import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { extractJson, validate } from '../runtime/schema.mjs';
@@ -265,6 +265,21 @@ return { status: r.ok ? 'done' : 'no', n: args.n };`);
     check(r.status === 'done' && r.n === 5 && JSON.parse(readFileSync(resultFile, 'utf8')).n === 5, `result ${out}`);
     const bad = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'nope'], { encoding: 'utf8' });
     check(bad.status === 2 && bad.stderr.includes('usage:'), 'an unknown backend prints the usage');
+  }],
+  ['run.mjs: the control file next to --args-file is read when the script asks; one older than the run is ignored', async () => {
+    const script = path.join(TMP, 'control.js');
+    writeFileSync(script, `const before = control();\nawait agent('go', { label: 'writes' });\nreturn { before, after: control() };`);
+    const argsFile = path.join(TMP, 'ctl.json');
+    writeFileSync(argsFile, '{}');
+    const controlFile = path.join(TMP, 'ctl.control.json');
+    writeFileSync(controlFile, '{"stop_after": "now"}');
+    utimesSync(controlFile, new Date(Date.now() - 3600e3), new Date(Date.now() - 3600e3));
+    const out = execFileSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
+      '--args-file', argsFile], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('ctl.sh',
+      `echo '{"stop_after": "Verify"}' > ${controlFile}; echo done`) }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const r = JSON.parse(out);
+    check(JSON.stringify(r.before) === '{}', `an earlier run's file is ignored: ${JSON.stringify(r.before)}`);
+    check(r.after.stop_after === 'Verify', `one written during the run is read: ${JSON.stringify(r.after)}`);
   }],
   ['run.mjs: SIGTERM stops the agents and what they started with setsid, frees the lock, writes an interrupted result', async () => {
     if (!existsSync('/proc/self/environ')) return;

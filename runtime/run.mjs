@@ -11,6 +11,10 @@
 //   --agent-timeout-ms <ms>       kill an agent run after this long (default 0: inferpilot.js's own timeouts)
 //   --schema-retries <n>          asks again for an answer that does not match its schema (default 2)
 //   --kill-orphans                first stop what runs that are gone left running (agents, servers)
+//   --control-file <path>         read at every phase boundary (default with --args-file: <name>.control.json
+//                                 next to it): {"stop_after": "<phase>"} moves the stop, "now" stops
+//                                 after the phase that is ending, "" runs to the end; a file older than
+//                                 the run is ignored
 //   --help                        this usage
 //
 // The log ends with what the result's next says comes after the run (=== NEXT); with --args-file, the
@@ -22,7 +26,7 @@
 // (scripts/run_lock.py) and writes a result with status "interrupted" (exit 130 or 143); at its end it
 // stops what its agents left running. At the start it lists what runs that are gone left running.
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BACKENDS, cliBackend } from './backends.mjs';
@@ -41,11 +45,11 @@ function parse(argv) {
   return out;
 }
 
-const FLAGS = ['backend', 'model', 'args', 'args-file', 'result-file', 'concurrency', 'agent-timeout-ms', 'schema-retries', 'kill-orphans', 'help'];
+const FLAGS = ['backend', 'model', 'args', 'args-file', 'result-file', 'concurrency', 'agent-timeout-ms', 'schema-retries', 'kill-orphans', 'control-file', 'help'];
 const usage = (code = 2) => {
   (code ? process.stderr : process.stdout).write('usage: node runtime/run.mjs <script.js> --backend claude|cursor [--model <id>] '
     + '(--args <json> | --args-file <path>) [--result-file <path>] [--concurrency <n>] '
-    + '[--agent-timeout-ms <ms>] [--schema-retries <n>] [--kill-orphans] [--help]\n');
+    + '[--agent-timeout-ms <ms>] [--schema-retries <n>] [--kill-orphans] [--control-file <path>] [--help]\n');
   process.exit(code);
 };
 
@@ -65,12 +69,27 @@ try {
 }
 const int = (v, d) => (v !== undefined && v !== true && Number.isFinite(Number(v)) ? Number(v) : d);
 const backend = cliBackend(opts.backend, { model: typeof opts.model === 'string' ? opts.model : '' });
+const controlFile = typeof opts['control-file'] === 'string' ? opts['control-file']
+  : typeof opts['args-file'] === 'string' ? `${opts['args-file'].replace(/\.json$/, '')}.control.json` : '';
+const startedMs = Date.now();
+// A file older than this run was written for an earlier one, which a "now" in it already stopped.
+const control = () => {
+  try {
+    if (!controlFile || !existsSync(controlFile) || statSync(controlFile).mtimeMs < startedMs) return {};
+    const c = JSON.parse(readFileSync(controlFile, 'utf8'));
+    return c && typeof c === 'object' ? c : {};
+  } catch {
+    return {};
+  }
+};
 const rt = createRuntime({
   backend,
   concurrency: int(opts.concurrency, 4),
   schemaRetries: int(opts['schema-retries'], 2),
   agentTimeoutMs: int(opts['agent-timeout-ms'], 0),
+  control,
 });
+if (controlFile) rt.log(`control file: ${controlFile} (read at every phase boundary)`);
 const shq = (s) => (/^[\w./:=@,+-]+$/.test(String(s)) ? String(s) : `'${String(s).replace(/'/g, "'\\''")}'`);
 
 // The steps a result's next names, as the log's last lines: what to ask, each run to start (its arguments in

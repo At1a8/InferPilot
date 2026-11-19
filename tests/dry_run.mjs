@@ -51,16 +51,19 @@ function makeBackend(overrides) {
   return { backend: b, calls };
 }
 
-async function run(args, overrides) {
+async function run(args, overrides, { control } = {}) {
   const phases = [];
   const heads = [];
+  const lines = [];
   let route = [];
   const { backend, calls } = makeBackend(overrides);
   const rt = createRuntime({
     backend,
     concurrency: 2,
     schemaRetries: 0,
+    ...(control ? { control } : {}),
     log: (msg) => {
+      lines.push(msg);
       // "=== PHASE: X ===", "=== PHASE 3/10 [###-------]: X ===" or "=== PHASE (off the route): X ==="
       const m = /^=== PHASE(?: \d+\/\d+ \[[#-]+\]| \(off the route\))?: (.*?) ===/.exec(msg);
       if (m) {
@@ -77,7 +80,7 @@ async function run(args, overrides) {
   const prefix = SCENARIO.split(':')[0];
   if (result && result.mode) MODES_RUN.set(prefix, (MODES_RUN.get(prefix) || new Set()).add(result.mode));
   RESULTS.push({ scenario: SCENARIO, result });
-  return { result, phases, heads, route, calls, keys: calls.map((c) => c.key), summary: rt.summary() };
+  return { result, phases, heads, route, calls, lines, keys: calls.map((c) => c.key), summary: rt.summary() };
 }
 
 let failed = 0;
@@ -460,6 +463,19 @@ const scenarios = [
     check(asks(await run({ mode: 'ci', task: 't', stop_after: 'Performance' }), 'stop_after'), 'ci never runs Performance');
     const ok = await run({ mode: 'issue', task: 'i', stop_after: 'reproduce' });
     check(ok.result.status === 'stopped' && ok.result.stopped_at === 'Reproduce', `case does not matter: ${ok.result.status}`);
+  }],
+  ['stop_after: the control file moves the stop while the run goes on; now stops at the next boundary', async () => {
+    const moved = await run({ mode: 'feature', task: 't' }, undefined, { control: () => ({ stop_after: 'Spec' }) });
+    check(moved.result.status === 'stopped' && moved.result.stopped_at === 'Spec', `moved: ${moved.result.status} at ${moved.result.stopped_at}`);
+    check(moved.lines.some((l) => l === '[inferpilot] control: stop_after=spec'), 'the change is logged');
+    let reads = 0;
+    const now = await run({ mode: 'issue', task: 'i' }, undefined, { control: () => (++reads > 1 ? { stop_after: 'now' } : {}) });
+    check(now.result.status === 'stopped' && now.result.stopped_at === 'Triage', `now: ${now.result.status} at ${now.result.stopped_at}`);
+    const cleared = await run({ mode: 'issue', task: 'i', stop_after: 'Setup' }, undefined, { control: () => ({ stop_after: '' }) });
+    check(cleared.result.stopped_at !== 'Setup' && cleared.phases.includes('Triage'), `cleared: ${cleared.result.status}`);
+    const bad = await run({ mode: 'ci', task: 'c' }, undefined, { control: () => ({ stop_after: 'Performance' }) });
+    check(bad.lines.some((l) => /stop_after=performance is not a phase of mode=ci; it is ignored/.test(l)) && bad.result.status !== 'stopped',
+      `a phase the mode lacks is ignored: ${bad.result.status}`);
   }],
   ['feature: a work package that never passes is rolled back', async () => {
     const r = await run({ mode: 'feature', task: 't', max_fix_rounds: 1 }, {

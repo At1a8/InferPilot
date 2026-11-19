@@ -360,7 +360,28 @@ function enter(title) {
   PHASE = title;
   phase(title);
 }
-const stopHere = (title) => STOP_AFTER !== '' && STOP_AFTER === title.toLowerCase();
+// Under runtime/run.mjs, control() returns the run's control file, read at every phase boundary: its
+// stop_after replaces the argument's while the run goes on, and "now" stops after the phase that is ending.
+// The Workflow tool has no control global.
+let stopAfterNow = STOP_AFTER;
+function liveStopAfter() {
+  if (typeof control !== 'function') return STOP_AFTER;
+  let c = null;
+  try {
+    c = control();
+  } catch { /* an unreadable file changes nothing */ }
+  const s = c && typeof c.stop_after === 'string' ? c.stop_after.trim().toLowerCase() : STOP_AFTER;
+  if (s !== stopAfterNow) {
+    const known = s === '' || s === 'now' || (STOP_PHASES[MODE] || []).some((p) => p.toLowerCase() === s);
+    log(`[inferpilot] control: stop_after=${s || '(none)'}${known ? '' : ` is not a phase of mode=${MODE}; it is ignored`}`);
+    stopAfterNow = s;
+  }
+  return stopAfterNow;
+}
+const stopHere = (title) => {
+  const s = liveStopAfter();
+  return s !== '' && (s === 'now' || s === title.toLowerCase());
+};
 
 // Inputs every role sees: the context plus what earlier phases produced.
 const inputs = (extra) => ({
