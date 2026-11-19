@@ -4,7 +4,7 @@
 //   node tests/runtime_selftest.mjs
 import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { extractJson, validate } from '../runtime/schema.mjs';
@@ -266,14 +266,66 @@ return { status: r.ok ? 'done' : 'no', n: args.n };`);
     const bad = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'nope'], { encoding: 'utf8' });
     check(bad.status === 2 && bad.stderr.includes('usage:'), 'an unknown backend prints the usage');
   }],
-  ['run.mjs: the control file next to --args-file is read when the script asks; one older than the run is ignored', async () => {
+  ['backends: a log dir keeps each run\'s prompt, whole stream and stderr; onText hears what the agent writes', async () => {
+    const dir = path.join(TMP, 'agent-logs');
+    const events = [
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'Looking at the tree.' }] } },
+      { type: 'tool_call', subtype: 'started', tool_call: { shellToolCall: { args: { command: 'ls' } } } },
+      { type: 'result', subtype: 'success', is_error: false, result: 'done' },
+    ];
+    const cli = fakeCli('logged.sh', `echo to-stderr >&2\ncat <<'EOF'\n${events.map((e) => JSON.stringify(e)).join('\n')}\nEOF`);
+    const b = cliBackend('fake', { preset: preset(cli, 'arg', { events: BACKENDS.cursor.events }), logDir: dir });
+    const texts = [];
+    const r = await b.runAgent({ prompt: 'the prompt', label: 'role x', onText: (t) => texts.push(t) });
+    check(r.text === 'done' && texts.length === 1 && texts[0] === 'Looking at the tree.', `texts ${JSON.stringify(texts)}`);
+    const stream = path.join(dir, '001-role_x.jsonl');
+    for (let i = 0; i < 50 && !(existsSync(stream) && readFileSync(stream, 'utf8').split('\n').filter(Boolean).length === 3); i++) await sleep(20);
+    check(readFileSync(path.join(dir, '001-role_x.prompt.md'), 'utf8') === 'the prompt', 'the prompt is kept');
+    check(readFileSync(stream, 'utf8').split('\n').filter(Boolean).length === 3, 'every event is kept');
+    check(readFileSync(path.join(dir, '001-role_x.stderr.log'), 'utf8').includes('to-stderr'), 'stderr is kept');
+    const said = BACKENDS.claude.events({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' },
+      { type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] } });
+    check(said.texts[0] === 'hi' && said.tools.length === 1, `claude: ${JSON.stringify(said)}`);
+  }],
+  ['engine: showText adds what the agents write; live() lists the calls under way', async () => {
+    const lines = [];
+    let seen = null;
+    const backend = {
+      name: 'fake',
+      async runAgent({ onText }) {
+        if (onText) onText('  thinking\n about it  ');
+        seen = rt.live();
+        return { text: 'ok', usage: null };
+      },
+    };
+    const rt = createRuntime({ backend, log: (m) => lines.push(m), showText: true, quietMs: 0 });
+    rt.phase('P');
+    await rt.agent('q', { label: 'speaker' });
+    check(lines.some((l) => l.endsWith('[P] speaker  > thinking about it')), `lines ${JSON.stringify(lines)}`);
+    check(seen && seen.length === 1 && seen[0].label === 'speaker' && seen[0].phase === 'P' && seen[0].last === '> thinking about it',
+      `live ${JSON.stringify(seen)}`);
+    check(rt.live().length === 0, 'no call once it is done');
+    const quietLines = [];
+    await createRuntime({ backend, log: (m) => quietLines.push(m), quietMs: 0 }).agent('q', { label: 'mute' });
+    check(!quietLines.some((l) => l.includes('> thinking')), 'no text without showText');
+  }],
+  ['run.mjs: with --result-file, a status file and the agent streams next to it', async () => {
+    const script = path.join(TMP, 'status.js');
+    writeFileSync(script, `phase('Only');\nawait agent('go', { label: 'only' });\nreturn { status: 'done' };`);
+    execFileSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor', '--args', '{}',
+      '--result-file', path.join(TMP, 'st.result.json')], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('st.sh', 'echo done') },
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const st = JSON.parse(readFileSync(path.join(TMP, 'st.status.json'), 'utf8'));
+    check(st.state === 'ended' && st.agents.length === 0 && /^\d+-\d+$/.test(st.run_tag) && st.updated >= st.started, `status ${JSON.stringify(st)}`);
+    check(existsSync(path.join(TMP, 'st.agents', '001-only.jsonl')), 'the agent stream is kept');
+  }],
+  ['run.mjs: the control file next to --args-file is read when the script asks; one there before the run counts once it changes', async () => {
     const script = path.join(TMP, 'control.js');
     writeFileSync(script, `const before = control();\nawait agent('go', { label: 'writes' });\nreturn { before, after: control() };`);
     const argsFile = path.join(TMP, 'ctl.json');
     writeFileSync(argsFile, '{}');
     const controlFile = path.join(TMP, 'ctl.control.json');
     writeFileSync(controlFile, '{"stop_after": "now"}');
-    utimesSync(controlFile, new Date(Date.now() - 3600e3), new Date(Date.now() - 3600e3));
     const out = execFileSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
       '--args-file', argsFile], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('ctl.sh',
       `echo '{"stop_after": "Verify"}' > ${controlFile}; echo done`) }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -306,6 +358,7 @@ sleep 42.25 & wait`);
     check(!running('sleep 42.25'), 'the agent was stopped');
     const result = JSON.parse(readFileSync(resultFile, 'utf8'));
     check(result.status === 'interrupted' && result.signal === 'SIGTERM' && result.at === 'Long', `result ${JSON.stringify(result)}`);
+    check(JSON.parse(readFileSync(path.join(TMP, 'stop.status.json'), 'utf8')).state === 'interrupted', 'the status file says interrupted');
     const st = JSON.parse(execFileSync('python3', [path.join(INFERPILOT, 'scripts', 'run_lock.py'), '--lock', lock, 'status'], { encoding: 'utf8' }));
     check(st.status === 'free', `the lock is ${st.status}`);
     check(/=== END \(interrupted by SIGTERM in Long\)/.test(log), 'the log ends with the interruption');

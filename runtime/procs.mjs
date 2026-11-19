@@ -62,12 +62,36 @@ export function signal(pids, sig) {
   }
 }
 
-// SIGTERM, then SIGKILL for what is still there after graceMs; resolves to the pids that needed SIGKILL.
+// Whether pid is still the process that started at start, and not a zombie.
+function same(pid, start) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    return fields[0] !== 'Z' && fields[19] === start;
+  } catch {
+    return false;
+  }
+}
+
+// SIGTERM to every process find() returns, looking several times: one scan can miss a process in the
+// middle of an exec, whose environment reads empty then. SIGKILL for what is left after graceMs.
+// Resolves to every process it signalled.
 export async function stopPids(find, graceMs = 10000) {
-  signal(find().map((p) => p.pid), 'SIGTERM');
+  const seen = new Map();
+  const look = () => {
+    for (const p of find()) {
+      if (seen.has(p.pid)) continue;
+      seen.set(p.pid, { ...p, start: startOf(p.pid) });
+      signal([p.pid], 'SIGTERM');
+    }
+  };
+  const alive = () => [...seen.values()].filter((p) => same(p.pid, p.start));
+  look();
   const deadline = Date.now() + graceMs;
-  while (find().length && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
-  const left = find().map((p) => p.pid);
-  signal(left, 'SIGKILL');
-  return left;
+  for (let i = 0; Date.now() < deadline && (i < 3 || alive().length); i++) {
+    await new Promise((r) => setTimeout(r, 150));
+    look();
+  }
+  signal(alive().map((p) => p.pid), 'SIGKILL');
+  return [...seen.values()];
 }

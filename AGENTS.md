@@ -45,6 +45,12 @@ user's login as their name). Ask which one when there are several, or none.
   `exp/<mode>_<slug>_<time>Z`.
 - In the run directory, `experiment_ledger.md` holds every measurement and decision; at the end comes
   `run_report.md` or `validation_report.md`. The result file holds the final `status` and `stopped_at`.
+- `exp/<name>.status.json` is rewritten every 30 s while the runner lives: its state, phase and the agent
+  calls under way, each with its last line. An `updated` more than two minutes old, or
+  `python3 scripts/run_lock.py status` saying `"runner": "gone"`, means the runner died: tell the user,
+  and start the run again only when they ask (`--kill-orphans` stops what it left).
+- `exp/<name>.agents/` keeps each agent call's prompt, its whole output stream and stderr; judge progress
+  from what the agents produce there and in the run directory, not from the log's silence.
 
 ## Stop it or move its stop
 
