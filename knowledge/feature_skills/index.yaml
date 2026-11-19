@@ -63,3 +63,14 @@ skills:
     platforms: [rocm-gfx950]
   depends_on: []
   validation_status: stale         # G0, G2, G5 at the merge; main has moved DCP and fixed its GQA layout since (#32858, #34161)
+- id: pard2
+  file: pard2/SKILL.md
+  tags: [pard2, pard-2, pard, vllm#49406, vllm#55257, sglang#51465, parallel draft, parallel drafting, target-aligned draft, draft model, speculative decoding, target-dependent, target-independent, accept length]
+  match:
+    framework: sglang
+    framework_ref: 179247229d
+    feature: pard2_speculative_decoding
+    model_arch: [qwen3]            # Qwen3-8B target with the amd/PARD2-Qwen3-8B draft
+    platforms: [rocm-gfx950]
+  depends_on: [vllm-project/vllm#49406, vllm-project/vllm#55257]
+  validation_status: validated     # G2, G5 on the PR head; G1 parity on an earlier revision
