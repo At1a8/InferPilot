@@ -46,12 +46,12 @@ skills:
   tags: [prefill context parallel, prefill context parallelism, prefill cp, pcp, context parallel, context parallelism, interleave cp, round robin split, long context prefill, unified kv, unified kv attention]
   match:
     framework: sglang
-    framework_ref: a362ba9da3
+    framework_ref: d89bc5b574
     feature: prefill_context_parallel
     model_arch: [deepseek_v4]      # DeepSeek-V4 unified_kv attention, validated on V4-Pro
     platforms: [rocm-gfx950]
-  depends_on: []
-  validation_status: stale         # G2 (CP arm only) and G5 at the merge; main has moved the hook points
+  depends_on: [sgl-project/sglang#33532]
+  validation_status: validated     # G2, G5 on main's CP V2 port (#34200) and the AMD nightly; #27928's CP V1 was removed
 - id: qwen35-decode-cp
   file: qwen35-decode-cp/SKILL.md
   tags: [decode context parallel, decode context parallelism, dcp, context parallel, context parallelism, helix parallelism, long context decode]
@@ -62,4 +62,4 @@ skills:
     model_arch: [qwen3_5]          # Qwen3.5 full-attention layers on the Triton backend
     platforms: [rocm-gfx950]
   depends_on: []
-  validation_status: stale         # G0, G2, G5 at the merge; main has moved DCP and changed its GQA layout (#32858)
+  validation_status: stale         # G0, G2, G5 at the merge; main has moved DCP and fixed its GQA layout since (#32858, #34161)
