@@ -92,7 +92,8 @@ belongs to a host user, and the rules below are about those.
   memory on a pinned GPU. A leftover of this run is stopped first; anyone else's means waiting
   (re-check every 5 minutes, up to 30), then reporting the measurement as not run: a number measured
   next to somebody else's job is not a measurement. GPUs are numbered as HIP numbers them; rocm-smi's
-  card numbers can differ.
+  card numbers can differ. A performance measurement (throughput, TTFT, TPOT) checks every GPU of the
+  machine, `--check all`: work on another GPU moves speed numbers too (`perf_evaluation.md`).
 - Running a test that needs a GPU the server occupies: stop the server first.
 
 ## Disk and tools

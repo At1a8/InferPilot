@@ -399,16 +399,27 @@ sleep 42.25 & wait`);
       const victim = spawn('sleep', ['48.25'], { env: { ...process.env, INFERPILOT_RUN_TAG: '424242-1-1' }, detached: true, stdio: 'ignore' });
       victim.unref();
       await sleep(200);
-      const got = stopInContainer('box', '424242-1-1', 2);
-      check(got && got.length === 1 && Number(got[0]) === victim.pid, `stopped ${JSON.stringify(got)}`);
+      // a worker that, told to stop, starts another tagged process on its way out
+      const forker = spawn('bash', ['-c', 'trap "sleep 49.25 & exit 0" TERM; while :; do sleep 0.1; done'],
+        { env: { ...process.env, INFERPILOT_RUN_TAG: '424242-1-1' }, detached: true, stdio: 'ignore' });
+      forker.unref();
+      await sleep(300);
+      const got = stopInContainer('box', '424242-1-1', 3);
+      check(got && got.map(Number).includes(victim.pid) && got.map(Number).includes(forker.pid), `stopped ${JSON.stringify(got)}`);
       await sleep(200);
       check(spawnSync('pgrep', ['-f', 'sleep 48.25']).status !== 0, 'the tagged process in the container is gone');
+      check(spawnSync('pgrep', ['-f', 'sleep 49.25']).status !== 0, 'and the one its worker started while stopping');
       const script = path.join(TMP, 'boxed.js');
       writeFileSync(script, `phase('Only');\nawait agent('go', { label: 'only' });\nreturn { status: 'done' };`);
       const r = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
         '--args', '{"container": "box"}'], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('boxed.sh', 'echo done') }, encoding: 'utf8' });
-      check(r.status === 0 && /^exec box sh -c .* sh \d+-\d+-\d* 10$/m.test(readFileSync(calls, 'utf8')),
+      check(r.status === 0 && /^exec box sh -c [\s\S]* sh \d+-\d+-\d* 10$/m.test(readFileSync(calls, 'utf8')),
         `the runner looked in the task's container at its end: ${readFileSync(calls, 'utf8').slice(-200)}`);
+      const named = path.join(TMP, 'named.js');
+      writeFileSync(named, `log('[inferpilot] container=box2');\nphase('Only');\nawait agent('go', { label: 'only' });\nreturn { status: 'done' };`);
+      const r2 = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), named, '--backend', 'cursor',
+        '--args', '{}'], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('named.sh', 'echo done') }, encoding: 'utf8' });
+      check(r2.status === 0 && /^exec box2 /m.test(readFileSync(calls, 'utf8')), 'a container the script resolved is cleaned up too');
     } finally {
       process.env.PATH = old;
     }

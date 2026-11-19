@@ -238,7 +238,7 @@ class DailyReportTest(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("bash"), "needs bash")
 class EvalAccuracyTest(unittest.TestCase):
-    """scripts/eval_accuracy.sh against a fake server (curl), a fake evalscope and a fake sgl-eval."""
+    """scripts/eval_accuracy.sh against a fake server (curl) and a fake evalscope."""
 
     SCRIPT = SCRIPTS / "eval_accuracy.sh"
 
@@ -249,8 +249,7 @@ class EvalAccuracyTest(unittest.TestCase):
         fake = self.tmp / "bin"
         fake.mkdir()
         self.calls = self.tmp / "evalscope_calls.txt"
-        # The server answers /models and /server_info; the judge probe (the call with -w) answers FAKE_JUDGE;
-        # ModelScope's GPQA file (-o <file>) holds two rows.
+        # The server answers /models and /server_info; the judge probe (the call with -w) answers FAKE_JUDGE.
         (fake / "curl").write_text(textwrap.dedent("""\
             #!/bin/bash
             url="${@: -1}"
@@ -258,31 +257,8 @@ class EvalAccuracyTest(unittest.TestCase):
             case "$url" in
               */v1/models) echo '{"data": [{"id": "fake-model"}]}' ;;
               */server_info) echo '{"internal_states": [{"avg_spec_accept_length": 4.0}]}' ;;
-              *modelscope.cn*gpqa_diamond*)
-                prev=""; for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
-                for i in $(seq "${FAKE_GPQA_ROWS:-198}"); do printf '{"Question": "q%d"}\\n' "$i"; done > "$out" ;;
             esac
             """))
-        # sgl-eval writes <out dir>/sgl_eval_<name>_<time>/metrics.json; FAKE_ERROR_RATE and FAKE_NUM spoil it.
-        (fake / "sgl-eval").write_text(textwrap.dedent("""\
-            #!/usr/bin/env python3
-            import json, os, sys
-            argv = sys.argv[1:]
-            with open(os.environ["CALLS"] + ".sgl", "a") as f:
-                f.write(" ".join(argv) + "\\n")
-            name = argv[1]
-            n = {"gsm8k": 1319, "gpqa": 198}[name]
-            if "--num-examples" in argv:
-                n = min(n, int(argv[argv.index("--num-examples") + 1]))
-            d = os.path.join(argv[argv.index("--out-dir") + 1], "sgl_eval_%s_20261119-120000" % name)
-            os.makedirs(d, exist_ok=True)
-            agg = {"score": 0.95, "error_rate": float(os.environ.get("FAKE_ERROR_RATE", 0)), "truncated_rate": 0.0}
-            with open(os.path.join(d, "metrics.json"), "w") as f:
-                json.dump({"aggregate": agg, "num_examples": int(os.environ.get("FAKE_NUM", n)), "n_repeats": 1}, f)
-            """))
-        prepare = self.tmp / "pylib" / "sgl_eval" / "_vendored" / "nemo_skills" / "dataset" / "gpqa" / "prepare.py"
-        prepare.parent.mkdir(parents=True)
-        prepare.write_text('def format_entry(entry):\n    return {"problem": entry["Question"], "expected_answer": "A"}\n')
         (fake / "evalscope").write_text(textwrap.dedent("""\
             #!/bin/bash
             echo "$*" >> "$CALLS"
@@ -297,12 +273,7 @@ class EvalAccuracyTest(unittest.TestCase):
         for f in fake.iterdir():
             f.chmod(0o755)
         self.env = {"PATH": "%s:/usr/bin:/bin" % fake, "HOME": str(self.tmp), "CALLS": str(self.calls),
-                    "API_URL": "http://fake:30010/v1", "RESULT_ROOT": str(self.tmp / "results"),
-                    "PYTHONPATH": str(self.tmp / "pylib")}
-
-    def sgl_calls(self):
-        p = Path(str(self.calls) + ".sgl")
-        return p.read_text().splitlines() if p.exists() else []
+                    "API_URL": "http://fake:30010/v1", "RESULT_ROOT": str(self.tmp / "results")}
 
     def run_script(self, *args, **env):
         return subprocess.run(["bash", str(self.SCRIPT), *args], env={**self.env, **env},
@@ -315,57 +286,27 @@ class EvalAccuracyTest(unittest.TestCase):
         self.assertIsNone(re.search(r"hf_[A-Za-z0-9]{20,}", text), "a Hugging Face token in the script")
         self.assertIsNone(re.search(r"(KEY|TOKEN|NTID):-[^}$]", text), "a key, token or user name as a default")
 
-    def test_gsm8k_once_by_default_through_sgl_eval(self):
+    def test_gsm8k_once_by_default(self):
         r = self.run_script()
-        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-        self.assertFalse(self.calls.exists(), "evalscope ran for gsm8k")
-        calls = self.sgl_calls()
-        self.assertEqual(len(calls), 1)
-        self.assertTrue(calls[0].startswith("run gsm8k --base-url http://fake:30010/v1 --model fake-model "), calls[0])
-        self.assertIn("--num-threads 128 --max-tokens 32768 --n-repeats 1", calls[0], "sglang's reference command")
-        for arg in ("--thinking", "--no-thinking", "--reasoning-effort", "--chat-template-kwarg"):
-            self.assertNotIn(arg, calls[0], "thinking is the benchmark's own unless given")
-        summary = (self.tmp / "results" / "summary.txt").read_text()
-        self.assertIn("eval gsm8k: accept_length=[4.0] aggregate={'score': 0.95, 'num': 1319,", summary)
-
-    def test_gpqa_diamond_from_modelscope_in_sgl_evals_own_form(self):
-        r = self.run_script("gpqa_diamond", MAX_TOKENS="4096", ENABLE_THINKING="0", REASONING_EFFORT="")
-        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-        data = self.tmp / "results" / "gpqa_diamond.sgl_eval.jsonl"
-        call = self.sgl_calls()[0]
-        for arg in ("run gpqa ", "--from-dataset %s" % data, "--max-tokens 4096", "--no-thinking"):
-            self.assertIn(arg, call)
-        problems = [json.loads(line)["problem"] for line in data.read_text().splitlines()]
-        self.assertEqual((len(problems), problems[:2]), (198, ["q1", "q2"]))
-        hf = self.run_script("gpqa_diamond", DATASET_HUB="huggingface", RESULT_ROOT=str(self.tmp / "hf"))
-        self.assertEqual(hf.returncode, 0, hf.stderr)
-        self.assertNotIn("--from-dataset", self.sgl_calls()[-1])
-
-    def test_a_short_gpqa_download_leaves_no_file_behind(self):
-        r = self.run_script("gpqa_diamond", FAKE_GPQA_ROWS="150", RESULT_ROOT=str(self.tmp / "short"))
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("could not prepare GPQA", r.stderr)
-        self.assertFalse(list((self.tmp / "short").glob("gpqa_diamond.sgl_eval.jsonl*.part")))
-        self.assertFalse((self.tmp / "short" / "gpqa_diamond.sgl_eval.jsonl").exists())
-
-    def test_a_failed_request_or_a_missing_question_fails_an_sgl_eval_set(self):
-        r = self.run_script("gsm8k", FAKE_ERROR_RATE="0.01")
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("1.00% of the requests failed", r.stderr)
-        self.assertFalse((self.tmp / "results" / "summary.txt").exists())
-        short = self.run_script("gsm8k", FAKE_NUM="1300")
-        self.assertEqual(short.returncode, 1)
-        self.assertIn("1300 of 1319 questions", short.stderr)
-        self.assertEqual(self.run_script("gsm8k", LIMIT="5000").returncode, 0, "LIMIT above the count is all of it")
-
-    def test_an_evalscope_set_once(self):
-        r = self.run_script("mmlu_pro")
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         calls = [line for line in self.calls.read_text().splitlines() if line.startswith("eval ")]
         self.assertEqual(len(calls), 1)
-        self.assertIn("--datasets mmlu_pro", calls[0])
+        self.assertIn("--datasets gsm8k", calls[0])
         self.assertIn("--repeats 1", calls[0])
-        self.assertIn("eval mmlu_pro: accept_length=[4.0]", (self.tmp / "results" / "summary.txt").read_text())
+        summary = (self.tmp / "results" / "summary.txt").read_text()
+        self.assertIn("eval gsm8k: accept_length=[4.0]", summary)
+        self.assertIn("'num': 1319", summary)
+
+    def test_thinking_is_switched_with_both_template_keys(self):
+        def gen(**env):
+            self.assertEqual(self.run_script("gsm8k", **env).returncode, 0)
+            argv = Path(str(self.calls) + ".argv").read_text().splitlines()
+            return json.loads(argv[argv.index("--generation-config") + 1])["extra_body"]
+        on = gen()
+        self.assertEqual((on["chat_template_kwargs"], on["reasoning_effort"]), ({"thinking": True, "enable_thinking": True}, "max"))
+        off = gen(ENABLE_THINKING="0", REASONING_EFFORT="")
+        self.assertEqual(off, {"chat_template_kwargs": {"thinking": False, "enable_thinking": False}},
+                         "Qwen3 thinks unless enable_thinking is false")
 
     def test_options_reach_evalscope_whole(self):
         data = self.tmp / "long bench"
@@ -730,6 +671,8 @@ class GpuStatusTest(unittest.TestCase):
         self.assertEqual((rc, [r["index"] for r in out["busy"]]), (1, [0]))
         self.assertEqual(self.run_main("--check", "1,2")[0], 0)
         self.assertEqual(self.run_main("--check", "7")[1]["missing"], [7])
+        rc, out = self.run_main("--check", "all")
+        self.assertEqual((rc, [r["index"] for r in out["busy"]]), (1, [0]), "any busy GPU fails a check of all")
 
     def test_a_gpu_no_kfd_node_matches_is_never_free_and_no_torch_is_an_error(self):
         self.devices.write_text(json.dumps([{"index": 0, "bus": 0x65}, {"index": 1, "bus": 0x99}]))

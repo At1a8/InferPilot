@@ -13,8 +13,9 @@ Read: `knowledge/system_perf.md`, `knowledge/perf_evaluation.md`, `knowledge/rew
 The workload is fixed at Setup (`RUN_DIR/run.json`) before any profile is read; never change it after
 seeing results. If it must change, stop and say why.
 
-1. Check the pinned GPUs are free (`gpu_status.py --check`, `env_hygiene.md`; again before every
-   round), then launch the baseline server with the task's `server_script` and warm it up with its `client_script`
+1. Check that no GPU of the machine is in use (`gpu_status.py --check all`, `perf_evaluation.md`: a speed
+   number is measured with the machine to itself; again before every round), then launch the baseline
+   server with the task's `server_script` and warm it up with its `client_script`
    (`task_definition.md` §1.1).
 2. **Path check first.** From the launch script and the server log (`server_args=` line, backend and
    graph-capture messages), compare intended and effective: attention backend, MoE and GEMM backends,

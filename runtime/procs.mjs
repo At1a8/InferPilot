@@ -72,14 +72,31 @@ export const orphans = () => tagged().filter((p) => !runnerAlive(p.tag));
 
 // With InferPilot on the host, servers run in the task's container through `docker exec -e
 // INFERPILOT_RUN_TAG`: their environments are root's there and unreadable from the host, and stopping the
-// local docker client leaves them running. The container's root finds and stops them instead (SIGTERM,
-// SIGKILL after graceS). Resolves to the pids it signalled, or null when docker could not be run.
+// local docker client leaves them running. The container's root finds and stops them instead, as
+// stopPids() does here: SIGTERM to each tagged process, looking again every second of graceS for ones
+// started meanwhile, then SIGKILL to those still alive, each checked by its start time first, so a reused
+// pid is never signalled. Resolves to the pids it signalled, or null when docker could not be run.
+const IN_CONTAINER = [
+  't="INFERPILOT_RUN_TAG=$1"; seen=""',
+  'start_of() { sed "s/.*) //" "/proc/$1/stat" 2>/dev/null | awk \'$1 != "Z" && $1 != "X" {print $20}\'; }',
+  'look() {',
+  '  for d in /proc/[0-9]*; do',
+  '    p=${d#/proc/}',
+  '    case " $seen " in *" $p:"*) continue ;; esac',
+  '    tr "\\0" "\\n" < "$d/environ" 2>/dev/null | grep -qx "$t" || continue',
+  '    s=$(start_of "$p"); [ -n "$s" ] || continue',
+  '    seen="$seen $p:$s"; kill -TERM "$p" 2>/dev/null',
+  '  done',
+  '}',
+  'alive() { out=""; for e in $seen; do [ "$(start_of "${e%%:*}")" = "${e#*:}" ] && out="$out ${e%%:*}"; done; echo $out; }',
+  'look; i=0',
+  'while [ "$i" -lt "$2" ]; do sleep 1; look; [ -z "$(alive)" ] && break; i=$((i + 1)); done',
+  'look; left=$(alive); [ -n "$left" ] && kill -KILL $left 2>/dev/null',
+  'for e in $seen; do printf "%s " "${e%%:*}"; done',
+].join('\n');
+
 export function stopInContainer(container, tag, graceS = 10) {
-  const script = 't="INFERPILOT_RUN_TAG=$1"; pids=""; '
-    + 'for d in /proc/[0-9]*; do tr "\\0" "\\n" < "$d/environ" 2>/dev/null | grep -qx "$t" && pids="$pids ${d#/proc/}"; done; '
-    + '[ -z "$pids" ] && exit 0; kill -TERM $pids 2>/dev/null; i=0; '
-    + 'while [ "$i" -lt "$2" ]; do alive=""; for p in $pids; do kill -0 "$p" 2>/dev/null && alive="$alive $p"; done; '
-    + '[ -z "$alive" ] && break; sleep 1; i=$((i + 1)); done; kill -KILL $pids 2>/dev/null; echo $pids';
+  const script = IN_CONTAINER;
   const r = spawnSync('docker', ['exec', container, 'sh', '-c', script, 'sh', tag, String(graceS)],
     { encoding: 'utf8', timeout: (graceS + 30) * 1000 });
   return r.status === 0 ? String(r.stdout || '').trim().split(/\s+/).filter(Boolean) : null;

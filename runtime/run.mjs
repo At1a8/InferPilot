@@ -213,7 +213,7 @@ async function tidyUp() {
 
 // A task with a container (InferPilot on the host) started its servers there: stop those too.
 function inContainer() {
-  const box = typeof args.container === 'string' ? args.container.trim() : '';
+  const box = (rt.state.container || (typeof args.container === 'string' ? args.container : '')).trim();
   if (!box) return;
   const got = stopInContainer(box, tag);
   if (got === null) rt.log(`!! could not look for this run's processes in container ${box}: check it before reusing its GPUs`);

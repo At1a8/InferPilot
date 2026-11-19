@@ -286,7 +286,6 @@ started after it get.
 | shell | root's `~/.bashrc` gets `PYTHONDONTWRITEBYTECODE=1` (no root-owned `__pycache__` in checkouts on host mounts) and `DISABLE_AUTOUPDATER=1`, and loads the keys file, also one put in place later; with `LLM_GATEWAY_KEY` and no `ANTHROPIC_BASE_URL`, it points Claude Code at the AMD LLM gateway |
 | framework | the image's `/sgl-workspace/sglang`, left as it is: run_docker.sh has put it on the current main in a new container from the daily image (step 2), and a container from a given `IMAGE`, or one you came back to, keeps its code. Uncommitted changes there are reported, since a task's Setup stops on them until you deal with them (in a container from a given `IMAGE`, the image build's packaging changes); `--framework-dir` names a host checkout instead (used as it is, or cloned with its whole history when missing) |
 | evalscope | for `scripts/eval_accuracy.sh` (simple_qa): installed in a venv of its own, `/opt/evalscope` (about a minute and 1.2 GB), and linked as `/usr/local/bin/evalscope`. Not in the image's Python, where it would downgrade `datasets` and `fsspec` below what sglang ships with; an `evalscope` already on `PATH` is kept |
-| sgl-eval | for `scripts/eval_accuracy.sh` (gsm8k, gpqa_diamond): sglang's own accuracy client, at the version the framework's `python/pyproject.toml` pins, installed in a venv of its own, `/opt/sgl-eval`, and linked as `/usr/local/bin/sgl-eval`; one already on `PATH` is kept |
 | node, cursor | node with `--runner` or `--cursor`, for `runtime/run.mjs`: Node.js, the newest LTS unless `INFERPILOT_NODE_VERSION` names one, checked against nodejs.org's checksums, unpacked into `/opt/node/<version>` and linked into `/usr/local/bin`. cursor only with `--cursor`, for `--backend cursor`: the Cursor CLI (`agent`) from its installer. A Node.js 20+ or an `agent` already there is kept. Logging the CLI in is yours, once per container: `NO_OPEN_BROWSER=1 agent login`, then the printed URL in a browser, or `CURSOR_API_KEY` in your keys file on the host |
 | checks | GPUs, sglang, evalscope, API access, `GITHUB_TOKEN`, counting what the keys file sets, and with `--cursor` the Cursor CLI (detect only) |
 
@@ -509,7 +508,6 @@ step 3 too, cloning InferPilot to `/workspace/inferpilot` (pip shows the output 
 | `CLAUDE_VERSION`, `CLAUDE_BIN_DIR` | bootstrap | `latest`, `~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code, bootstrap | unset (`~`): Claude Code's own, where its config lives; the bootstrap writes the first-start answers there |
 | `EVALSCOPE_VERSION`, `EVALSCOPE_VENV` | bootstrap | `latest`, `/opt/evalscope` |
-| `SGL_EVAL_VERSION`, `SGL_EVAL_VENV` | bootstrap | the framework's pin, `/opt/sgl-eval` |
 | `INFERPILOT_CLAUDE`, `INFERPILOT_CURSOR`, `INFERPILOT_RUNNER`, `INFERPILOT_NODE_VERSION` | bootstrap | unset; `1` as `--claude`, `--cursor` and `--runner` (`0` is off; with neither of the first two, Claude Code); the newest Node.js LTS (`22` for the newest 22.x, or an exact `v22.11.0`) |
 | `INFERPILOT_CLAUDE_BIN`, `INFERPILOT_CURSOR_BIN` | `runtime/run.mjs` | `claude`, `agent` on `PATH`: the CLIs that `--backend claude` and `--backend cursor` run |
 | `INFERPILOT_GIT_NAME`, `INFERPILOT_GIT_EMAIL` | `~/.inferpilot_env`, bootstrap | unset; the identity root commits with in the container |
@@ -596,7 +594,9 @@ post, the daily report to share.
 which every container started with `--ipc=host` shares with the host and no other machine sees — and
 frees them at the end of its report. Tasks in different containers run at once on GPUs they do not
 share (HIP numbers, from `scripts/gpu_status.py`, which also says who holds memory on each); a task
-that uses no GPU, such as a scan, takes the whole machine. While another task holds what a new run
+that uses no GPU, such as a scan, takes the whole machine, and so does a task that measures performance
+(a perf task, or one with a `client_script`): throughput, TTFT and TPOT have to be measured with no other
+GPU of the machine in use, since that work slows them down. While another task holds what a new run
 needs, the new run ends at once as `busy` and names the holder. A lock whose run finished, whose runner (`runtime/run.mjs`, seen from the same
 container) is gone, or which wrote nothing in its run directory for twice its longest agent call (12 h
 by default), is taken over by the next run. A run in another container is
@@ -622,7 +622,7 @@ GitHub allows 60 requests an hour and 10 searches a minute per IP address).
 |---|---|
 | `scripts/scan_issues.py` | open AMD issues with linked PRs, replies and the projected 60-day auto-close date |
 | `scripts/scan_ci.py` | the AMD CI on main from its own runs and logs (each failing job: since when, last passed, failed tests, first errors), and the Failure Trackers' clusters |
-| `scripts/eval_accuracy.sh` | accuracy of a running server, the G2 gate (each set at most 1 point below the baseline): gsm8k (all 1319 questions, the default) and gpqa_diamond through sgl-eval; simple_qa (with an LLM judge) and the other sets through evalscope; a change that may lose accuracy runs gsm8k, gpqa_diamond and simple_qa; keys only from the environment |
+| `scripts/eval_accuracy.sh` | accuracy of a running server through evalscope (the bootstrap installs it), the G2 gate (each set at most 1 point below the baseline): gsm8k on all 1319 questions by default; a change that may lose accuracy runs gsm8k, gpqa_diamond and simple_qa (LLM judge); other sets by name; keys only from the environment |
 | `scripts/scan_upstream.py` | merged upstream commits: new CUDA gates, CUDA-first features, new models |
 | `scripts/audit_platform_gates.py` | platform gates to re-check on a new architecture (capability checks true on gfx1250, wave32 assumptions) |
 | `scripts/audit_host_syncs.py` | host-device sync and copy candidates on the hot path (leads for a profile) |

@@ -12,8 +12,8 @@ send what is missing back as work packages, so the branch that is pushed is the 
 - [ ] New tests registered where the repo's CI discovers them (sglang: `test/registered/...` with the
       CI registration helper), not only in a private scratch directory.
 - [ ] Only tests CI runs, the fewest that cover the change: one end-to-end accuracy test at the
-      defaults for a change to outputs (sglang: GSM8K under `test/registered/amd/accuracy/`, scored
-      through sgl-eval, `gsm8k_backend = "sgl_eval"`).
+      defaults for a change to outputs (sglang: GSM8K under `test/registered/amd/accuracy/`, as its
+      `write-sglang-test` skill describes).
       InferPilot's gate oracles and harnesses stay in the run directory.
 - [ ] The smallest diff: code CUDA also runs changes only by addition, behind the switch or a
       module-level platform constant (sglang: `_is_hip = is_hip()` at import); no refactor, rename,

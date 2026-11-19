@@ -86,9 +86,13 @@ export function createRuntime({
   };
 
   // A whole line "Route: ...", after an optional "[tag] ": the same words inside a longer message do not count.
+  // "[inferpilot] container=<name>": the container the task's servers run in (InferPilot on the host),
+  // however the script resolved it, for the runner's cleanup.
   const scriptLog = (msg) => {
     const m = /^(?:\[[^\]\n]+\] )?Route: ([^\n]+)$/.exec(String(msg));
     if (m) route = m[1].split('→').map((s) => s.trim()).filter(Boolean);
+    const box = /^\[inferpilot\] container=(\S+)$/.exec(String(msg));
+    if (box) state.container = box[1];
     log(msg);
   };
 

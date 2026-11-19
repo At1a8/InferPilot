@@ -32,12 +32,9 @@ state warns and leaves it alone.
                 again, keeps its code. Uncommitted changes there are reported, since a task's Setup stops
                 on them; --framework-dir names a host checkout instead, cloned with its whole history if
                 missing
-  evalscope     (root in a container) evalscope for scripts/eval_accuracy.sh (simple_qa), in a venv of its
-                own (/opt/evalscope, linked as /usr/local/bin/evalscope): installed into the image's Python
-                it would downgrade packages sglang ships with. One already on PATH is kept
-  sgl-eval      (root in a container) sgl-eval, sglang's accuracy client, for scripts/eval_accuracy.sh
-                (gsm8k, gpqa_diamond): the version the framework's pyproject pins, in a venv of its own
-                (/opt/sgl-eval, linked as /usr/local/bin/sgl-eval). One already on PATH is kept
+  evalscope     (root in a container) evalscope for scripts/eval_accuracy.sh, in a venv of its own
+                (/opt/evalscope, linked as /usr/local/bin/evalscope): installed into the image's Python it
+                would downgrade packages sglang ships with. One already on PATH is kept
   node          (--runner or --cursor) Node.js 20+ for runtime/run.mjs, InferPilot's own runner: the newest
                 LTS unless INFERPILOT_NODE_VERSION names one, checked against nodejs.org's SHASUMS256.txt and
                 unpacked into /opt/node/<version> (~/.local/node as a user), linked into /usr/local/bin
@@ -68,9 +65,6 @@ Environment (a flag wins over its variable):
   EVALSCOPE_VERSION, EVALSCOPE_VENV
                                 (container) the evalscope version to install (latest), its venv
                                 (/opt/evalscope)
-  SGL_EVAL_VERSION, SGL_EVAL_VENV
-                                (container) the sgl-eval version to install (the framework's pin), its
-                                venv (/opt/sgl-eval)
   INFERPILOT_CLAUDE, INFERPILOT_CURSOR
                                 1 as --claude, 1 as --cursor (0 or unset: not; neither: Claude Code)
   INFERPILOT_RUNNER             1 to run the node step, as --runner does (0 or unset: not)
@@ -131,8 +125,6 @@ IMAGE_SGLANG = "/sgl-workspace/sglang"
 # installed into it, it would change it: evalscope 1.15 downgrades datasets and fsspec below the image's.
 EVALSCOPE_VENV = "/opt/evalscope"
 EVALSCOPE_LINK = "/usr/local/bin/evalscope"
-SGL_EVAL_VENV = "/opt/sgl-eval"
-SGL_EVAL_LINK = "/usr/local/bin/sgl-eval"
 # runtime/run.mjs, InferPilot's own runner, needs Node.js 20+; --cursor installs it and the Cursor CLI.
 NODE_MIN_MAJOR = 20
 NODE_DIST = "https://nodejs.org/dist"
@@ -262,9 +254,6 @@ def settings(env=None, opts=None) -> dict:
         "evalscope_version": env.get("EVALSCOPE_VERSION") or "",
         "evalscope_venv": _expand(env.get("EVALSCOPE_VENV") or EVALSCOPE_VENV, env),
         "evalscope_link": EVALSCOPE_LINK,
-        "sgl_eval_version": env.get("SGL_EVAL_VERSION") or "",
-        "sgl_eval_venv": _expand(env.get("SGL_EVAL_VENV") or SGL_EVAL_VENV, env),
-        "sgl_eval_link": SGL_EVAL_LINK,
         "cursor": cursor,
         "runner": cursor or bool(opts.get("runner")) or _on(env.get("INFERPILOT_RUNNER")),
         "claude": claude,
@@ -740,63 +729,42 @@ def ensure_framework(s: dict) -> tuple[str, str]:
 
 # --- evalscope -------------------------------------------------------------------
 
-def _venv_tool(name: str, var: str, spec: str, venv: str, link: str) -> tuple[str, str]:
-    """A command scripts/eval_accuracy.sh runs (gate G2), in a venv of its own linked onto PATH, so the
-    image's Python stays as the image built it. One already on PATH is kept, wherever it lives; var is
-    the environment variable the script finds it by otherwise."""
-    found = shutil.which(name)
+def ensure_evalscope(s: dict) -> tuple[str, str]:
+    """evalscope for scripts/eval_accuracy.sh (gate G2), in a venv of its own linked onto PATH, so the
+    image's Python stays as the image built it. One already on PATH is kept, wherever it lives."""
+    found = shutil.which("evalscope")
     if found:
-        log("%s: kept (%s)" % (name, found))
+        log("evalscope: kept (%s)" % found)
         return "kept", found
-    exe = os.path.join(venv, "bin", name)
+    venv, link = s["evalscope_venv"], s["evalscope_link"]
+    exe = os.path.join(venv, "bin", "evalscope")
     status = "kept"
     if not os.access(exe, os.X_OK):
-        log("%s: installing %s in a venv of its own, %s (a minute or two)" % (name, spec, venv))
+        spec = "evalscope==%s" % s["evalscope_version"] if s["evalscope_version"] else "evalscope"
+        log("evalscope: installing %s in a venv of its own, %s (a minute or two)" % (spec, venv))
         pip = [os.path.join(venv, "bin", "python"), "-m", "pip", "install", "-q", "--disable-pip-version-check", spec]
         if _run([sys.executable, "-m", "venv", venv]).returncode != 0 or _run(pip).returncode != 0:
-            warn("%s: could not install %s in %s; scripts/eval_accuracy.sh (accuracy, gate G2) needs it. "
-                 "Check the network and run this again" % (name, spec, venv))
+            warn("evalscope: could not install %s in %s; scripts/eval_accuracy.sh (accuracy, gate G2) needs it. "
+                 "Check the network and run this again" % (spec, venv))
             return "failed", venv
         status = "installed"
     if not os.path.lexists(link):
         try:
             os.symlink(exe, link)
         except OSError as e:
-            warn("%s: could not link %s (%s); scripts/eval_accuracy.sh finds it with %s=%s" % (name, link, e, var, exe))
+            warn("evalscope: could not link %s (%s); scripts/eval_accuracy.sh finds it with EVALSCOPE=%s"
+                 % (link, e, exe))
             return "failed", exe
         status = "added" if status == "kept" else status
     elif os.path.realpath(link) != os.path.realpath(exe):
-        warn("%s: %s is another file; left as it is. scripts/eval_accuracy.sh finds this one with %s=%s"
-             % (name, link, var, exe))
+        warn("evalscope: %s is another file; left as it is. scripts/eval_accuracy.sh finds this one with "
+             "EVALSCOPE=%s" % (link, exe))
         return "skipped", exe
-    if not shutil.which(name):
-        warn("%s: %s is not on PATH; scripts/eval_accuracy.sh finds it with %s=%s" % (name, os.path.dirname(link), var, exe))
-    log("%s: %s %s, linked as %s" % (name, status, exe, link))
+    if not shutil.which("evalscope"):
+        warn("evalscope: %s is not on PATH; scripts/eval_accuracy.sh finds it with EVALSCOPE=%s"
+             % (os.path.dirname(link), exe))
+    log("evalscope: %s %s, linked as %s" % (status, exe, link))
     return status, exe
-
-
-def ensure_evalscope(s: dict) -> tuple[str, str]:
-    """evalscope, which scores simple_qa (and the other evalscope sets) in scripts/eval_accuracy.sh."""
-    spec = "evalscope==%s" % s["evalscope_version"] if s["evalscope_version"] else "evalscope"
-    return _venv_tool("evalscope", "EVALSCOPE", spec, s["evalscope_venv"], s["evalscope_link"])
-
-
-def pinned_sgl_eval(framework_dir: str) -> str:
-    """The sgl-eval version the framework's packaging pins (sglang: python/pyproject.toml), or ''."""
-    try:
-        with open(os.path.join(framework_dir, "python", "pyproject.toml"), encoding="utf-8") as f:
-            m = re.search(r"""["']sgl-eval==([\w.]+)["']""", f.read())
-    except OSError:
-        return ""
-    return m.group(1) if m else ""
-
-
-def ensure_sgl_eval(s: dict) -> tuple[str, str]:
-    """sgl-eval, sglang's own accuracy client, which scores gsm8k and gpqa_diamond in
-    scripts/eval_accuracy.sh: the version the framework pins, as sglang's CI runs it."""
-    version = s["sgl_eval_version"] or pinned_sgl_eval(s["framework_dir"] or IMAGE_SGLANG)
-    spec = "sgl-eval==%s" % version if version else "sgl-eval"
-    return _venv_tool("sgl-eval", "SGL_EVAL", spec, s["sgl_eval_venv"], s["sgl_eval_link"])
 
 
 # --- Node.js and the Cursor CLI (--cursor) ---------------------------------------
@@ -1011,7 +979,6 @@ def check_environment(env=None, keys_path: str = "", cursor: bool = False, claud
         ("rocm", _has("rocminfo") or _has("rocm-smi"), "ROCm not detected (rocminfo / rocm-smi): GPU work needs AMD Instinct GPUs with ROCm"),
         ("sglang", _importable("sglang"), "sglang is not importable here: run InferPilot where the framework is installed (the container)"),
         ("evalscope", _has("evalscope"), "evalscope not found: scripts/eval_accuracy.sh (accuracy, gate G2) needs it; the bootstrap installs it as root in a container"),
-        ("sgl-eval", _has("sgl-eval"), "sgl-eval not found: scripts/eval_accuracy.sh scores gsm8k and gpqa_diamond with it; the bootstrap installs it as root in a container"),
         ("node", _has("node"), "Node.js not found: needed only for tests/dry_run.mjs and for running inferpilot.js outside Claude Code"),
         ("api", api_configured(env, _expand("~", env)), "no Claude Code API access in this shell (see the next steps)"),
         ("github_token", bool(env.get("GITHUB_TOKEN") or env.get("GH_TOKEN")),
@@ -1171,7 +1138,7 @@ def main(argv=None) -> int:
             steps += [("git", ensure_git_trust), ("git-identity", ensure_git_identity), ("shell", ensure_shell_env)]
         steps.append(("framework", ensure_framework))
         if container and is_root():
-            steps += [("evalscope", ensure_evalscope), ("sgl-eval", ensure_sgl_eval)]
+            steps.append(("evalscope", ensure_evalscope))
         if s["runner"]:
             steps.append(("node", ensure_node))
         if s["cursor"]:

@@ -25,8 +25,10 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
 0. **One task per GPU set.** Before anything else, choose `RUN_DIR` (step 1: `resume_run_dir`, the
    directory an earlier attempt created, or a new path) and the GPUs: the given `gpu_ids`, or as many as
    the task needs from `python3 <inferpilot_dir>/scripts/gpu_status.py --free <n>` (HIP numbers, the
-   ones `HIP_VISIBLE_DEVICES` takes; rocm-smi's card numbers can differ from them); a task that uses no
-   GPU (scan) takes the whole machine. Take them:
+   ones `HIP_VISIBLE_DEVICES` takes; rocm-smi's card numbers can differ from them). Two kinds of task
+   take the whole machine instead: one that uses no GPU (scan), and one that measures performance (a
+   `perf` task, or any task with a `client_script`), since throughput, TTFT and TPOT move when another
+   GPU of the machine is busy (`perf_evaluation.md`). Take them:
    `python3 <inferpilot_dir>/scripts/run_lock.py acquire --run-dir RUN_DIR --mode <mode> --task "<task>"
    --gpus <ids> --idle-hours <lock_idle_hours>` (no `--gpus` for the whole machine). Exit 1 means another
    InferPilot task holds one of these GPUs, this container or the machine: create nothing
@@ -102,7 +104,7 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
      --files RUN_DIR/accuracy RUN_DIR/bench/baseline`.
    - `feature`, `perf`: accuracy is gsm8k on all 1319 questions, once
      (`API_URL=http://127.0.0.1:<port>/v1 TAG=baseline RESULT_ROOT=RUN_DIR/accuracy
-     bash <inferpilot_dir>/scripts/eval_accuracy.sh`, sgl-eval), and for a change that may lose
+     bash <inferpilot_dir>/scripts/eval_accuracy.sh`, evalscope), and for a change that may lose
      accuracy (`acceptance.md` §1.1) gpqa_diamond and simple_qa as well (`eval_accuracy.sh gsm8k
      gpqa_diamond simple_qa`; simple_qa goes through evalscope and needs the LLM judge, which the script
      probes before any inference); other suites or more runs only when `goal` asks.

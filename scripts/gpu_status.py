@@ -4,6 +4,7 @@
     python3 scripts/gpu_status.py                # every GPU: HIP number, model, arch, PCI bus, memory held and by whom
     python3 scripts/gpu_status.py --free 2       # the first 2 GPUs nothing holds memory on: {"free": "0,2", ...}
     python3 scripts/gpu_status.py --check 0,2    # exit 1 when a process holds memory on one of them
+    python3 scripts/gpu_status.py --check all    # the same for every GPU: before a performance measurement
 
 rocm-smi numbers cards in an order of its own, which on some hosts differs from HIP's (HIP device 1 can be
 rocm-smi's card 3): GPUs chosen by rocm-smi's numbers can be GPUs someone else is using. Here each HIP device
@@ -116,7 +117,7 @@ def status(nodes: list, devices: list, held: dict, min_mib: int = 256, unknown=f
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="GPUs by HIP number and what holds memory on them.")
     ap.add_argument("--free", type=int, default=0, help="name this many GPUs nothing holds memory on")
-    ap.add_argument("--check", default="", help="HIP numbers that must be free, e.g. 0,2")
+    ap.add_argument("--check", default="", help="HIP numbers that must be free, e.g. 0,2, or all")
     ap.add_argument("--min-mib", type=int, default=256)
     ap.add_argument("--kfd", default=KFD, help=argparse.SUPPRESS)
     ap.add_argument("--devices", default="", help=argparse.SUPPRESS)  # the HIP devices as JSON, for tests
@@ -140,7 +141,8 @@ def main(argv=None) -> int:
         out["free"] = ",".join(free)
         rc = 0 if len(free) == a.free else 1
     if a.check:
-        want = {int(x) for x in a.check.split(",") if x.strip()}
+        want = ({r["index"] for r in rows} if a.check.strip() == "all"
+                else {int(x) for x in a.check.split(",") if x.strip()})
         out["busy"] = [r for r in rows if r["index"] in want and r["used_mib"]]
         out["unknown"] = [r["index"] for r in rows if r["index"] in want and r["used_mib"] is None]
         out["missing"] = sorted(want - {r["index"] for r in rows})

@@ -40,8 +40,7 @@ Two rules hold across the dimensions:
   attention, KV compression): gsm8k, gpqa_diamond (198) and simple_qa (4326, LLM-judged)
   (`eval_accuracy.sh gsm8k gpqa_diamond simple_qa`); GSM8K alone can hide the loss. The spec says which
   of the two a change is, before anything is measured.
-- **Harnesses:** gsm8k and gpqa_diamond through sgl-eval, simple_qa through evalscope, all three from
-  `scripts/eval_accuracy.sh`. A goal may ask for more, declared before anything is measured: other sets
+- **Harness:** evalscope for all three, through `scripts/eval_accuracy.sh`. A goal may ask for more, declared before anything is measured: other sets
   (a long-context set for KV compression), more runs or another budget; a determinism task, token
   equality (§1.4).
 - **Capability suites**, for what the change touches: long context (needle-in-a-haystack, G3),

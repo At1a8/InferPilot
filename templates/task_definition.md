@@ -47,9 +47,9 @@ launched and measured the way the user runs the model, not the way an agent gues
   benchmark: InferPilot runs it unchanged and never edits it. If it reads `CONCURRENCY` (a
   space-separated list), the held-out point (`held_out`) can be measured at half the concurrency.
 - **Accuracy** needs no client of the user's: InferPilot's `scripts/eval_accuracy.sh` measures gsm8k
-  (sgl-eval), and for a change that may lose accuracy gpqa_diamond (sgl-eval) and simple_qa (evalscope)
-  as well, each once, and the change passes at most 1 point below the baseline on each; a task that
-  needs other suites or more runs says so in `goal`.
+  through evalscope, and for a change that may lose accuracy gpqa_diamond and simple_qa as well, each
+  once, and the change passes at most 1 point below the baseline on each; a task that needs other
+  suites or more runs says so in `goal`.
 
 ```bash
 # server.sh

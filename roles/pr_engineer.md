@@ -28,8 +28,8 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
      finds goes in `leaks`.
    - **Tests the PR carries:** only tests the repository's CI runs, the fewest that cover the change: a
      change to outputs carries one end-to-end accuracy test at the feature's defaults (sglang: GSM8K
-     under `test/registered/amd/accuracy/...` with `register_amd_ci`, scored through sgl-eval:
-     `GSM8KMixin` with `gsm8k_backend = "sgl_eval"`, as its `write-sglang-test` skill says). The
+     under `test/registered/amd/accuracy/...` with `register_amd_ci`, as its `write-sglang-test` skill
+     describes). The
      oracles and harnesses of InferPilot's gates (G1, G3–G5) stay in `RUN_DIR/tests`: a work package
      takes them off the branch.
    - **The smallest diff:** every hunk is needed by the change. Code CUDA also runs changes only by

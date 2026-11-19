@@ -1517,6 +1517,7 @@ async function runScan() {
 const RUNNERS = { feature: runFeature, issue: runIssue, ci: runCi, perf: runPerf, scan: runScan };
 log(`[inferpilot] mode=${MODE} inferpilot_dir=${INFERPILOT} framework=${C.framework}${C.framework_dir ? ` (${C.framework_dir})` : ''}`);
 if (ROUTES[MODE]) logRoute(ROUTES[MODE]);
+if (C.container) log(`[inferpilot] container=${C.container}`); // the runner stops what the run started there
 try {
   return await RUNNERS[MODE]();
 } catch (e) {
