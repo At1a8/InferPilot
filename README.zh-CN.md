@@ -361,7 +361,8 @@ python3 scripts/run_lock.py release --force   # 那个运行已经中断时，�
 |---|---|
 | `scripts/scan_issues.py` | 开放的 AMD issue，附关联 PR、回复情况和预计的 60 天自动关闭日期 |
 | `scripts/scan_ci.py` | 从 main 上 AMD CI 自己的运行和日志读出现状（每个失败 job：从何时开始失败、上次通过的时间、失败的测试、第一条错误），以及 Failure Tracker 的失败簇 |
-| `scripts/eval_accuracy.sh` | 用 evalscope（bootstrap 会安装）测一个正在运行的 server 的精度：默认 GSM8K 全部 1319 题跑一遍（有损特性再加 gpqa_diamond 和 simple_qa），其他测试集按名字指定；key 只从环境变量读取 |
+| `scripts/eval_accuracy.sh` | 测一个正在运行的 server 的精度：默认通过 `scripts/few_shot_gsm8k.py` 跑一遍 5-shot GSM8K 全部 1319 题（G2 门禁，比基线低不超过 1 个点）；其他测试集按名字指定，走 evalscope（bootstrap 会安装；有损特性的目标要求时加 gpqa_diamond 和 simple_qa）；key 只从环境变量读取 |
+| `scripts/few_shot_gsm8k.py` | 对 OpenAI 兼容的 server 跑 5-shot GSM8K，用 sglang 的 few-shot prompt，贪心；只依赖标准库 |
 | `scripts/scan_upstream.py` | 已合入的上游提交：新增的 CUDA 门控、CUDA 优先的特性、新模型 |
 | `scripts/audit_platform_gates.py` | 换到新架构时需要重新检查的平台门控（在 gfx1250 上为真的能力判断、wave32 假设） |
 | `scripts/audit_host_syncs.py` | 热路径上的 host-device 同步和拷贝候选点（供 profile 参考的线索） |

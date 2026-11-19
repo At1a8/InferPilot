@@ -1,12 +1,14 @@
 #!/bin/bash
-# Accuracy of one running server with evalscope: InferPilot's G2 harness.
+# Accuracy of one running server: InferPilot's G2 harness.
 #
-#   bash scripts/eval_accuracy.sh                        # GSM8K, all 1319 questions, once
-#   bash scripts/eval_accuracy.sh gsm8k gpqa_diamond     # several sets, one after the other
+#   bash scripts/eval_accuracy.sh                        # 5-shot GSM8K, all 1319 questions, once: the G2 gate
+#   bash scripts/eval_accuracy.sh gsm8k_5shot gpqa_diamond   # several sets, one after the other
 #   API_URL=http://127.0.0.1:30010/v1 TAG=baseline RESULT_ROOT=<run dir>/accuracy bash scripts/eval_accuracy.sh
 #
-# Sets: gsm8k (1319, rule-graded), gpqa_diamond (198), mmlu_pro (12032), simple_qa (4326, LLM judge),
-# hle (the 2158 text-only questions, LLM judge), longbench_v2 (503; LONGBENCH_LOCAL_PATH for a local copy).
+# Sets: gsm8k_5shot (1319, sglang's few-shot prompt, greedy, through scripts/few_shot_gsm8k.py), and through
+# evalscope: gsm8k (1319, chat, thinking on), gpqa_diamond (198), mmlu_pro (12032), simple_qa (4326, LLM
+# judge), hle (the 2158 text-only questions, LLM judge), longbench_v2 (503; LONGBENCH_LOCAL_PATH for a
+# local copy). The evalscope settings below do not apply to gsm8k_5shot.
 #
 # Every key comes from the environment (InferPilot's ~/.inferpilot_env); none is written here.
 #   API_URL           the server's OpenAI endpoint (default http://127.0.0.1:30000/v1)
@@ -34,7 +36,8 @@
 # Exit status: 0 when every set produced a report, 1 otherwise.
 set -u
 
-[ $# -eq 0 ] && set -- gsm8k
+[ $# -eq 0 ] && set -- gsm8k_5shot
+HERE=$(cd "$(dirname "$0")" && pwd)
 
 API_URL=${API_URL:-http://127.0.0.1:30000/v1}
 TAG=${TAG:-eval}
@@ -63,6 +66,7 @@ dataset_profile() {  # <set> -> DS_BATCH, DS_ARGS, DS_TOTAL, DS_JUDGE
     DS_TOTAL=0
     DS_JUDGE=0
     case "$1" in
+        gsm8k_5shot)  DS_TOTAL=1319; DS_BATCH=128 ;;
         gsm8k)        DS_TOTAL=1319 ;;
         gpqa_diamond) DS_TOTAL=198
                       [ "${DATASET_HUB}" = huggingface ] && \
@@ -152,6 +156,25 @@ run_one() {  # <set>
     work_dir="${RESULT_ROOT}/${TAG}_${ds}"
     log="${RESULT_ROOT}/${TAG}_${ds}.log"
     mkdir -p "${RESULT_ROOT}"
+
+    if [ "${ds}" = gsm8k_5shot ]; then
+        [ -n "${LIMIT:-}" ] && limit_arg=(--limit "${LIMIT}")
+        echo "== ${ds}: model=${MODEL} parallel=${batch}; log ${log}"
+        python3 "${HERE}/few_shot_gsm8k.py" --api-url "${API_URL}" --model "${MODEL}" --tag "${TAG}" \
+            --result-root "${RESULT_ROOT}" --parallel "${batch}" "${limit_arg[@]}" > "${log}" 2>&1
+        rc=$?
+        line=$(grep '^gsm8k_5shot: ' "${log}" | tail -1)
+        if [ "${rc}" != 0 ] || [ -z "${line}" ]; then
+            echo "${ds}: failed (exit ${rc}); the end of ${log}:" >&2
+            tail -8 "${log}" | cut -c1-200 >&2
+            SUMMARY="${SUMMARY}\n  ${ds}: failed (exit ${rc})"
+            FAILED=1
+            return
+        fi
+        echo "${line}"
+        SUMMARY="${SUMMARY}\n  ${line}"
+        return
+    fi
 
     if [ "${DS_JUDGE}" = 1 ] && [ "${JUDGE_CODE}" != 200 ]; then
         if [ -z "${JUDGE_KEY}" ]; then

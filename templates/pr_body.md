@@ -28,9 +28,9 @@ Examples: [Fix] attention: Fix KV cache indexing; [Perf] [AMD] flash-attn: Optim
 
 <!-- If this pull request affects model outputs (e.g., changes to the kernel or model forward code), provide accuracy test results. -->
 
-<GSM8K on all 1319 questions with the feature at its defaults: model, hardware, TP, harness and sampling in one or two sentences.>
+<5-shot GSM8K on all 1319 questions with the feature at its defaults: model, hardware, TP, harness and sampling in one or two sentences.>
 
-| GSM8K (1319 questions) | Baseline | <feature> (defaults) |
+| 5-shot GSM8K (1319 questions) | Baseline | <feature> (defaults) |
 |---|---:|---:|
 | Accuracy | | |
 

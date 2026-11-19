@@ -599,7 +599,8 @@ GitHub allows 60 requests an hour and 10 searches a minute per IP address).
 |---|---|
 | `scripts/scan_issues.py` | open AMD issues with linked PRs, replies and the projected 60-day auto-close date |
 | `scripts/scan_ci.py` | the AMD CI on main from its own runs and logs (each failing job: since when, last passed, failed tests, first errors), and the Failure Trackers' clusters |
-| `scripts/eval_accuracy.sh` | accuracy of a running server with evalscope (the bootstrap installs it): GSM8K on all 1319 questions, once, by default (a lossy feature adds gpqa_diamond and simple_qa); other sets by name; keys only from the environment |
+| `scripts/eval_accuracy.sh` | accuracy of a running server: by default 5-shot GSM8K on all 1319 questions, once, through `scripts/few_shot_gsm8k.py` (the G2 gate, at most 1 point below the baseline); other sets by name through evalscope, which the bootstrap installs (gpqa_diamond and simple_qa when a lossy feature's goal asks); keys only from the environment |
+| `scripts/few_shot_gsm8k.py` | 5-shot GSM8K against an OpenAI-compatible server, sglang's few-shot prompt, greedy; standard library only |
 | `scripts/scan_upstream.py` | merged upstream commits: new CUDA gates, CUDA-first features, new models |
 | `scripts/audit_platform_gates.py` | platform gates to re-check on a new architecture (capability checks true on gfx1250, wave32 assumptions) |
 | `scripts/audit_host_syncs.py` | host-device sync and copy candidates on the hot path (leads for a profile) |

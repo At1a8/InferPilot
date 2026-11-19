@@ -42,7 +42,7 @@ footnotes, no definitions of your own shorthand. Read two or three merged PRs of
   say how the diff makes sure of it (an `is_hip()` gate, a ROCm-only file, a startup rejection on other
   platforms, new arguments that stay `None` on CUDA). Check it in the diff first: every changed line that
   CUDA also runs must sit behind such a gate. A limitation is a sentence here, not a new section.
-- **Accuracy Tests:** GSM8K on all 1319 questions with the feature at its default settings, next to the
+- **Accuracy Tests:** 5-shot GSM8K on all 1319 questions with the feature at its default settings, next to the
   baseline measured with the same harness; name the model, hardware, TP, harness and sampling. A loss the
   validation found elsewhere gets one sentence; other suites only when the change targets them (NIAH for
   a long-context feature).

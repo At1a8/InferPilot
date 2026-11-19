@@ -30,9 +30,9 @@
 
 | Gate | Suite | Threshold (relative to baseline in the same pattern) |
 |---|---|---|
-| G0 feature off | | identical to baseline |
+| G0 feature off | | the baseline's tests pass; accuracy and throughput as the baseline's |
 | G1 unit / oracle | | all cases pass, including self-check mode |
-| G2 accuracy | | e.g. GSM8K within 0.01 |
+| G2 accuracy | 5-shot GSM8K, 1319 questions | at most 1 point below the baseline |
 | G3 long context | | e.g. NIAH pass rate within baseline spread, feature engaged |
 | G4 stability | | no crash; failure taxonomy not worse than baseline |
 | G5 performance | | e.g. >= +X% output tok/s at equal HBM on <workload> |
