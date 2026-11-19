@@ -119,7 +119,15 @@ Return:
 ## PHASE=spec (feature)
 
 1. Identify the source of truth (upstream PR, design or paper) and its commit; list unmerged
-   dependencies and the commits to cherry-pick.
+   dependencies and the commits to cherry-pick. Write down the benchmark it reports: data sets, input
+   and output lengths, concurrency, sampling, thinking on or off, hardware and its numbers (a port's
+   first claim is that gain, reproduced here).
+   - **Feasibility.** Read the documented range of every model the feature uses (model cards and
+     configs: the context a draft model was trained at, `max_position_embeddings`, the checkpoint's
+     precision) and the range the source was tested on. A task workload outside it goes in the spec's
+     Feasibility section with what to expect (a speculative draft trained on 1k-token sequences
+     accepts little at 8k, so the feature slows that workload down), and in `notes`: the user decides
+     whether that workload stays a target.
 2. Select feature skills: `python3 <inferpilot_dir>/scripts/find_skill.py "<task title, request, goal>"`
    lists the candidates by tag; keep those whose `match` fits (`feature_skills/README.md`) and read a
    matching skill in full. A near match is the start of a port, not a plan to reuse blindly.
@@ -128,7 +136,9 @@ Return:
    acceptance criteria per gate with a named suite and a threshold relative to the same-pattern
    baseline, non-goals, unsupported combinations (each with a startup rejection), constraints, time-box.
 4. `perf_claim`: the measurable performance benefit the feature promises (workload, budget, metric,
-   size), or empty when it claims none. Performance is measured on the task's workload and the guard
+   size), or empty when it claims none. For a port, the first claim is the source's own benchmark
+   (step 1), measured with a client that reproduces it; the task's workload, when it has one, comes after
+   and is judged with the Feasibility section in view. Performance is measured on these and the guard
    workloads its `goal` names, nothing more by default: with `guards` on, add guard workloads of your
    own (`perf_evaluation.md` §2); with `sweep` on, points beyond the workload's own (more concurrencies
    or lengths, `acceptance.md` §1); with `held_out` on, the claim also names its held-out operating

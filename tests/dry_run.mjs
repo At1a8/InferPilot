@@ -293,6 +293,18 @@ const scenarios = [
     check(r.result.status === 'blocked' && r.result.stopped_at === 'Verify', `status ${r.result.status} at ${r.result.stopped_at}`);
     check(r.keys.filter((k) => k === 'verify_engineer:verify').length === 3, 'verify runs max_investigate_rounds + 1 times');
   }],
+  ['feature: a report-only item that misses is reported, never investigated', async () => {
+    const r = await run({ mode: 'feature', task: 't' }, {
+      'verify_engineer:verify': () => ({ all_pass: false, failures: [{ gate: 'ACC-3 simple_qa', blocking: false }] }),
+    });
+    check(!r.keys.includes('investigator:investigate'), 'no investigation for a report-only miss');
+    check(r.result.phases.some((p) => p.phase === 'Verify' && p.verdict === 'pass' && /report-only items missed: ACC-3 simple_qa/.test(p.summary)),
+      'the miss is in the Verify note');
+    const mixed = await run({ mode: 'feature', task: 't', max_investigate_rounds: 0 }, {
+      'verify_engineer:verify': () => ({ all_pass: false, failures: [{ gate: 'G2' }, { gate: 'ACC-3', blocking: false }] }),
+    });
+    check(mixed.result.status === 'blocked' && mixed.result.stopped_at === 'Verify', `a blocking miss still fails: ${mixed.result.status}`);
+  }],
   ['feature: with auto_approve_design false, L3 waits for a human-approved design', async () => {
     const r = await run({ mode: 'feature', task: 't', auto_approve_design: false }, {
       'analyst:recon': () => ({ design_path: `${RUN}/design.md`, unmapped: [], level: 'L3', gap_type: 'framework-only' }),

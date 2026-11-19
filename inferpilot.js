@@ -620,7 +620,8 @@ const ROLLBACK = S({ wp: str, reset_to: str, clean: bool }, ['reset_to', 'clean'
 const VERIFY = S({
   all_pass: bool,
   gates: obj,
-  failures: arr(S({ gate: str, failure_class: str, counts: str, evidence: str }, ['gate'])),
+  // blocking false: a report-only item of the acceptance matrix, which is reported and never investigated
+  failures: arr(S({ gate: str, failure_class: str, counts: str, evidence: str, blocking: bool }, ['gate'])),
   ledger_path: str,
   summary: str,
 }, ['all_pass', 'failures']);
@@ -964,11 +965,14 @@ async function verifyLoop(extraGates) {
       return { ok: false, reason: 'no verification result' };
     }
     if (v.ledger_path) C.ledger_path = v.ledger_path;
-    if (v.all_pass === true) {
-      note('Verify', 'pass', v.summary || 'all gates pass');
+    const failures = v.failures || [];
+    const blocking = failures.filter((f) => f.blocking !== false);
+    if (v.all_pass === true || (failures.length && !blocking.length)) {
+      const missed = failures.filter((f) => f.blocking === false).map((f) => f.gate).join(', ');
+      note('Verify', 'pass', `${v.summary || 'all blocking gates pass'}${missed ? `; report-only items missed: ${missed}` : ''}`);
       return { ok: true };
     }
-    const failing = (v.failures || []).map((f) => `${f.gate}${f.failure_class ? `:${f.failure_class}` : ''}`).join(', ');
+    const failing = blocking.map((f) => `${f.gate}${f.failure_class ? `:${f.failure_class}` : ''}`).join(', ');
     note('Verify', 'fail', failing || v.summary || 'gates failed');
     if (round >= MAX_INVESTIGATE) return { ok: false, reason: `investigation budget exhausted (${failing})` };
 

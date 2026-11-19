@@ -8,6 +8,15 @@
 - Upstream design: <PR / paper / design doc link>, at commit <sha>
 - Dependencies that are not merged yet: <PR links, commits to cherry-pick>
 - Matching feature skill, if any: `knowledge/feature_skills/<id>/SKILL.md` (status: <validated / stale>)
+- Benchmark the source reports: <data sets, input / output lengths, concurrency, sampling, thinking,
+  hardware, and its numbers>; reproducing that gain here is the first performance claim
+
+## Feasibility
+
+<!-- The documented range of each model the feature uses (model card, config: training context of a
+     draft model, max_position_embeddings, checkpoint precision) and the range the source was tested
+     on. A task workload outside it: what to expect there, and that the user decides whether it stays
+     a target. -->
 
 ## Target
 

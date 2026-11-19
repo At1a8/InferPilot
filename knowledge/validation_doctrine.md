@@ -21,6 +21,11 @@ Which of these gates a task needs, how its acceptance criteria are written and w
 
 Notes per gate:
 
+- **Cheap gates first.** G0 and G2 (5-shot GSM8K, about a minute for an 8B model) run before G3 and
+  G4, and a blocking failure ends the round: an hour of long-context runs on a build that already fails
+  accuracy is wasted. Suites of hours (thinking-on sets, simple_qa) run once, after every other gate
+  passed. Each gate has a time cap (`roles/verify_engineer.md`); a report-only item that misses is
+  reported, never investigated.
 - **G2 does not prove a long-context feature works.** Short prompts may never engage it (HiSparse V2
   only admits requests longer than its 5120-token reservation; GSM8K prompts are ~1k tokens). G2 is a
   regression check for the non-feature path; G3 must exercise the feature path.
