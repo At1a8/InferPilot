@@ -30,3 +30,36 @@ skills:
     platforms: [rocm-gfx950]
   depends_on: [vllm-project/vllm#53987, vllm-project/vllm#66593]
   validation_status: validated     # gates G0, G1, G2, G5; G3 / G4 not claimed
+- id: dsv41-prefill-cp
+  file: dsv41-prefill-cp/SKILL.md
+  tags: [prefill context parallel, prefill context parallelism, prefill cp, pcp, context parallel, context parallelism, interleave cp, round robin split, long context prefill, decoder swa bounded replay]
+  match:
+    framework: sglang
+    framework_ref: ec93a369b6
+    feature: prefill_context_parallel
+    model_arch: [deepseek_v4]      # DeepSeek-V4.1-Flash on the dsv4 HIP backend; DeepSeek-V4 is dsv4-prefill-cp
+    platforms: [rocm-gfx950]
+  depends_on: [sgl-project/sglang#27928]
+  validation_status: validated     # gates G2, G5; G0, G1, G3 not claimed, G4 known to fail (#44730)
+- id: dsv4-prefill-cp
+  file: dsv4-prefill-cp/SKILL.md
+  tags: [prefill context parallel, prefill context parallelism, prefill cp, pcp, context parallel, context parallelism, interleave cp, round robin split, long context prefill, unified kv, unified kv attention]
+  match:
+    framework: sglang
+    framework_ref: a362ba9da3
+    feature: prefill_context_parallel
+    model_arch: [deepseek_v4]      # DeepSeek-V4 unified_kv attention, validated on V4-Pro
+    platforms: [rocm-gfx950]
+  depends_on: []
+  validation_status: stale         # G2 (CP arm only) and G5 at the merge; main has moved the hook points
+- id: qwen35-decode-cp
+  file: qwen35-decode-cp/SKILL.md
+  tags: [decode context parallel, decode context parallelism, dcp, context parallel, context parallelism, helix parallelism, long context decode]
+  match:
+    framework: sglang
+    framework_ref: b2c8f7a22e
+    feature: decode_context_parallel
+    model_arch: [qwen3_5]          # Qwen3.5 full-attention layers on the Triton backend
+    platforms: [rocm-gfx950]
+  depends_on: []
+  validation_status: stale         # G0, G2, G5 at the merge; main has moved DCP and changed its GQA layout (#32858)
