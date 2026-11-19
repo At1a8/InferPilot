@@ -89,6 +89,13 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
 4. **Baseline.**
    - First, one discarded warm-up per GPU set: a launch and a short run of the client, so the first
      launch in a fresh container, which compiles kernels and is slower, is not measured.
+   - **A baseline measured before is reused.** `python3 <inferpilot_dir>/scripts/baseline_cache.py lookup
+     --cache <exp_root>/baseline_cache --commit <base sha> --model <model_path> --server-script
+     <server_script> --client-script <client_script> --workload '<workload>' --gpu <gfx arch> --image
+     <image> --extra 'gpus=<n>'`. A hit: copy its files into `RUN_DIR` (`accuracy/`, `bench/baseline/`),
+     record the run they came from in the ledger, and skip the measurements below; the warm-up launch
+     confirms the environment. A miss: measure, then `store` with the same key, `--run-dir RUN_DIR
+     --files RUN_DIR/accuracy RUN_DIR/bench/baseline`.
    - `feature`, `perf`: accuracy is 5-shot GSM8K on all 1319 questions, once
      (`API_URL=http://127.0.0.1:<port>/v1 TAG=baseline RESULT_ROOT=RUN_DIR/accuracy
      bash <inferpilot_dir>/scripts/eval_accuracy.sh`, about a minute for an 8B model); other suites or
