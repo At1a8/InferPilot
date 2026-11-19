@@ -322,9 +322,9 @@ class EvalAccuracyTest(unittest.TestCase):
         calls = self.sgl_calls()
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0].startswith("run gsm8k --base-url http://fake:30010/v1 --model fake-model "), calls[0])
-        for arg in ("--n-repeats 1", "--thinking", "--chat-template-kwarg enable_thinking=true", "--reasoning-effort max"):
-            self.assertIn(arg, calls[0])
-        self.assertNotIn("--max-tokens", calls[0], "no output cap unless MAX_TOKENS is given")
+        self.assertIn("--num-threads 128 --max-tokens 32768 --n-repeats 1", calls[0], "sglang's reference command")
+        for arg in ("--thinking", "--no-thinking", "--reasoning-effort", "--chat-template-kwarg"):
+            self.assertNotIn(arg, calls[0], "thinking is the benchmark's own unless given")
         summary = (self.tmp / "results" / "summary.txt").read_text()
         self.assertIn("eval gsm8k: accept_length=[4.0] aggregate={'score': 0.95, 'num': 1319,", summary)
 
@@ -546,6 +546,30 @@ class RunLockTest(unittest.TestCase):
         self.assertEqual(take("c", [1, 4], "box3")["status"], "acquired")
         self.assertEqual(len(run_lock.status(self.lock)["holders"]), 2)
 
+    @unittest.skipUnless(os.path.exists("/proc/self/stat"), "needs /proc")
+    def test_a_resumed_run_takes_its_run_directory_over_once_the_old_runner_is_gone(self):
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "999999999-1"}):  # a runner that is gone
+            run_lock.acquire(self.lock, self.a, gpus=[0], now=1000.0)
+        with open("/proc/self/stat") as f:
+            stat = f.read()
+        me = "%d-%s" % (os.getpid(), stat[stat.rindex(")") + 2:].split(" ")[19])
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": me}):
+            took = run_lock.acquire(self.lock, self.a, gpus=[1], now=1100.0)
+            self.assertEqual((took["status"], took["holder"]["run_tag"], took["holder"]["gpus"]), ("acquired", me, [1]))
+            self.assertEqual(took["took_over"]["reason"], "its runner is gone")
+            self.assertEqual(run_lock.acquire(self.lock, self.a, now=1200.0)["holder"]["run_tag"], me, "the same runner again")
+        self.assertEqual(run_lock.release(self.lock, run_tag=me)["status"], "released")
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": me}):
+            run_lock.acquire(self.lock, self.a, now=1000.0)
+        os.utime(self.a, (1000.0, 1000.0))
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "1-1"}):
+            self.assertEqual(run_lock.acquire(self.lock, self.a, now=1100.0)["status"], "busy", "its runner still works")
+
+    def test_a_runner_in_another_pid_namespace_counts_as_running(self):
+        self.assertTrue(run_lock.runner_alive("999999999-1-1"))
+        self.assertFalse(run_lock.runner_alive("999999999-1"))
+        self.assertFalse(run_lock.runner_alive("999999999-1-%s" % run_lock.pid_ns().strip("pid:[]")))
+
     def test_a_lock_file_from_before_gpu_sets_holds_the_machine(self):
         Path(self.lock).write_text(json.dumps({"run_dir": self.a, "started": time.time()}))
         os.chmod(self.lock, 0o666)
@@ -586,7 +610,7 @@ class BaselineCacheTest(unittest.TestCase):
 
     def key(self, **over):
         a = {"commit": "a" * 40, "model": "Qwen/Qwen3-8B", "server_script": str(self.server), "client_script": "",
-             "workload": "gsm8k 5-shot", "gpu": "gfx950", "image": "", "extra": "tp=1", **over}
+             "workload": "vllm-49406 c1", "sets": "gsm8k", "gpu": "gfx950", "image": "", "extra": "tp=1", **over}
         return baseline_cache.key_of(argparse.Namespace(**a))
 
     def test_a_baseline_is_found_for_the_same_key_only(self):
@@ -596,6 +620,9 @@ class BaselineCacheTest(unittest.TestCase):
         self.assertIn("0.91", (Path(hit["dir"]) / "accuracy" / "summary.txt").read_text())
         self.assertEqual(hit["run_dir"], str(self.run_dir))
         self.assertFalse(baseline_cache.lookup(self.cache, self.key(gpu="gfx942"), 7, now=2000.0)["hit"])
+        lossy = self.key(sets="gsm8k gpqa_diamond simple_qa")
+        self.assertFalse(baseline_cache.lookup(self.cache, lossy, 7, now=2000.0)["hit"], "a gsm8k-only baseline")
+        self.assertEqual(lossy, self.key(sets="simple_qa gsm8k gpqa_diamond"), "the order of the sets does not matter")
         self.server.write_text("python -m sglang.launch_server --tp 2\n")  # an edited script is another key
         self.assertFalse(baseline_cache.lookup(self.cache, self.key(), 7, now=2000.0)["hit"])
 
@@ -653,6 +680,15 @@ class GpuStatusTest(unittest.TestCase):
         self.assertEqual((rc, [r["index"] for r in out["busy"]]), (1, [0]))
         self.assertEqual(self.run_main("--check", "1,2")[0], 0)
         self.assertEqual(self.run_main("--check", "7")[1]["missing"], [7])
+
+    def test_a_gpu_no_kfd_node_matches_is_never_free_and_no_torch_is_an_error(self):
+        self.devices.write_text(json.dumps([{"index": 0, "bus": 0x65}, {"index": 1, "bus": 0x99}]))
+        rc, out = self.run_main("--free", "2")
+        self.assertEqual((rc, out["free"]), (1, "0"))
+        rc, out = self.run_main("--check", "1")
+        self.assertEqual((rc, out["unknown"]), (1, [1]))
+        with mock.patch.object(gpu_status, "hip_devices", return_value=None), redirect_stdout(io.StringIO()):
+            self.assertEqual(gpu_status.main(["--kfd", str(self.kfd), "--free", "1"]), 2)
 
 
 class LeakScanTest(unittest.TestCase):

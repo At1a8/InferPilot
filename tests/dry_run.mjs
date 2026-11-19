@@ -300,10 +300,13 @@ const scenarios = [
     check(!r.keys.includes('investigator:investigate'), 'no investigation for a report-only miss');
     check(r.result.phases.some((p) => p.phase === 'Verify' && p.verdict === 'pass' && /report-only items missed: ACC-3 simple_qa/.test(p.summary)),
       'the miss is in the Verify note');
-    const mixed = await run({ mode: 'feature', task: 't', max_investigate_rounds: 0 }, {
+    const mixed = await run({ mode: 'feature', task: 't', max_investigate_rounds: 1 }, {
       'verify_engineer:verify': () => ({ all_pass: false, failures: [{ gate: 'G2' }, { gate: 'ACC-3', blocking: false }] }),
+      'investigator:investigate': () => ({ verdict: 'inconclusive' }),
     });
     check(mixed.result.status === 'blocked' && mixed.result.stopped_at === 'Verify', `a blocking miss still fails: ${mixed.result.status}`);
+    const inv = mixed.calls.find((c) => c.key === 'investigator:investigate');
+    check(inv && eqList(inv.ins.failures.map((f) => f.gate), ['G2']), 'the investigator gets the blocking failures only');
   }],
   ['feature: with auto_approve_design false, L3 waits for a human-approved design', async () => {
     const r = await run({ mode: 'feature', task: 't', auto_approve_design: false }, {
@@ -451,8 +454,9 @@ const scenarios = [
     const r = await run({ mode: 'ci', task: 'c' }, {
       'pr_engineer:pr': (ins, n) => (n === 1
         ? { branch: 'inferpilot/task', lint_pass: false, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md`,
-          work_packages: [WP('H1', { goal: 'register the new test in test/registered' })] }
-        : { branch: 'inferpilot/task', lint_pass: true, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md` }),
+          leaks: [], launch_checked: true, work_packages: [WP('H1', { goal: 'register the new test in test/registered' })] }
+        : { branch: 'inferpilot/task', lint_pass: true, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md`,
+          leaks: [], launch_checked: true }),
     });
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
     const afterPr = r.phases.slice(r.phases.indexOf('PR'));
@@ -460,11 +464,12 @@ const scenarios = [
     check(r.result.done.some((d) => d.wp === 'H1'), 'the hygiene package was verified');
     const changed = await run({ mode: 'ci', task: 'c' }, {
       'pr_engineer:pr': () => ({ branch: 'inferpilot/task', lint_pass: true, feature_off_final: true, content_unchanged: false,
-        pr_body_path: `${RUN}/pr_body.md`, work_packages: [WP('H2')] }),
+        pr_body_path: `${RUN}/pr_body.md`, leaks: [], launch_checked: true, work_packages: [WP('H2')] }),
     });
     check(changed.result.status === 'blocked' && changed.result.stopped_at === 'PR', `a branch that changed after review: ${changed.result.status}`);
     check(changed.keys.filter((k) => k === 'implementer:implement').length === 1, 'no loop on a branch that changed after review');
-    const clean = { branch: 'inferpilot/task', lint_pass: true, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md` };
+    const clean = { branch: 'inferpilot/task', lint_pass: true, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md`,
+      leaks: [], launch_checked: true };
     const leaky = await run({ mode: 'ci', task: 'c' }, {
       'pr_engineer:pr': (ins, n) => (n === 1
         ? { ...clean, leaks: ['test/x.py:12 /home/alice/model'], work_packages: [WP('H3', { goal: 'take the local path out of the test' })] }
@@ -493,14 +498,21 @@ const scenarios = [
     const moved = await run({ mode: 'feature', task: 't' }, undefined, { control: () => ({ stop_after: 'Spec' }) });
     check(moved.result.status === 'stopped' && moved.result.stopped_at === 'Spec', `moved: ${moved.result.status} at ${moved.result.stopped_at}`);
     check(moved.lines.some((l) => l === '[inferpilot] control: stop_after=spec'), 'the change is logged');
-    let reads = 0;
-    const now = await run({ mode: 'issue', task: 'i' }, undefined, { control: () => (++reads > 1 ? { stop_after: 'now' } : {}) });
-    check(now.result.status === 'stopped' && now.result.stopped_at === 'Triage', `now: ${now.result.status} at ${now.result.stopped_at}`);
+    let verifying = false;
+    const now = await run({ mode: 'feature', task: 't' }, {
+      'verify_engineer:verify': () => {
+        verifying = true;
+        return { all_pass: false, failures: [{ gate: 'G2' }] };
+      },
+    }, { control: () => (verifying ? { stop_after: 'now' } : {}) });
+    check(now.result.status === 'stopped' && now.result.stopped_at === 'Verify', `now: ${now.result.status} at ${now.result.stopped_at}`);
+    check(!now.keys.includes('investigator:investigate') && now.keys.includes('director:report'),
+      'now during a failing Verify stops before Investigate, and the report still runs');
     const cleared = await run({ mode: 'issue', task: 'i', stop_after: 'Setup' }, undefined, { control: () => ({ stop_after: '' }) });
     check(cleared.result.stopped_at !== 'Setup' && cleared.phases.includes('Triage'), `cleared: ${cleared.result.status}`);
-    const bad = await run({ mode: 'ci', task: 'c' }, undefined, { control: () => ({ stop_after: 'Performance' }) });
-    check(bad.lines.some((l) => /stop_after=performance is not a phase of mode=ci; it is ignored/.test(l)) && bad.result.status !== 'stopped',
-      `a phase the mode lacks is ignored: ${bad.result.status}`);
+    const bad = await run({ mode: 'ci', task: 'c', stop_after: 'Verify' }, undefined, { control: () => ({ stop_after: 'Performance' }) });
+    check(bad.lines.some((l) => /stop_after=performance is not a phase of mode=ci; the stop stays verify/.test(l))
+      && bad.result.status === 'stopped' && bad.result.stopped_at === 'Verify', `a phase the mode lacks keeps the stop: ${bad.result.stopped_at}`);
   }],
   ['feature: a work package that never passes is rolled back', async () => {
     const r = await run({ mode: 'feature', task: 't', max_fix_rounds: 1 }, {

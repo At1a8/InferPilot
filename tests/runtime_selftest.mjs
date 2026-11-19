@@ -4,7 +4,7 @@
 //   node tests/runtime_selftest.mjs
 import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { extractJson, validate } from '../runtime/schema.mjs';
@@ -283,6 +283,12 @@ return { status: r.ok ? 'done' : 'no', n: args.n };`);
     check(readFileSync(path.join(dir, '001-role_x.prompt.md'), 'utf8') === 'the prompt', 'the prompt is kept');
     check(readFileSync(stream, 'utf8').split('\n').filter(Boolean).length === 3, 'every event is kept');
     check(readFileSync(path.join(dir, '001-role_x.stderr.log'), 'utf8').includes('to-stderr'), 'stderr is kept');
+    const broken = path.join(TMP, 'agent-logs-broken');
+    mkdirSync(path.join(broken, '001-x.jsonl'), { recursive: true }); // the stream cannot open a directory
+    const b2 = cliBackend('fake', { preset: preset(cli, 'arg', { events: BACKENDS.cursor.events }), logDir: broken });
+    const r2 = await b2.runAgent({ prompt: 'p', label: 'x' });
+    await sleep(50);
+    check(r2.text === 'done', 'a log that cannot be written leaves the agent run alone');
     const said = BACKENDS.claude.events({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' },
       { type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] } });
     check(said.texts[0] === 'hi' && said.tools.length === 1, `claude: ${JSON.stringify(said)}`);
@@ -316,7 +322,7 @@ return { status: r.ok ? 'done' : 'no', n: args.n };`);
       '--result-file', path.join(TMP, 'st.result.json')], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('st.sh', 'echo done') },
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     const st = JSON.parse(readFileSync(path.join(TMP, 'st.status.json'), 'utf8'));
-    check(st.state === 'ended' && st.agents.length === 0 && /^\d+-\d+$/.test(st.run_tag) && st.updated >= st.started, `status ${JSON.stringify(st)}`);
+    check(st.state === 'ended' && st.agents.length === 0 && /^\d+-\d+-\d*$/.test(st.run_tag) && st.updated >= st.started, `status ${JSON.stringify(st)}`);
     check(existsSync(path.join(TMP, 'st.agents', '001-only.jsonl')), 'the agent stream is kept');
   }],
   ['run.mjs: the control file next to --args-file is read when the script asks; one there before the run counts once it changes', async () => {
@@ -379,8 +385,13 @@ sleep 42.25 & wait`);
     await sleep(200);
     const warned = run();
     check(/1 process\(es\) left by runs that are gone/.test(warned.stderr) && running('sleep 44.25'), 'an orphan is listed and left alone');
+    const foreign = spawn('sleep', ['45.25'], { env: { ...process.env, INFERPILOT_RUN_TAG: '999999999-1-1' }, detached: true, stdio: 'ignore' });
+    foreign.unref();
+    await sleep(200);
     const killed = run('--kill-orphans');
     check(/stopped 1 process\(es\) left by runs that are gone/.test(killed.stderr) && !running('sleep 44.25'), 'and stopped on request');
+    check(running('sleep 45.25'), 'a process of a runner in another pid namespace is not judged an orphan');
+    process.kill(foreign.pid, 'SIGKILL');
   }],
 ];
 

@@ -3,12 +3,14 @@
 scripts, workload and GPU type takes those numbers instead of measuring them again.
 
     python3 scripts/baseline_cache.py lookup --cache DIR --commit SHA --model M --server-script F \\
-        [--client-script F] [--workload TEXT] --gpu ARCH [--image IMAGE] [--extra TEXT] [--max-age-days 7]
+        [--client-script F] [--workload TEXT] [--sets 'gsm8k ...'] --gpu ARCH [--image IMAGE] [--extra TEXT] \\
+        [--max-age-days 7]
     python3 scripts/baseline_cache.py store --cache DIR <the same key> --run-dir RUN_DIR --files PATH...
 
 The key is the framework commit, the model, the contents of the server and client scripts (an edited
-script misses), the workload, the GPU architecture (gfx950), the image, and --extra for anything else the
-numbers depend on (the GPU count, the sampling). lookup prints the newest entry no older than
+script misses), the workload, the accuracy sets (a gsm8k-only baseline is no baseline for a task that also
+needs gpqa_diamond and simple_qa), the GPU architecture (gfx950), the image, and --extra for anything else
+the numbers depend on (the GPU count, the sampling). lookup prints the newest entry no older than
 --max-age-days, {"hit": true, "dir", "run_dir", "stored_at", "files"}, and exits 0, or {"hit": false} and
 exits 1. store copies the files and directories into <cache>/<key hash>/<time>/files/ with meta.json, and
 prints the entry. Standard library only.
@@ -33,8 +35,8 @@ def sha_of(path: str) -> str:
 
 def key_of(a) -> dict:
     return {"commit": a.commit, "model": a.model, "server_script": sha_of(a.server_script),
-            "client_script": sha_of(a.client_script), "workload": a.workload, "gpu": a.gpu, "image": a.image,
-            "extra": a.extra}
+            "client_script": sha_of(a.client_script), "workload": a.workload, "sets": " ".join(sorted(a.sets.split())),
+            "gpu": a.gpu, "image": a.image, "extra": a.extra}
 
 
 def digest(key: dict) -> str:
@@ -97,6 +99,7 @@ def main(argv=None) -> int:
         p.add_argument("--server-script", required=True)
         p.add_argument("--client-script", default="")
         p.add_argument("--workload", default="")
+        p.add_argument("--sets", default="", help="the accuracy sets measured, e.g. 'gsm8k gpqa_diamond simple_qa'")
         p.add_argument("--gpu", required=True, help="the GPU architecture, e.g. gfx950")
         p.add_argument("--image", default="")
         p.add_argument("--extra", default="", help="anything else the numbers depend on")

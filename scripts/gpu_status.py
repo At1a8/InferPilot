@@ -10,8 +10,9 @@ rocm-smi's card 3): GPUs chosen by rocm-smi's numbers can be GPUs someone else i
 is matched to its KFD node by PCI bus (torch's device properties), and the memory each process holds on it
 comes from /sys/class/kfd/kfd/proc/<pid>/vram_<gpu id>, which lists the processes of every container on the
 host (by host pid) and creates no context on any GPU. A process holding less than --min-mib (default 256)
-does not count. Without torch, HIP's order is taken to be the order of the KFD nodes. Prints one JSON object;
---free exits 1 when fewer GPUs are free, --check when one is held.
+does not count. A GPU that matches no KFD node is never free, and without torch, whose device properties
+give the PCI bus, the script stops (exit 2) rather than guess HIP's order. Prints one JSON object; --free
+exits 1 when fewer GPUs are free, --check when one is held or unknown.
 """
 from __future__ import annotations
 
@@ -80,15 +81,17 @@ def hip_devices():
     return out
 
 
-def status(nodes: list, devices, held: dict, min_mib: int = 256) -> list:
-    if devices is None:
-        devices = [{"index": i, "bus": n["bus"], "domain": n["domain"]} for i, n in enumerate(nodes)]
+def status(nodes: list, devices: list, held: dict, min_mib: int = 256) -> list:
+    """One row per HIP device. A device no KFD node matches has used_mib None: nothing is known of it."""
     by_bus = {(n["domain"], n["bus"]): n for n in nodes}
     rows = []
     for d in devices:
         n = by_bus.get((d.get("domain", 0), d["bus"]))
-        procs = {pid: mib for pid, mib in sorted((held.get(n["gpu_id"], {}) if n else {}).items()) if mib >= min_mib}
-        rows.append({**d, "kfd_node": n["node"] if n else None, "used_mib": sum(procs.values()),
+        if not n:
+            rows.append({**d, "kfd_node": None, "used_mib": None, "pids": {}})
+            continue
+        procs = {pid: mib for pid, mib in sorted(held.get(n["gpu_id"], {}).items()) if mib >= min_mib}
+        rows.append({**d, "kfd_node": n["node"], "used_mib": sum(procs.values()),
                      "pids": {str(p): m for p, m in procs.items()}})
     return rows
 
@@ -107,6 +110,10 @@ def main(argv=None) -> int:
             devices = json.load(f)
     else:
         devices = hip_devices()
+    if devices is None:
+        print(json.dumps({"error": "torch is needed to number the GPUs as HIP does; KFD's order can differ",
+                          "kfd_nodes": nodes}, indent=1))
+        return 2
     rows = status(nodes, devices, held, a.min_mib)
     out, rc = {"gpus": rows}, 0
     if a.free:
@@ -116,8 +123,9 @@ def main(argv=None) -> int:
     if a.check:
         want = {int(x) for x in a.check.split(",") if x.strip()}
         out["busy"] = [r for r in rows if r["index"] in want and r["used_mib"]]
+        out["unknown"] = [r["index"] for r in rows if r["index"] in want and r["used_mib"] is None]
         out["missing"] = sorted(want - {r["index"] for r in rows})
-        rc = 1 if out["busy"] or out["missing"] else rc
+        rc = 1 if out["busy"] or out["unknown"] or out["missing"] else rc
     print(json.dumps(out, indent=1))
     return rc
 

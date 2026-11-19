@@ -11,11 +11,12 @@ Tasks run at once when they share no GPU and run in different containers (a cont
 checkout serves one task); a task without --gpus (a scan) takes the whole machine. acquire exits 1 when
 a holder is in the way and prints who. A holder is dropped without asking when its run has finished (a
 report newer than the lock), when the runner that took it is gone, or when its run has written nothing
-in its run directory for the holder's --idle-hours. The runner is
-the process named by INFERPILOT_RUN_TAG (<pid>-<start time>, set by runtime/run.mjs for every agent);
-it is checked only from the pid namespace it was recorded in. A run directory this container cannot
-see (the run is in another container) is never taken over for silence; a lock left by a run that died
-is freed at once with `release --force`. Standard library only.
+in its run directory for the holder's --idle-hours. The runner is the process named by
+INFERPILOT_RUN_TAG (<pid>-<start time>-<pid namespace>, set by runtime/run.mjs for every agent); it is
+checked only from the pid namespace it was recorded in. A run directory this container cannot see (the
+run is in another container) is never taken over for silence; a lock left by a run that died is freed
+at once with `release --force`. A resumed run takes its run directory over once the old holder is
+stale. Standard library only.
 """
 from __future__ import annotations
 
@@ -72,8 +73,11 @@ def pid_ns() -> str:
 
 
 def runner_alive(tag: str) -> bool:
-    """Whether the process a run tag (<pid>-<start time in clock ticks>) names is still running."""
-    pid, _, start = tag.partition("-")
+    """Whether the process a run tag (<pid>-<start time in clock ticks>[-<pid namespace>]) names is still
+    running; one in another pid namespace counts as running, since it cannot be looked up from here."""
+    pid, start, ns = (tag.split("-") + ["", ""])[:3]
+    if ns and ns != pid_ns().strip("pid:[]"):
+        return True
     try:
         with open("/proc/%s/stat" % int(pid), encoding="utf-8") as f:
             stat = f.read()
@@ -145,9 +149,14 @@ def acquire(lock: str, run_dir: str, task: str = "", mode: str = "", idle_hours:
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         holders = _holders(_read(fd))
+        tag = os.environ.get("INFERPILOT_RUN_TAG", "")
+        # The same runner asking again keeps its hold. A resumed run is a new runner: it takes the run
+        # directory over once the old holder is stale (finished, runner gone, silent), and is busy before.
         mine = [h for h in holders if h["run_dir"] == run_dir]
-        if mine:
+        if mine and mine[0].get("run_tag", "") == tag:
             return {"status": "acquired", "holder": mine[0]}
+        if mine and not stale_reason(mine[0], now):
+            return {"status": "busy", "holder": mine[0]}
         live, gone = [], []
         for h in holders:
             reason = stale_reason(h, now)
@@ -157,8 +166,7 @@ def acquire(lock: str, run_dir: str, task: str = "", mode: str = "", idle_hours:
             return {"status": "busy", "holder": in_way[0]}
         new = {"run_dir": run_dir, "mode": mode, "task": task, "gpus": gpus, "idle_hours": idle_hours, "started": now,
                "started_at": time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(now)),
-               "host": socket.gethostname(), "container": container,
-               "run_tag": os.environ.get("INFERPILOT_RUN_TAG", ""), "pid_ns": pid_ns()}
+               "host": socket.gethostname(), "container": container, "run_tag": tag, "pid_ns": pid_ns()}
         _write(fd, {"holders": [h for h, _ in live] + [new]})
         out = {"status": "acquired", "holder": new}
         if gone:

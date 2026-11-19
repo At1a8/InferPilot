@@ -9,8 +9,10 @@
 # bootstrap installs), as sglang's CI scores them; simple_qa (4326, LLM judge) through evalscope, and so
 # mmlu_pro (12032), hle (the 2158 text-only questions, LLM judge) and longbench_v2 (503;
 # LONGBENCH_LOCAL_PATH for a local copy). GPQA's questions come from ModelScope (DATASET_HUB=huggingface:
-# from the gated Hugging Face set, with HF_TOKEN). An sgl-eval set runs once (N_REPEATS for more), with
-# no output cap unless MAX_TOKENS is given; TOP_K does not reach it.
+# from the gated Hugging Face set, with HF_TOKEN). An sgl-eval set runs as sglang's reference command:
+#   sgl-eval run gsm8k --base-url <API_URL> --num-threads 128 --max-tokens 32768 --n-repeats 1
+# (BATCH, MAX_TOKENS, N_REPEATS change those; ENABLE_THINKING and REASONING_EFFORT reach it only when
+# given; TOP_K does not reach it).
 #
 # Every key comes from the environment (InferPilot's ~/.inferpilot_env); none is written here.
 #   API_URL           the server's OpenAI endpoint (default http://127.0.0.1:30000/v1)
@@ -22,11 +24,12 @@
 #   LIMIT             at most this many questions per subset: a smoke test, not a result
 #   WAIT_SERVER       seconds to wait for a server that is still starting (default 0)
 #   MAX_TOKENS        evalscope sets: default 102400, as a truncated reasoning trace leaves the answer
-#                     empty; sgl-eval sets: no cap unless given
+#                     empty; sgl-eval sets: default 32768
 #   N_REPEATS         passes over an sgl-eval set (default 1)
-#   REASONING_EFFORT  default max; ENABLE_THINKING default 1 (chat_template_kwargs.thinking, and
-#                     enable_thinking for sgl-eval sets). Thinking models score wrongly without them;
-#                     ENABLE_THINKING=0 REASONING_EFFORT= for others
+#   REASONING_EFFORT  evalscope sets: default max; ENABLE_THINKING default 1 (chat_template_kwargs.thinking).
+#                     Thinking models score wrongly without them; ENABLE_THINKING=0 REASONING_EFFORT= for
+#                     others. sgl-eval sets: the benchmark's own unless given (ENABLE_THINKING=1 or 0 also
+#                     sets enable_thinking)
 #   TOP_P, TOP_K      sampling overrides (default: the server's own)
 #   DATASET_HUB       modelscope (default) or huggingface; HF_TOKEN for gated sets
 #   CACHE_DIR, RERUN_REVIEW=1   resume an earlier work dir; re-run only the judging
@@ -48,7 +51,10 @@ TAG=${TAG:-eval}
 RESULT_ROOT=${RESULT_ROOT:-./results}
 WAIT_SERVER=${WAIT_SERVER:-0}
 DATASET_HUB=${DATASET_HUB:-modelscope}
-MAX_TOKENS_SET=${MAX_TOKENS:+1}
+# What the caller gave, before the evalscope defaults fill in: sgl-eval sets have defaults of their own.
+MAX_TOKENS_GIVEN=${MAX_TOKENS:-}
+REASONING_EFFORT_GIVEN=${REASONING_EFFORT:-}
+ENABLE_THINKING_GIVEN=${ENABLE_THINKING:-}
 MAX_TOKENS=${MAX_TOKENS:-102400}
 SGL_EVAL=${SGL_EVAL:-sgl-eval}
 TOP_P=${TOP_P:-}
@@ -74,8 +80,8 @@ dataset_profile() {  # <set> -> DS_TOOL, DS_EVAL, DS_BATCH, DS_ARGS, DS_TOTAL, D
     DS_TOTAL=0
     DS_JUDGE=0
     case "$1" in
-        gsm8k)        DS_TOOL=sgl-eval; DS_EVAL=gsm8k; DS_TOTAL=1319; DS_BATCH=64 ;;
-        gpqa_diamond) DS_TOOL=sgl-eval; DS_EVAL=gpqa; DS_TOTAL=198; DS_BATCH=64 ;;
+        gsm8k)        DS_TOOL=sgl-eval; DS_EVAL=gsm8k; DS_TOTAL=1319; DS_BATCH=128 ;;
+        gpqa_diamond) DS_TOOL=sgl-eval; DS_EVAL=gpqa; DS_TOTAL=198; DS_BATCH=128 ;;
         mmlu_pro)     DS_TOTAL=12032 ;;
         simple_qa)    DS_TOTAL=4326; DS_JUDGE=1
                       [ "${DATASET_HUB}" = huggingface ] && \
@@ -186,22 +192,22 @@ with open(sys.argv[2], "w", encoding="utf-8") as f:
 EOF
 }
 
-# gsm8k and gpqa_diamond are scored by sgl-eval, as sglang's CI scores them: one pass (N_REPEATS for
-# more), greedy, thinking as ENABLE_THINKING says. A failed request fails the set, since sgl-eval would
+# gsm8k and gpqa_diamond are scored by sgl-eval: `sgl-eval run gsm8k|gpqa --num-threads 128 --max-tokens
+# 32768 --n-repeats 1` (BATCH, MAX_TOKENS and N_REPEATS change them). Without the cap a reasoning loop
+# runs to the context limit and holds the set for many minutes. Thinking is the benchmark's own default
+# unless ENABLE_THINKING or REASONING_EFFORT is given. A failed request fails the set, since sgl-eval would
 # count it as a wrong answer.
 run_sgl_eval() {  # <set> <threads> <work dir> <log>
     local ds=$1 threads=$2 work_dir=$3 log=$4 rc accept metrics line gpqa
     local -a args=(run "${DS_EVAL}" --base-url "${API_URL}" --model "${MODEL}" --num-threads "${threads}"
-                   --n-repeats "${N_REPEATS:-1}" --out-dir "${work_dir}")
+                   --max-tokens "${MAX_TOKENS_GIVEN:-32768}" --n-repeats "${N_REPEATS:-1}" --out-dir "${work_dir}")
     [ -n "${LIMIT:-}" ] && args+=(--num-examples "${LIMIT}")
-    [ -n "${MAX_TOKENS_SET}" ] && args+=(--max-tokens "${MAX_TOKENS}")
     [ -n "${TOP_P}" ] && args+=(--top-p "${TOP_P}")
-    [ -n "${REASONING_EFFORT}" ] && args+=(--reasoning-effort "${REASONING_EFFORT}")
-    if [ "${ENABLE_THINKING}" = 1 ]; then
-        args+=(--thinking --chat-template-kwarg enable_thinking=true)
-    else
-        args+=(--no-thinking --chat-template-kwarg enable_thinking=false)
-    fi
+    [ -n "${REASONING_EFFORT_GIVEN}" ] && args+=(--reasoning-effort "${REASONING_EFFORT_GIVEN}")
+    case "${ENABLE_THINKING_GIVEN}" in
+        1) args+=(--thinking --chat-template-kwarg enable_thinking=true) ;;
+        0) args+=(--no-thinking --chat-template-kwarg enable_thinking=false) ;;
+    esac
     if [ "${ds}" = gpqa_diamond ] && [ "${DATASET_HUB}" != huggingface ]; then
         gpqa="${RESULT_ROOT}/gpqa_diamond.sgl_eval.jsonl"
         if [ ! -s "${gpqa}" ] && ! gpqa_from_modelscope "${gpqa}" >> "${log}.prepare" 2>&1; then

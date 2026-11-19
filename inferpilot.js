@@ -356,7 +356,12 @@ function note(phaseTitle, verdict, summary) {
   R.phases.push({ phase: phaseTitle, verdict, summary: String(summary || '').slice(0, 600) });
 }
 
+// A stop the control file asks for "now" takes effect at the next phase boundary, wherever the route
+// goes from there (Verify into Investigate as well); the closing phases always run.
+class StopRequested extends Error {}
+const CLOSING = new Set(['Reply', 'Report']);
 function enter(title) {
+  if (PHASE && !CLOSING.has(title) && liveStopAfter() === 'now') throw new StopRequested(PHASE);
   PHASE = title;
   phase(title);
 }
@@ -364,17 +369,19 @@ function enter(title) {
 // stop_after replaces the argument's while the run goes on, and "now" stops after the phase that is ending.
 // The Workflow tool has no control global.
 let stopAfterNow = STOP_AFTER;
+let stopAfterSeen = STOP_AFTER;
 function liveStopAfter() {
   if (typeof control !== 'function') return STOP_AFTER;
   let c = null;
   try {
     c = control();
   } catch { /* an unreadable file changes nothing */ }
-  const s = c && typeof c.stop_after === 'string' ? c.stop_after.trim().toLowerCase() : STOP_AFTER;
-  if (s !== stopAfterNow) {
+  const s = c && typeof c.stop_after === 'string' ? c.stop_after.trim().toLowerCase() : stopAfterNow;
+  if (s !== stopAfterSeen) {
+    stopAfterSeen = s;
     const known = s === '' || s === 'now' || (STOP_PHASES[MODE] || []).some((p) => p.toLowerCase() === s);
-    log(`[inferpilot] control: stop_after=${s || '(none)'}${known ? '' : ` is not a phase of mode=${MODE}; it is ignored`}`);
-    stopAfterNow = s;
+    log(`[inferpilot] control: stop_after=${s || '(none)'}${known ? '' : ` is not a phase of mode=${MODE}; the stop stays ${stopAfterNow || '(none)'}`}`);
+    if (known) stopAfterNow = s;
   }
   return stopAfterNow;
 }
@@ -669,7 +676,7 @@ const PR = S({
   pr_body_path: str,
   push_command: str,
   work_packages: WPS, // what the branch still lacks; implemented, verified and reviewed like a finding
-}, ['branch', 'lint_pass', 'feature_off_final', 'content_unchanged', 'pr_body_path']);
+}, ['branch', 'lint_pass', 'feature_off_final', 'content_unchanged', 'pr_body_path', 'leaks', 'launch_checked']);
 const K_PACKAGE = S({
   task_dir: str,
   mode: { type: 'string', enum: ['optimize', 'author'] },
@@ -980,7 +987,7 @@ async function verifyLoop(extraGates) {
     const integratedKernels = R.handoffs.filter((h) => h.status === 'integrated')
       .map((h) => ({ handoff: h.id, wp: h.integrated_wp, commit: h.commit }));
     const inv = await call('investigator', 'investigate',
-      inputs({ failures: v.failures || [], round, integrated_kernels: integratedKernels }),
+      inputs({ failures: blocking, round, integrated_kernels: integratedKernels }),
       INVESTIGATE, `investigator#${round}`);
     if (!inv) {
       note('Investigate', 'fail', 'the investigator returned nothing');
@@ -1098,7 +1105,7 @@ async function preparePR(round) {
   const pr = await call('pr_engineer', 'pr', inputs({ round }), PR, `pr_engineer#${round}`);
   const leaks = (pr && pr.leaks) || [];
   const ok = !!pr && pr.lint_pass === true && pr.feature_off_final === true && pr.content_unchanged === true
-    && !!pr.pr_body_path && leaks.length === 0 && pr.launch_checked !== false;
+    && !!pr.pr_body_path && Array.isArray(pr.leaks) && leaks.length === 0 && pr.launch_checked === true;
   if (pr) {
     if (pr.branch) C.branch = pr.branch;
     C.pr_body_path = pr.pr_body_path || '';
@@ -1485,4 +1492,9 @@ async function runScan() {
 const RUNNERS = { feature: runFeature, issue: runIssue, ci: runCi, perf: runPerf, scan: runScan };
 log(`[inferpilot] mode=${MODE} inferpilot_dir=${INFERPILOT} framework=${C.framework}${C.framework_dir ? ` (${C.framework_dir})` : ''}`);
 if (ROUTES[MODE]) logRoute(ROUTES[MODE]);
-return await RUNNERS[MODE]();
+try {
+  return await RUNNERS[MODE]();
+} catch (e) {
+  if (e instanceof StopRequested) return finish('stopped', e.message);
+  throw e;
+}

@@ -2,7 +2,7 @@
 // process group misses what it started with setsid or nohup, the environment does not. A process
 // started with `docker exec` carries the tag only when it was given (-e INFERPILOT_RUN_TAG). Linux only:
 // without /proc nothing is found.
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, readlinkSync } from 'node:fs';
 
 export const TAG = 'INFERPILOT_RUN_TAG';
 
@@ -16,13 +16,26 @@ export function startOf(pid) {
   }
 }
 
-// <pid>-<start>: a pid alone could be reused by another process once the runner is gone.
-export const runTag = (pid = process.pid) => `${pid}-${startOf(pid) || 0}`;
+// The pid namespace this process sees /proc in, by its inode number.
+const nsOf = () => {
+  try {
+    return (readlinkSync('/proc/self/ns/pid').match(/\d+/) || [''])[0];
+  } catch {
+    return '';
+  }
+};
+export const PID_NS = nsOf();
 
+// <pid>-<start>-<pid namespace>: a pid alone could be reused once the runner is gone, and names another
+// process in another namespace (a host's runner seen from a container, or the other way round).
+export const runTag = (pid = process.pid) => `${pid}-${startOf(pid) || 0}-${PID_NS}`;
+
+// False only when the runner is known to be gone: one in another pid namespace cannot be looked up here.
 export function runnerAlive(tag) {
-  const [pid, start] = String(tag).split('-');
+  const [pid, start, ns] = String(tag).split('-');
+  if (ns && ns !== PID_NS) return true;
   const now = startOf(pid);
-  return now !== null && (start === '0' || now === start);
+  return now !== null && (!start || start === '0' || now === start);
 }
 
 // Every process whose environment holds a run tag, this one excepted: [{pid, tag, cmd}].

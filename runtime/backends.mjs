@@ -92,7 +92,15 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
   const live = new Set(); // the stop function of every agent run still going
   let closed = false;
   let runs = 0;
-  if (logDir) mkdirSync(logDir, { recursive: true });
+  let dir = logDir;
+  if (dir) {
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch (e) {
+      process.stderr.write(`${name}: no agent logs in ${dir} (${e.message})\n`);
+      dir = '';
+    }
+  }
   return {
     name,
     bin,
@@ -114,10 +122,28 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
     // (usage: {input, output, cache, total}, or null).
     runAgent({ prompt, label = 'agent', cwd, env, model, timeoutMs = 0, onProgress = () => {}, onText = null }) {
       if (closed) return Promise.reject(new Error(`${name} [${label}] not started: the runner is stopping`));
-      const base = logDir ? join(logDir, `${String(++runs).padStart(3, '0')}-${String(label).replace(/[^\w.-]+/g, '_')}`) : '';
-      if (base) writeFileSync(`${base}.prompt.md`, prompt);
-      const stream = base ? createWriteStream(`${base}.jsonl`) : null;
-      const errStream = base ? createWriteStream(`${base}.stderr.log`) : null;
+      let base = dir ? join(dir, `${String(++runs).padStart(3, '0')}-${String(label).replace(/[^\w.-]+/g, '_')}`) : '';
+      try {
+        if (base) writeFileSync(`${base}.prompt.md`, prompt);
+      } catch (e) {
+        process.stderr.write(`${name} [${label}]: no agent log (${e.message})\n`);
+        base = '';
+      }
+      // A log that cannot be written (a full disk) stops; the agent run goes on.
+      const logTo = (file) => {
+        if (!base) return null;
+        const s = createWriteStream(file);
+        s.on('error', (e) => {
+          process.stderr.write(`${name} [${label}]: ${file} stops here (${e.message})\n`);
+          s.destroy();
+        });
+        return s;
+      };
+      const stream = logTo(`${base}.jsonl`);
+      const errStream = logTo(`${base}.stderr.log`);
+      const put = (s, d) => {
+        if (s && !s.destroyed) s.write(d);
+      };
       const argv = [...preset.args];
       const m = model || defaultModel;
       if (m) argv.push(preset.modelFlag, m);
@@ -125,7 +151,7 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
       if (preset.promptVia === 'arg') argv.push(viaArg.arg);
       const tidy = () => {
         if (viaArg.dir) rmSync(viaArg.dir, { recursive: true, force: true });
-        for (const s of [stream, errStream]) if (s && !s.writableEnded) s.end();
+        for (const s of [stream, errStream]) if (s && !s.writableEnded && !s.destroyed) s.end();
       };
       return new Promise((resolve, reject) => {
         // Its own process group, so a timeout also stops what the agent started.
@@ -174,7 +200,7 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
         child.stdout.setEncoding('utf8');
         child.stderr.setEncoding('utf8');
         child.stdout.on('data', (d) => {
-          if (stream) stream.write(d);
+          put(stream, d);
           if (!preset.events) {
             out += d;
             return;
@@ -185,7 +211,7 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
           lines.forEach(take);
         });
         child.stderr.on('data', (d) => {
-          if (errStream) errStream.write(d);
+          put(errStream, d);
           err = (err + d).slice(-65536);
         });
         child.on('error', (e) => {
