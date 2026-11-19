@@ -3,7 +3,7 @@ id: pard2
 title: "PARD-2 target-aligned parallel-draft speculative decoding for Qwen3 (sglang, ROCm gfx950): a standalone draft proposes K tokens in one forward, fusing the target's hidden states through target_proj"
 kind: feature_skill
 authors: [At1a8]
-tags: [pard2, pard-2, pard, parallel draft, parallel drafting, target-aligned draft, draft model, speculative decoding, target-dependent, target-independent, accept length]
+tags: [pard2, pard-2, pard, vllm#49406, vllm#55257, sglang#51465, parallel draft, parallel drafting, target-aligned draft, draft model, speculative decoding, target-dependent, target-independent, accept length]
 match:
   framework: sglang
   framework_ref: 179247229d          # PR head: 3 commits on main a735253e84 (2026-11-19)
