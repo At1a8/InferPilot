@@ -508,6 +508,17 @@ const scenarios = [
     check(now.result.status === 'stopped' && now.result.stopped_at === 'Verify', `now: ${now.result.status} at ${now.result.stopped_at}`);
     check(!now.keys.includes('investigator:investigate') && now.keys.includes('director:report'),
       'now during a failing Verify stops before Investigate, and the report still runs');
+    let reviewed = false;
+    const inLoop = await run({ mode: 'feature', task: 't' }, {
+      'reviewer:review': () => {
+        reviewed = true;
+        return { verdict: 'changes_requested', findings: [{ severity: 'major', issue: 'x' }], work_packages: [WP('R9')],
+          review_path: `${RUN}/review.md` };
+      },
+    }, { control: () => (reviewed ? { stop_after: 'Verify' } : {}) });
+    check(inLoop.result.status === 'stopped' && inLoop.result.stopped_at === 'Verify' && !inLoop.keys.includes('pr_engineer:pr')
+      && inLoop.keys.filter((k) => k === 'verify_engineer:verify').length === 2,
+    `a stop named during the review repair round ends the run after its Verify: ${inLoop.result.status} at ${inLoop.result.stopped_at}`);
     const cleared = await run({ mode: 'issue', task: 'i', stop_after: 'Setup' }, undefined, { control: () => ({ stop_after: '' }) });
     check(cleared.result.stopped_at !== 'Setup' && cleared.phases.includes('Triage'), `cleared: ${cleared.result.status}`);
     const bad = await run({ mode: 'ci', task: 'c', stop_after: 'Verify' }, undefined, { control: () => ({ stop_after: 'Performance' }) });

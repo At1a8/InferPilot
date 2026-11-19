@@ -260,7 +260,7 @@ class EvalAccuracyTest(unittest.TestCase):
               */server_info) echo '{"internal_states": [{"avg_spec_accept_length": 4.0}]}' ;;
               *modelscope.cn*gpqa_diamond*)
                 prev=""; for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
-                printf '%s\\n' '{"Question": "q1"}' '{"Question": "q2"}' > "$out" ;;
+                for i in $(seq "${FAKE_GPQA_ROWS:-198}"); do printf '{"Question": "q%d"}\\n' "$i"; done > "$out" ;;
             esac
             """))
         # sgl-eval writes <out dir>/sgl_eval_<name>_<time>/metrics.json; FAKE_ERROR_RATE and FAKE_NUM spoil it.
@@ -335,10 +335,18 @@ class EvalAccuracyTest(unittest.TestCase):
         call = self.sgl_calls()[0]
         for arg in ("run gpqa ", "--from-dataset %s" % data, "--max-tokens 4096", "--no-thinking"):
             self.assertIn(arg, call)
-        self.assertEqual([json.loads(line)["problem"] for line in data.read_text().splitlines()], ["q1", "q2"])
+        problems = [json.loads(line)["problem"] for line in data.read_text().splitlines()]
+        self.assertEqual((len(problems), problems[:2]), (198, ["q1", "q2"]))
         hf = self.run_script("gpqa_diamond", DATASET_HUB="huggingface", RESULT_ROOT=str(self.tmp / "hf"))
         self.assertEqual(hf.returncode, 0, hf.stderr)
         self.assertNotIn("--from-dataset", self.sgl_calls()[-1])
+
+    def test_a_short_gpqa_download_leaves_no_file_behind(self):
+        r = self.run_script("gpqa_diamond", FAKE_GPQA_ROWS="150", RESULT_ROOT=str(self.tmp / "short"))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("could not prepare GPQA", r.stderr)
+        self.assertFalse(list((self.tmp / "short").glob("gpqa_diamond.sgl_eval.jsonl*.part")))
+        self.assertFalse((self.tmp / "short" / "gpqa_diamond.sgl_eval.jsonl").exists())
 
     def test_a_failed_request_or_a_missing_question_fails_an_sgl_eval_set(self):
         r = self.run_script("gsm8k", FAKE_ERROR_RATE="0.01")
@@ -565,6 +573,30 @@ class RunLockTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "1-1"}):
             self.assertEqual(run_lock.acquire(self.lock, self.a, now=1100.0)["status"], "busy", "its runner still works")
 
+    def test_the_same_runner_asking_for_other_gpus_holds_those(self):
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": "box1"}):
+            run_lock.acquire(self.lock, self.a, gpus=[0])
+            again = run_lock.acquire(self.lock, self.a, gpus=[2, 3])
+            self.assertEqual((again["status"], again["holder"]["gpus"]), ("acquired", [2, 3]))
+            self.assertEqual([h["holder"]["gpus"] for h in run_lock.status(self.lock)["holders"]], [[2, 3]])
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": "box2"}):
+            self.assertEqual(run_lock.acquire(self.lock, self.b, gpus=[0])["status"], "acquired", "GPU 0 was let go")
+
+    @unittest.skipUnless(os.path.exists("/proc/self/stat"), "needs /proc")
+    def test_a_zombie_runner_is_gone(self):
+        pid = os.fork()
+        if pid == 0:
+            os._exit(0)
+        self.addCleanup(os.waitpid, pid, 0)
+        for _ in range(100):  # until it has exited, unreaped
+            with open("/proc/%d/stat" % pid) as f:
+                fields = f.read().rsplit(")", 1)[1].split()
+            if fields[0] == "Z":
+                break
+            time.sleep(0.01)
+        self.assertEqual(fields[0], "Z")
+        self.assertFalse(run_lock.runner_alive("%d-%s" % (pid, fields[19])))
+
     def test_a_runner_in_another_pid_namespace_counts_as_running(self):
         self.assertTrue(run_lock.runner_alive("999999999-1-1"))
         self.assertFalse(run_lock.runner_alive("999999999-1"))
@@ -625,6 +657,15 @@ class BaselineCacheTest(unittest.TestCase):
         self.assertEqual(lossy, self.key(sets="simple_qa gsm8k gpqa_diamond"), "the order of the sets does not matter")
         self.server.write_text("python -m sglang.launch_server --tp 2\n")  # an edited script is another key
         self.assertFalse(baseline_cache.lookup(self.cache, self.key(), 7, now=2000.0)["hit"])
+
+    def test_two_stores_in_the_same_second_keep_their_own_files(self):
+        first = baseline_cache.store(self.cache, self.key(), str(self.run_dir), [str(self.run_dir / "accuracy")], now=1000.0)
+        (self.run_dir / "accuracy" / "summary.txt").write_text("baseline gsm8k: aggregate={'score': 0.92}\n")
+        second = baseline_cache.store(self.cache, self.key(), str(self.run_dir), [str(self.run_dir / "accuracy")], now=1000.0)
+        self.assertNotEqual(first["dir"], second["dir"])
+        self.assertIn("0.91", (Path(first["dir"]) / "accuracy" / "summary.txt").read_text())
+        self.assertIn("0.92", (Path(second["dir"]) / "accuracy" / "summary.txt").read_text())
+        self.assertFalse(list(Path(self.cache).rglob("meta.json.part")))
 
     def test_an_old_entry_is_not_used(self):
         baseline_cache.store(self.cache, self.key(), str(self.run_dir), [str(self.run_dir / "accuracy")], now=1000.0)
@@ -690,6 +731,23 @@ class GpuStatusTest(unittest.TestCase):
         with mock.patch.object(gpu_status, "hip_devices", return_value=None), redirect_stdout(io.StringIO()):
             self.assertEqual(gpu_status.main(["--kfd", str(self.kfd), "--free", "1"]), 2)
 
+    def test_unreadable_accounting_is_unknown_not_free(self):
+        shutil.rmtree(self.kfd / "proc")
+        rc, out = self.run_main("--free", "1")
+        self.assertEqual((rc, out["free"]), (1, ""))
+        self.assertIn("unreadable", out["error"])
+        rc, out = self.run_main("--check", "1")
+        self.assertEqual((rc, out["unknown"]), (1, [1]))
+        (self.kfd / "proc" / "77").mkdir(parents=True)  # a process with nothing on the GPUs: all free
+        rc, out = self.run_main("--free", "3")
+        self.assertEqual((rc, out["free"]), (0, "0,1,2"))
+        if os.geteuid() != 0:  # root reads a file whatever its mode
+            f = self.kfd / "proc" / "77" / "vram_333"
+            f.write_text("0\n")
+            f.chmod(0)
+            rc, out = self.run_main("--check", "1")
+            self.assertEqual((rc, out["unknown"]), (1, [1]), "GPU 1 is KFD node 3, whose file cannot be read")
+
 
 class LeakScanTest(unittest.TestCase):
     """scripts/leak_scan.py on a throwaway repository."""
@@ -727,10 +785,19 @@ class LeakScanTest(unittest.TestCase):
         body.write_text("Results\n\nlogs in /home/alice/run\n")
         rc, out = self.scan("--body", str(body))
         self.assertEqual(rc, 1)
-        self.assertEqual([f["where"] for f in out["leaks"]][0], "a.py:2")
+        head = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout
+        self.assertEqual([f["where"] for f in out["leaks"]][0], "%s a.py:2" % head[:10])
         self.assertTrue(any(f["where"].startswith("commit ") for f in out["leaks"]), out)
         self.assertIn("%s:3" % body, [f["where"] for f in out["leaks"]])
         self.assertEqual(out["identities"], ["root <root@gpu-node-17>"])
+
+    def test_a_line_a_later_commit_removed_is_still_found(self):
+        self.commit('LOG = "/home/alice/run.log"\n', message="first try")
+        first = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout
+        self.commit("", message="drop the log path")
+        rc, out = self.scan()
+        self.assertEqual(rc, 1)
+        self.assertEqual([f["where"] for f in out["leaks"]], ["%s a.py:2" % first[:10]])
 
 
 class ScanCiTest(unittest.TestCase):

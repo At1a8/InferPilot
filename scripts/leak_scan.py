@@ -3,8 +3,9 @@
 
     python3 scripts/leak_scan.py --repo <worktree> --base <base commit> [--body RUN_DIR/pr_body.md]
 
-Scans the lines the branch adds (git diff <base>...HEAD), its commit messages, the author and committer of
-each commit, and the PR description when given, for local paths (/home, /mnt, /data, ...), this
+Scans the lines each commit of the branch adds (a line a later commit removed is still published by the
+push), its commit messages, the author and committer of each commit, and the PR description when given,
+for local paths (/home, /mnt, /data, ...), this
 machine's host name, internal sites, and identities such as root or an address with the host name in it
 (daily_report.leaks holds the patterns). Paths that public code needs (/opt/rocm) are allowed; --allow adds
 a pattern. Prints one JSON object, {"leaks": [{"where", "text"}], "identities": [...]}, and exits 1 when
@@ -68,9 +69,12 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     allow = ALLOW + a.allow
     found = []
-    for path, n, text in added_lines(git(a.repo, "diff", "--no-color", "--unified=0", "%s...HEAD" % a.base)):
-        if scan(text, a.host, allow):
-            found.append({"where": "%s:%d" % (path, n), "text": text.strip()[:200]})
+    # Every outgoing commit's own diff, not the branch's net one: the push publishes the history, so a line
+    # a later commit removed is still public.
+    for sha in git(a.repo, "rev-list", "--reverse", "%s..HEAD" % a.base).split():
+        for path, n, text in added_lines(git(a.repo, "diff", "--no-color", "--unified=0", sha + "^", sha)):
+            if scan(text, a.host, allow):
+                found.append({"where": "%s %s:%d" % (sha[:10], path, n), "text": text.strip()[:200]})
     for sha in git(a.repo, "rev-list", "%s..HEAD" % a.base).split():
         for n, line in enumerate(git(a.repo, "log", "-1", "--format=%B", sha).splitlines(), 1):
             if scan(line, a.host, allow):

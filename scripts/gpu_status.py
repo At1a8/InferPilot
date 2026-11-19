@@ -47,21 +47,37 @@ def kfd_nodes(root: str = KFD) -> list:
     return out
 
 
-def holders(root: str = KFD) -> dict:
-    """gpu_id -> {host pid: MiB it holds there}."""
-    out = {}
+def holders(root: str = KFD):
+    """gpu_id -> {host pid: MiB it holds there}, and the gpu ids whose accounting could not be read: None
+    when none of it can (no readable proc directory, or a process that cannot be listed, which could be on
+    any GPU). A process that exits during the scan is skipped."""
+    out, unknown = {}, set()
     proc = os.path.join(root, "proc")
-    for pid in os.listdir(proc) if os.path.isdir(proc) else []:
+    try:
+        pids = os.listdir(proc)
+    except OSError:
+        return out, None
+    for pid in pids:
         try:
             files = os.listdir(os.path.join(proc, pid))
-        except OSError:
+        except FileNotFoundError:
             continue
+        except OSError:
+            return out, None
         for f in files:
-            if f.startswith("vram_"):
-                v = _read(os.path.join(proc, pid, f)).strip()
-                if v.isdigit() and int(v) > 0:
-                    out.setdefault(int(f[5:]), {})[int(pid)] = int(v) // 2 ** 20
-    return out
+            if not f.startswith("vram_"):
+                continue
+            try:
+                with open(os.path.join(proc, pid, f), encoding="utf-8") as fh:
+                    v = fh.read().strip()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                unknown.add(int(f[5:]))
+                continue
+            if v.isdigit() and int(v) > 0:
+                out.setdefault(int(f[5:]), {})[int(pid)] = int(v) // 2 ** 20
+    return out, unknown
 
 
 def hip_devices():
@@ -81,14 +97,15 @@ def hip_devices():
     return out
 
 
-def status(nodes: list, devices: list, held: dict, min_mib: int = 256) -> list:
-    """One row per HIP device. A device no KFD node matches has used_mib None: nothing is known of it."""
+def status(nodes: list, devices: list, held: dict, min_mib: int = 256, unknown=frozenset()) -> list:
+    """One row per HIP device. used_mib None: nothing is known of its use (no KFD node matches it, or its
+    accounting is unreadable; unknown None: all of it is)."""
     by_bus = {(n["domain"], n["bus"]): n for n in nodes}
     rows = []
     for d in devices:
         n = by_bus.get((d.get("domain", 0), d["bus"]))
-        if not n:
-            rows.append({**d, "kfd_node": None, "used_mib": None, "pids": {}})
+        if not n or unknown is None or n["gpu_id"] in unknown:
+            rows.append({**d, "kfd_node": n["node"] if n else None, "used_mib": None, "pids": {}})
             continue
         procs = {pid: mib for pid, mib in sorted(held.get(n["gpu_id"], {}).items()) if mib >= min_mib}
         rows.append({**d, "kfd_node": n["node"], "used_mib": sum(procs.values()),
@@ -104,7 +121,7 @@ def main(argv=None) -> int:
     ap.add_argument("--kfd", default=KFD, help=argparse.SUPPRESS)
     ap.add_argument("--devices", default="", help=argparse.SUPPRESS)  # the HIP devices as JSON, for tests
     a = ap.parse_args(argv)
-    nodes, held = kfd_nodes(a.kfd), holders(a.kfd)  # read before torch makes this process a holder
+    nodes, (held, unknown) = kfd_nodes(a.kfd), holders(a.kfd)  # read before torch makes this process a holder
     if a.devices:
         with open(a.devices, encoding="utf-8") as f:
             devices = json.load(f)
@@ -114,8 +131,10 @@ def main(argv=None) -> int:
         print(json.dumps({"error": "torch is needed to number the GPUs as HIP does; KFD's order can differ",
                           "kfd_nodes": nodes}, indent=1))
         return 2
-    rows = status(nodes, devices, held, a.min_mib)
+    rows = status(nodes, devices, held, a.min_mib, unknown)
     out, rc = {"gpus": rows}, 0
+    if unknown is None:
+        out["error"] = "KFD's process accounting (%s/proc) is unreadable: no GPU is known to be free" % a.kfd
     if a.free:
         free = [str(r["index"]) for r in rows if r["used_mib"] == 0][:a.free]
         out["free"] = ",".join(free)

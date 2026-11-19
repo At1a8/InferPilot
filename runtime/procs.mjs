@@ -6,11 +6,13 @@ import { readdirSync, readFileSync, readlinkSync } from 'node:fs';
 
 export const TAG = 'INFERPILOT_RUN_TAG';
 
-// A process's start time in clock ticks since boot (field 22 of /proc/<pid>/stat), or null when it is gone.
+// A process's start time in clock ticks since boot (field 22 of /proc/<pid>/stat), or null when it is gone;
+// a zombie, which has exited and waits only to be reaped, is gone.
 export function startOf(pid) {
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-    return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19] || null;
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    return fields[0] === 'Z' || fields[0] === 'X' ? null : fields[19] || null;
   } catch {
     return null;
   }

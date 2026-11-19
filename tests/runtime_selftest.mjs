@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { extractJson, validate } from '../runtime/schema.mjs';
 import { createRuntime, fmtTokens, scriptBody } from '../runtime/engine.mjs';
 import { BACKENDS, cliBackend } from '../runtime/backends.mjs';
+import { PID_NS, runnerAlive } from '../runtime/procs.mjs';
 
 const INFERPILOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TMP = mkdtempSync(path.join(tmpdir(), 'inferpilot-runtime-'));
@@ -284,11 +285,26 @@ return { status: r.ok ? 'done' : 'no', n: args.n };`);
     check(readFileSync(stream, 'utf8').split('\n').filter(Boolean).length === 3, 'every event is kept');
     check(readFileSync(path.join(dir, '001-role_x.stderr.log'), 'utf8').includes('to-stderr'), 'stderr is kept');
     const broken = path.join(TMP, 'agent-logs-broken');
-    mkdirSync(path.join(broken, '001-x.jsonl'), { recursive: true }); // the stream cannot open a directory
     const b2 = cliBackend('fake', { preset: preset(cli, 'arg', { events: BACKENDS.cursor.events }), logDir: broken });
+    mkdirSync(path.join(broken, '001-x.jsonl')); // after the backend numbered its runs: the stream cannot open it
     const r2 = await b2.runAgent({ prompt: 'p', label: 'x' });
     await sleep(50);
     check(r2.text === 'done', 'a log that cannot be written leaves the agent run alone');
+    const again = cliBackend('fake', { preset: preset(cli, 'arg', { events: BACKENDS.cursor.events }), logDir: dir });
+    await again.runAgent({ prompt: 'second runner', label: 'role x' });
+    check(readFileSync(path.join(dir, '001-role_x.prompt.md'), 'utf8') === 'the prompt'
+      && readFileSync(path.join(dir, '002-role_x.prompt.md'), 'utf8') === 'second runner',
+    'a runner started again on the same directory goes on numbering and keeps the earlier logs');
+    const zombie = spawn('bash', ['-c', 'sleep 0.1 & echo $!; exec sleep 3'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const zpid = await new Promise((r) => zombie.stdout.once('data', (d) => r(Number(String(d).trim()))));
+    let zstat = '';
+    for (let i = 0; i < 50 && !/^Z /.test(zstat); i++) {
+      await sleep(20);
+      zstat = readFileSync(`/proc/${zpid}/stat`, 'utf8').split(') ').pop();
+    }
+    check(/^Z /.test(zstat) && !runnerAlive(`${zpid}-${zstat.split(' ')[19]}-${PID_NS}`),
+      'a runner that exited and is not reaped yet is gone');
+    zombie.kill('SIGKILL');
     const said = BACKENDS.claude.events({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' },
       { type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] } });
     check(said.texts[0] === 'hi' && said.tools.length === 1, `claude: ${JSON.stringify(said)}`);

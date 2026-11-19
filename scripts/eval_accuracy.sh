@@ -182,13 +182,16 @@ gpqa_from_modelscope() {  # <file>
         "https://www.modelscope.cn/api/v1/datasets/AI-ModelScope/gpqa_diamond/repo?Revision=master&FilePath=train.jsonl" \
         || return 1
     "${py[@]:-python3}" - "$1.src" "$1" <<'EOF'
-import json, random, sys
+import json, os, random, sys
 from sgl_eval._vendored.nemo_skills.dataset.gpqa.prepare import format_entry
 rows = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+if len(rows) != 198:
+    sys.exit("GPQA diamond has 198 questions, the download %d" % len(rows))
 random.seed(42)
-with open(sys.argv[2], "w", encoding="utf-8") as f:
+with open(sys.argv[2] + ".part", "w", encoding="utf-8") as f:
     for row in rows:
         f.write(json.dumps(format_entry(row)) + "\n")
+os.replace(sys.argv[2] + ".part", sys.argv[2])  # all of it or nothing: a later run trusts the file
 EOF
 }
 

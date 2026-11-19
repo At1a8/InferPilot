@@ -83,7 +83,10 @@ def runner_alive(tag: str) -> bool:
             stat = f.read()
     except (OSError, ValueError):
         return False
-    return start in ("", "0") or stat[stat.rindex(")") + 2:].split(" ")[19] == start
+    fields = stat[stat.rindex(")") + 2:].split(" ")
+    if fields[0] in ("Z", "X"):  # exited, waiting only to be reaped
+        return False
+    return start in ("", "0") or fields[19] == start
 
 
 def last_activity(holder: dict) -> float:
@@ -150,13 +153,20 @@ def acquire(lock: str, run_dir: str, task: str = "", mode: str = "", idle_hours:
         fcntl.flock(fd, fcntl.LOCK_EX)
         holders = _holders(_read(fd))
         tag = os.environ.get("INFERPILOT_RUN_TAG", "")
-        # The same runner asking again keeps its hold. A resumed run is a new runner: it takes the run
-        # directory over once the old holder is stale (finished, runner gone, silent), and is busy before.
-        mine = [h for h in holders if h["run_dir"] == run_dir]
-        if mine and mine[0].get("run_tag", "") == tag:
-            return {"status": "acquired", "holder": mine[0]}
-        if mine and not stale_reason(mine[0], now):
-            return {"status": "busy", "holder": mine[0]}
+        # The same runner, container, pid namespace and GPUs asking again keep their hold. Anything else on
+        # this run directory takes a new hold below: the same runner with other GPUs at once, a resumed run
+        # (a new runner) once the old holder is stale (finished, runner gone, silent), and is busy before.
+        took = None
+        mine = next((h for h in holders if h["run_dir"] == run_dir), None)
+        if mine is not None:
+            if (mine.get("run_tag", "") == tag and mine.get("container", "") == container
+                    and mine.get("pid_ns", "") == pid_ns() and (not gpus or (mine.get("gpus") or []) == gpus)):
+                return {"status": "acquired", "holder": mine}
+            reason = stale_reason(mine, now)
+            if mine.get("run_tag", "") != tag and not reason:
+                return {"status": "busy", "holder": mine}
+            holders = [h for h in holders if h is not mine]
+            took = {"run_dir": run_dir, "reason": reason} if reason else None
         live, gone = [], []
         for h in holders:
             reason = stale_reason(h, now)
@@ -169,8 +179,8 @@ def acquire(lock: str, run_dir: str, task: str = "", mode: str = "", idle_hours:
                "host": socket.gethostname(), "container": container, "run_tag": tag, "pid_ns": pid_ns()}
         _write(fd, {"holders": [h for h, _ in live] + [new]})
         out = {"status": "acquired", "holder": new}
-        if gone:
-            out["took_over"] = {"run_dir": gone[0][0].get("run_dir", ""), "reason": gone[0][1]}
+        if took or gone:
+            out["took_over"] = took or {"run_dir": gone[0][0].get("run_dir", ""), "reason": gone[0][1]}
         return out
     finally:
         os.close(fd)  # closing the descriptor releases the flock

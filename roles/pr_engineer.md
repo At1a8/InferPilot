@@ -21,9 +21,11 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
    switches documented. Each gap becomes a work package whose `test` shows it closed (`lint_pass`
    false while lint fails). Then what a reviewer upstream asks first (`pr_playbook.md` §Before opening):
    - **Nothing private:** `python3 <inferpilot_dir>/scripts/leak_scan.py --repo <worktree> --base <base>`
-     finds no local path, host name or internal site in the added lines or commit messages, and no
-     `root` identity (step 2 resets those); each finding in the code is a work package, and what the
-     last scan (step 5) still finds goes in `leaks`.
+     finds no local path, host name or internal site in the lines any commit adds or in the commit
+     messages, and no `root` identity (step 2 resets those); each finding in the code is a work
+     package; one in a commit whose line a later commit removed is still published by the push, so
+     step 2's rewrite drops it (the tree stays the one reviewed). What the last scan (step 5) still
+     finds goes in `leaks`.
    - **Tests the PR carries:** only tests the repository's CI runs, the fewest that cover the change: a
      change to outputs carries one end-to-end accuracy test at the feature's defaults (sglang: GSM8K
      under `test/registered/amd/accuracy/...` with `register_amd_ci`, scored through sgl-eval:

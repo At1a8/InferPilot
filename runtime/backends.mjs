@@ -1,7 +1,7 @@
 // Agent backends for runtime/engine.mjs: one command-line agent run per agent() call. The agent's
 // tools (shell, files) run in the agent's own process, in the directory it was started from.
 import { spawn } from 'node:child_process';
-import { createWriteStream, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createWriteStream, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -96,6 +96,8 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
   if (dir) {
     try {
       mkdirSync(dir, { recursive: true });
+      // A runner started again on the same directory goes on numbering: the earlier attempt's logs stay.
+      runs = readdirSync(dir).reduce((m, f) => Math.max(m, parseInt(f, 10) || 0), 0);
     } catch (e) {
       process.stderr.write(`${name}: no agent logs in ${dir} (${e.message})\n`);
       dir = '';
@@ -124,7 +126,7 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
       if (closed) return Promise.reject(new Error(`${name} [${label}] not started: the runner is stopping`));
       let base = dir ? join(dir, `${String(++runs).padStart(3, '0')}-${String(label).replace(/[^\w.-]+/g, '_')}`) : '';
       try {
-        if (base) writeFileSync(`${base}.prompt.md`, prompt);
+        if (base) writeFileSync(`${base}.prompt.md`, prompt, { flag: 'wx' });
       } catch (e) {
         process.stderr.write(`${name} [${label}]: no agent log (${e.message})\n`);
         base = '';
@@ -132,7 +134,7 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
       // A log that cannot be written (a full disk) stops; the agent run goes on.
       const logTo = (file) => {
         if (!base) return null;
-        const s = createWriteStream(file);
+        const s = createWriteStream(file, { flags: 'wx' });
         s.on('error', (e) => {
           process.stderr.write(`${name} [${label}]: ${file} stops here (${e.message})\n`);
           s.destroy();

@@ -12,8 +12,8 @@ script misses), the workload, the accuracy sets (a gsm8k-only baseline is no bas
 needs gpqa_diamond and simple_qa), the GPU architecture (gfx950), the image, and --extra for anything else
 the numbers depend on (the GPU count, the sampling). lookup prints the newest entry no older than
 --max-age-days, {"hit": true, "dir", "run_dir", "stored_at", "files"}, and exits 0, or {"hit": false} and
-exits 1. store copies the files and directories into <cache>/<key hash>/<time>/files/ with meta.json, and
-prints the entry. Standard library only.
+exits 1. store copies the files and directories into <cache>/<key hash>/<time>-<random>/files/, writes
+meta.json there last, and prints the entry. Standard library only.
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import time
 
 
@@ -68,11 +69,15 @@ def lookup(cache: str, key: dict, max_age_days: float, now: float | None = None)
 
 
 def store(cache: str, key: dict, run_dir: str, paths: list, now: float | None = None) -> dict:
+    """A directory of its own per store, its meta.json written last: a lookup sees whole entries only,
+    and two runs storing the same key at once never share one."""
     now = time.time() if now is None else now
     stamp = time.strftime("%Y%m%d-%H%M%SZ", time.gmtime(now))
-    d = os.path.join(cache, digest(key), stamp)
+    root = os.path.join(cache, digest(key))
+    os.makedirs(root, exist_ok=True)
+    d = tempfile.mkdtemp(prefix=stamp + "-", dir=root)
     files = os.path.join(d, "files")
-    os.makedirs(files, exist_ok=True)
+    os.makedirs(files)
     names = []
     for p in paths:
         name = os.path.basename(os.path.normpath(p))
@@ -83,8 +88,9 @@ def store(cache: str, key: dict, run_dir: str, paths: list, now: float | None = 
         names.append(name)
     meta = {"key": key, "run_dir": os.path.abspath(run_dir), "stored": now,
             "stored_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(now)), "files": names}
-    with open(os.path.join(d, "meta.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(d, "meta.json.part"), "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=1)
+    os.replace(os.path.join(d, "meta.json.part"), os.path.join(d, "meta.json"))
     return {"stored": True, "dir": files, "files": names}
 
 
