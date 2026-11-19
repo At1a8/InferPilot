@@ -29,7 +29,8 @@
 // INFERPILOT_CLAUDE_BIN and INFERPILOT_CURSOR_BIN name the CLIs when they are not `claude` and `agent` on PATH.
 //
 // Every agent, and whatever it starts, inherits INFERPILOT_RUN_TAG, which names this runner. On SIGINT or
-// SIGTERM the runner stops them all (servers started with setsid or nohup too), frees the machine lock
+// SIGTERM the runner stops them all (servers started with setsid or nohup too, and, for a task with a
+// container, those started there with docker exec -e INFERPILOT_RUN_TAG), frees the machine lock
 // (scripts/run_lock.py) and writes a result with status "interrupted" (exit 130 or 143); at its end it
 // stops what its agents left running. At the start it lists what runs that are gone left running.
 import { spawnSync } from 'node:child_process';
@@ -38,7 +39,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BACKENDS, cliBackend } from './backends.mjs';
 import { createRuntime } from './engine.mjs';
-import { TAG, orphans, runTag, signal, stopPids, tagged } from './procs.mjs';
+import { TAG, orphans, runTag, signal, stopInContainer, stopPids, tagged } from './procs.mjs';
 
 function parse(argv) {
   const out = { _: [] };
@@ -189,6 +190,7 @@ async function interrupted(sig, code) {
     backend.stopAll('SIGKILL');
   })();
   await Promise.all([groups, stopPids(mine)]);
+  inContainer();
   releaseLock();
   const result = { status: 'interrupted', signal: sig, at, summary: rt.summary(),
     next: { say: `Interrupted by ${sig}${at ? ` in ${at}` : ''}; its agents and what they started were stopped and the `
@@ -205,7 +207,17 @@ process.on('SIGTERM', () => interrupted('SIGTERM', 143));
 async function tidyUp() {
   const still = await stopPids(mine);
   if (still.length) rt.log(`stopped ${still.length} process(es) the run's agents left running:${listed(still)}`);
+  inContainer();
   releaseLock();
+}
+
+// A task with a container (InferPilot on the host) started its servers there: stop those too.
+function inContainer() {
+  const box = typeof args.container === 'string' ? args.container.trim() : '';
+  if (!box) return;
+  const got = stopInContainer(box, tag);
+  if (got === null) rt.log(`!! could not look for this run's processes in container ${box}: check it before reusing its GPUs`);
+  else if (got.length) rt.log(`stopped ${got.length} process(es) of this run in container ${box}: ${got.join(' ')}`);
 }
 
 try {

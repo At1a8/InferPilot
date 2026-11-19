@@ -582,6 +582,15 @@ class RunLockTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": "box2"}):
             self.assertEqual(run_lock.acquire(self.lock, self.b, gpus=[0])["status"], "acquired", "GPU 0 was let go")
 
+    def test_two_containers_on_the_same_path_without_runner_tags_do_not_share_it(self):
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": "box1"}):
+            run_lock.acquire(self.lock, self.a, gpus=[0], now=1000.0)
+        os.utime(self.a, (1000.0, 1000.0))
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": "box2"}):
+            other = run_lock.acquire(self.lock, self.a, gpus=[1], now=1100.0)
+        self.assertEqual((other["status"], other["holder"]["container"]), ("busy", "box1"))
+        self.assertEqual([h["holder"]["gpus"] for h in run_lock.status(self.lock, now=1100.0)["holders"]], [[0]])
+
     @unittest.skipUnless(os.path.exists("/proc/self/stat"), "needs /proc")
     def test_a_zombie_runner_is_gone(self):
         pid = os.fork()
@@ -790,6 +799,16 @@ class LeakScanTest(unittest.TestCase):
         self.assertTrue(any(f["where"].startswith("commit ") for f in out["leaks"]), out)
         self.assertIn("%s:3" % body, [f["where"] for f in out["leaks"]])
         self.assertEqual(out["identities"], ["root <root@gpu-node-17>"])
+
+    def test_an_added_line_that_reads_like_a_file_header_is_content(self):
+        self.commit("++ /home/alice/private\n")
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]), (1, ["++ /home/alice/private"]))
+
+    def test_an_external_diff_tool_cannot_hide_a_line(self):
+        self.commit('LOG = "/home/alice/run.log"\n')
+        subprocess.run(["git", "-C", str(self.repo), "config", "diff.external", "true"], check=True)
+        self.assertEqual(self.scan()[0], 1)
 
     def test_a_line_a_later_commit_removed_is_still_found(self):
         self.commit('LOG = "/home/alice/run.log"\n', message="first try")

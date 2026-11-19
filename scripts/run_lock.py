@@ -159,11 +159,12 @@ def acquire(lock: str, run_dir: str, task: str = "", mode: str = "", idle_hours:
         took = None
         mine = next((h for h in holders if h["run_dir"] == run_dir), None)
         if mine is not None:
-            if (mine.get("run_tag", "") == tag and mine.get("container", "") == container
-                    and mine.get("pid_ns", "") == pid_ns() and (not gpus or (mine.get("gpus") or []) == gpus)):
+            same = (mine.get("run_tag", "") == tag and mine.get("container", "") == container
+                    and mine.get("pid_ns", "") == pid_ns())
+            if same and (not gpus or (mine.get("gpus") or []) == gpus):
                 return {"status": "acquired", "holder": mine}
             reason = stale_reason(mine, now)
-            if mine.get("run_tag", "") != tag and not reason:
+            if not same and not reason:  # someone else's live hold on this path, two containers' alike
                 return {"status": "busy", "holder": mine}
             holders = [h for h in holders if h is not mine]
             took = {"run_dir": run_dir, "reason": reason} if reason else None

@@ -32,18 +32,23 @@ def git(repo: str, *args: str) -> str:
 
 
 def added_lines(diff: str):
-    """(path, line number, text) of every line a unified diff adds."""
-    path, n = "", 0
+    """(path, line number, text) of every line a unified diff adds. File headers are read only before a
+    file's first hunk: inside one, a line that adds '++ x' reads '+++ x' and is content."""
+    path, n, in_hunk = "", 0, False
     for line in diff.splitlines():
-        if line.startswith("+++ "):
-            path = line[6:] if line.startswith("+++ b/") else line[4:]
+        if line.startswith("diff --git "):
+            in_hunk = False
         elif line.startswith("@@"):
+            in_hunk = True
             m = re.search(r"\+(\d+)", line)
             n = int(m.group(1)) if m else 0
+        elif not in_hunk:
+            if line.startswith("+++ "):
+                path = line[6:] if line.startswith("+++ b/") else line[4:]
         elif line.startswith("+"):
             yield path, n, line[1:]
             n += 1
-        elif not line.startswith("-"):
+        elif line.startswith(" "):
             n += 1
 
 
@@ -72,7 +77,9 @@ def main(argv=None) -> int:
     # Every outgoing commit's own diff, not the branch's net one: the push publishes the history, so a line
     # a later commit removed is still public.
     for sha in git(a.repo, "rev-list", "--reverse", "%s..HEAD" % a.base).split():
-        for path, n, text in added_lines(git(a.repo, "diff", "--no-color", "--unified=0", sha + "^", sha)):
+        # No external diff tool or textconv driver: they could show the scan something else than the commit.
+        diff = git(a.repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--unified=0", sha + "^", sha)
+        for path, n, text in added_lines(diff):
             if scan(text, a.host, allow):
                 found.append({"where": "%s %s:%d" % (sha[:10], path, n), "text": text.strip()[:200]})
     for sha in git(a.repo, "rev-list", "%s..HEAD" % a.base).split():

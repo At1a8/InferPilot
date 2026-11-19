@@ -2,6 +2,7 @@
 // process group misses what it started with setsid or nohup, the environment does not. A process
 // started with `docker exec` carries the tag only when it was given (-e INFERPILOT_RUN_TAG). Linux only:
 // without /proc nothing is found.
+import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync, readlinkSync } from 'node:fs';
 
 export const TAG = 'INFERPILOT_RUN_TAG';
@@ -68,6 +69,21 @@ export function tagged() {
 
 // What runs that are no longer running left behind.
 export const orphans = () => tagged().filter((p) => !runnerAlive(p.tag));
+
+// With InferPilot on the host, servers run in the task's container through `docker exec -e
+// INFERPILOT_RUN_TAG`: their environments are root's there and unreadable from the host, and stopping the
+// local docker client leaves them running. The container's root finds and stops them instead (SIGTERM,
+// SIGKILL after graceS). Resolves to the pids it signalled, or null when docker could not be run.
+export function stopInContainer(container, tag, graceS = 10) {
+  const script = 't="INFERPILOT_RUN_TAG=$1"; pids=""; '
+    + 'for d in /proc/[0-9]*; do tr "\\0" "\\n" < "$d/environ" 2>/dev/null | grep -qx "$t" && pids="$pids ${d#/proc/}"; done; '
+    + '[ -z "$pids" ] && exit 0; kill -TERM $pids 2>/dev/null; i=0; '
+    + 'while [ "$i" -lt "$2" ]; do alive=""; for p in $pids; do kill -0 "$p" 2>/dev/null && alive="$alive $p"; done; '
+    + '[ -z "$alive" ] && break; sleep 1; i=$((i + 1)); done; kill -KILL $pids 2>/dev/null; echo $pids';
+  const r = spawnSync('docker', ['exec', container, 'sh', '-c', script, 'sh', tag, String(graceS)],
+    { encoding: 'utf8', timeout: (graceS + 30) * 1000 });
+  return r.status === 0 ? String(r.stdout || '').trim().split(/\s+/).filter(Boolean) : null;
+}
 
 export function signal(pids, sig) {
   for (const pid of pids) {

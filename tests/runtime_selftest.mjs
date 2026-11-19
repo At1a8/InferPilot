@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { extractJson, validate } from '../runtime/schema.mjs';
 import { createRuntime, fmtTokens, scriptBody } from '../runtime/engine.mjs';
 import { BACKENDS, cliBackend } from '../runtime/backends.mjs';
-import { PID_NS, runnerAlive } from '../runtime/procs.mjs';
+import { PID_NS, runnerAlive, stopInContainer } from '../runtime/procs.mjs';
 
 const INFERPILOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TMP = mkdtempSync(path.join(tmpdir(), 'inferpilot-runtime-'));
@@ -384,6 +384,34 @@ sleep 42.25 & wait`);
     const st = JSON.parse(execFileSync('python3', [path.join(INFERPILOT, 'scripts', 'run_lock.py'), '--lock', lock, 'status'], { encoding: 'utf8' }));
     check(st.status === 'free', `the lock is ${st.status}`);
     check(/=== END \(interrupted by SIGTERM in Long\)/.test(log), 'the log ends with the interruption');
+  }],
+  ['procs: a task with a container has its tagged processes stopped there, by the container\'s root', async () => {
+    if (!existsSync('/proc/self/environ')) return;
+    const bin = path.join(TMP, 'fakedocker');
+    mkdirSync(bin, { recursive: true });
+    const calls = path.join(TMP, 'docker_calls.txt');
+    // docker exec <container> <command...>: here the command runs on this machine, as the container's root would.
+    writeFileSync(path.join(bin, 'docker'), `#!/bin/bash\necho "$*" >> ${calls}\n[ "$1" = exec ] || exit 1\nshift 2\nexec "$@"\n`);
+    chmodSync(path.join(bin, 'docker'), 0o755);
+    const old = process.env.PATH;
+    process.env.PATH = `${bin}:${old}`;
+    try {
+      const victim = spawn('sleep', ['48.25'], { env: { ...process.env, INFERPILOT_RUN_TAG: '424242-1-1' }, detached: true, stdio: 'ignore' });
+      victim.unref();
+      await sleep(200);
+      const got = stopInContainer('box', '424242-1-1', 2);
+      check(got && got.length === 1 && Number(got[0]) === victim.pid, `stopped ${JSON.stringify(got)}`);
+      await sleep(200);
+      check(spawnSync('pgrep', ['-f', 'sleep 48.25']).status !== 0, 'the tagged process in the container is gone');
+      const script = path.join(TMP, 'boxed.js');
+      writeFileSync(script, `phase('Only');\nawait agent('go', { label: 'only' });\nreturn { status: 'done' };`);
+      const r = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
+        '--args', '{"container": "box"}'], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('boxed.sh', 'echo done') }, encoding: 'utf8' });
+      check(r.status === 0 && /^exec box sh -c .* sh \d+-\d+-\d* 10$/m.test(readFileSync(calls, 'utf8')),
+        `the runner looked in the task's container at its end: ${readFileSync(calls, 'utf8').slice(-200)}`);
+    } finally {
+      process.env.PATH = old;
+    }
   }],
   ['run.mjs: what the agents left running is stopped at the end; orphans are listed, and stopped with --kill-orphans', async () => {
     if (!existsSync('/proc/self/environ')) return;
