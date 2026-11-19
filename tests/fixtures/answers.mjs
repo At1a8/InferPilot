@@ -31,6 +31,11 @@ export const DEFAULTS = {
   'issue_triager:triage': () => ({ priority: 'P0', category: 'crash', action: 'reproduce', reason: 'default config crash', existing_prs: [], triage_path: `${RUN}/issue_triage.md`, reply_draft_path: `${RUN}/reply.md` }),
   'issue_triager:reproduce': () => ({ reproduced: true, repro_cmd: 'bash repro.sh', evidence: 'segfault 3/3' }),
   'issue_triager:reply': () => ({ reply_draft_path: `${RUN}/reply_draft.md`, summary: 'fix prepared, PR to follow' }),
+  'issue_triager:spinoff': (ins) => ({ spinoffs: [
+    ...(ins.known_issues || []).map((k) => ({ id: k.id, source: 'known_issue', status: 'drafted',
+      draft_path: `${RUN}/spinoff/${k.id}.md`, task_definition: 'mode=issue, task=<issue URL>' })),
+    ...(ins.leads || []).map((l, i) => ({ id: `lead-${i + 1}`, source: 'lead', status: 'unconfirmed', note: l.title })),
+  ] }),
   'ci_guardian:classify': () => ({ failure_class: 'code_regression', failing_test_cmd: 'pytest test_x.py', window: 'a..b', evidence: 'new regression since 10-21', triage_path: `${RUN}/ci_triage.md` }),
   'ci_guardian:bisect': () => ({ culprit: 'deadbeef', confirmed: true, work_packages: [WP('WP1')], evidence: 'fails at culprit, passes at parent' }),
   'ci_guardian:bisect_fix': () => ({ fix_commit: 'feedface', confirmed: true, evidence: 'fails at parent, passes at fix' }),

@@ -53,7 +53,9 @@
 
 ## Known issues encountered
 
-<!-- Pre-existing failures, with the control that proved it and the `known_issues.md` entry. -->
+<!-- Pre-existing failures, with the control that proved it, the `known_issues.md` entry, and the upstream
+     issue that tracks it or its draft in `RUN_DIR/spinoff/` with the definition that starts it. Then the
+     unconfirmed leads, each with what would confirm it. -->
 
 ## Limitations and open items
 

@@ -175,6 +175,9 @@ produced so far.
   arguments that would run them later (`kernel_backend=geak` with `kernel_backend_dir`, or
   `kernel_backend=command` with `kernel_backend_command`; `knowledge/kernel_backends.md`). List reply
   drafts. State the timezone of every time.
+- List `spinoffs` with the known issues: for each, the upstream issue that tracks it or the issue draft
+  a human is to file, and the definition that starts InferPilot on it; then the unconfirmed leads, each
+  with what would confirm it.
 - Remove the baseline worktree if there is one (`git -C <framework_dir> worktree remove --force
   RUN_DIR/base`): the run directory keeps what the run found, not a copy of the code.
 - Add one row to `<exp_root>/index.md`, every run's line in one place (create it with this header when

@@ -10,10 +10,10 @@ gates:
 
 | Mode | Front end (replaces Spec / Recon / Design) | Then |
 |---|---|---|
-| `feature` | Spec → Recon → Design | Implement → Verify → Performance → Review → PR → Report |
-| `issue` | Triage → Reproduce → Diagnose (`issue_triage.md`) | Implement → Verify, with the issue's reproduction as an extra gate → Review → PR → Reply → Report |
-| `ci` | Classify → Bisect (`ci_triage.md`) | Implement → Verify, with the failing test as an extra gate → Review → PR → Report |
-| `perf` | Profile → Plan (`system_perf.md`) | Implement → Verify (correctness first) → Performance → Review → PR → Report |
+| `feature` | Spec → Recon → Design | Implement → Verify → Performance → Review → PR → (Spinoff) → Report |
+| `issue` | Triage → Reproduce → Diagnose (`issue_triage.md`) | Implement → Verify, with the issue's reproduction as an extra gate → Review → PR → (Spinoff) → Reply → Report |
+| `ci` | Classify → Bisect (`ci_triage.md`) | Implement → Verify, with the failing test as an extra gate → Review → PR → (Spinoff) → Report |
+| `perf` | Profile → Plan (`system_perf.md`) | Implement → Verify (correctness first) → Performance → Review → PR → (Spinoff) → Report |
 | `scan` | Collect → Dispatch | writes the day's report on the framework and a ranked task queue, and changes no code |
 
 Every mode starts from a task definition (`../templates/task_definition.md`). A request in plain
@@ -140,6 +140,23 @@ practice. Artifacts live in the run's working directory; the templates are in `.
 - `validation_report.md` summarises what was built, what was verified (with artifact paths), known
   limitations and open issues. Distil at most a few reusable lessons into the feature skill or the
   method docs; record new baseline bugs in `known_issues.md`.
+
+### Leads: what you find on the way
+
+A task runs into problems that are not its own: a bug in code read for something else, a failure on a
+path the change does not touch, a test that is broken for another reason, a broken image. They are
+worth as much as the task's own result, and chasing them inside the task costs the task its budget.
+
+- Any role that works on the task returns such a problem in `leads` and goes on: `title`, `observed`
+  (what happened, with counts), `where` (file, test, configuration), `evidence` (the log or line),
+  `reproduce` (the smallest command, when there is one). A failure the change may have caused is not a
+  lead: it goes through Verify and Investigate.
+- Before the report, the Spinoff phase (`roles/issue_triager.md`) links each known issue (a
+  `baseline_bug`) to the upstream issue that tracks it, or drafts one for a human to file, with the
+  definition that starts InferPilot on it. It runs nothing on the GPUs by default: leads are looked up
+  upstream and otherwise listed as unconfirmed, with the command that would show them on the base
+  commit. With `confirm_leads`, it first checks each lead on the base commit without the change; what
+  shows there becomes a known issue and is drafted like the others.
 
 ## What the first port taught (sglang HiSparse V2 → DeepSeek-V4.1, ROCm)
 
