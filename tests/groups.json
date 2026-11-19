@@ -11,7 +11,7 @@
     "code": ["runFeature"],
     "paths": ["knowledge/feature_skills/*"],
     "dry_run": ["feature"],
-    "unittest": ["test_scripts.FindSkillTest", "test_scripts.EvalAccuracyTest", "test_scripts.FewShotGsm8kTest"]
+    "unittest": ["test_scripts.FindSkillTest", "test_scripts.EvalAccuracyTest"]
   },
   "issue": {
     "about": "triage, reproduce and fix an issue",
@@ -32,7 +32,7 @@
     "code": ["runPerf", "runFeature"],
     "paths": [],
     "dry_run": ["perf"],
-    "unittest": ["test_scripts.EvalAccuracyTest", "test_scripts.FewShotGsm8kTest"]
+    "unittest": ["test_scripts.EvalAccuracyTest"]
   },
   "scan": {
     "about": "collect and dispatch, and the daily report",

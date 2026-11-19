@@ -19,9 +19,10 @@ Inputs: `extra_gates` (mode gates such as `issue_repro` or `failing_test`), `rou
    task has none); confirm the effective flags from the `server_args=` line of each log.
 2. Run the gates the spec or the plan names, in this order, each against the baseline **in the same
    scheduling pattern**:
-   - G0 feature off; G2 accuracy: 5-shot GSM8K on all 1319 questions, once per arm, with
-     `<inferpilot_dir>/scripts/eval_accuracy.sh` (its default set), at most 1 point below the
-     baseline, with no token-level comparison; a set that misses is reproduced at most twice and
+   - G0 feature off; G2 accuracy with `<inferpilot_dir>/scripts/eval_accuracy.sh`, once per arm, every
+     set at most 1 point below the baseline, with no token-level comparison: gsm8k (1319, sgl-eval) for
+     a lossless change, and gsm8k, gpqa_diamond (sgl-eval) and simple_qa (evalscope) for one the spec
+     says may lose accuracy; a set that misses is reproduced at most twice and
      judged on the median of its runs (other suites or more runs only when `goal` or the acceptance
      matrix asks); G3 long context sized so the feature engages; G4 stability under capacity
      pressure. G3/G4 at two or more concurrencies, at least 4 runs each (6 when an intermittent failure
@@ -31,11 +32,11 @@ Inputs: `extra_gates` (mode gates such as `issue_repro` or `failing_test`), `rou
    - Every gate in `extra_gates`: `issue_repro` (the reproduction no longer fails), `failing_test`
      (the failing CI test passes on every lane it failed on).
    - **Cheap first, and fail fast.** G0 and G2 take minutes, G3 and G4 an hour: a blocking gate that
-     fails ends the round, and the gates after it are reported `not run`. Suites that take hours (sets
-     the goal adds with thinking on, simple_qa, long-context sets) run only once every other gate of
-     the round has passed.
-   - **Time caps,** unless the spec names others: G0 and G2 30 min each, G3 and G4 60 min each, a
-     suite the goal adds 4 h. A suite past its cap is stopped (the server too) and its gate fails as a
+     fails ends the round, and the gates after it are reported `not run`. The long suites (gpqa_diamond,
+     simple_qa, sets the goal adds, long-context sets) run only once every other gate of the round has
+     passed.
+   - **Time caps,** unless the spec names others: G0 30 min, gsm8k 1 h, gpqa_diamond and simple_qa 4 h
+     each, G3 and G4 60 min each, a suite the goal adds 4 h. A suite past its cap is stopped (the server too) and its gate fails as a
      hang, with how far it got.
    - **Report-only items** of the acceptance matrix run like the others; one that misses is listed in
      `failures` with `blocking: false`, never investigated, and `all_pass` counts the blocking ones only.

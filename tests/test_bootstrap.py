@@ -86,6 +86,9 @@ class VersionAndSettingsTest(unittest.TestCase):
             self.assertEqual((s["evalscope_venv"], s["evalscope_version"]), (bs.EVALSCOPE_VENV, ""))
             s = bs.settings({"PWD": str(work), "HOME": d, "EVALSCOPE_VENV": "~/es", "EVALSCOPE_VERSION": "1.15.0"})
             self.assertEqual((s["evalscope_venv"], s["evalscope_version"]), (os.path.join(d, "es"), "1.15.0"))
+            self.assertEqual((s["sgl_eval_venv"], s["sgl_eval_version"]), (bs.SGL_EVAL_VENV, ""))
+            s = bs.settings({"PWD": str(work), "HOME": d, "SGL_EVAL_VENV": "~/se", "SGL_EVAL_VERSION": "0.1.3"})
+            self.assertEqual((s["sgl_eval_venv"], s["sgl_eval_version"]), (os.path.join(d, "se"), "0.1.3"))
             self.assertFalse(s["cursor"])
             s = bs.settings({"PWD": str(work), "HOME": d, "INFERPILOT_CURSOR": "1", "INFERPILOT_NODE_VERSION": "22"})
             self.assertEqual((s["cursor"], s["node_version"]), (True, "22"))
@@ -925,6 +928,42 @@ class EvalscopeTest(unittest.TestCase):
         self.assertIn("EVALSCOPE=%s" % self.exe, q.err.getvalue())
 
 
+class SglEvalTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        (self.tmp / "bin").mkdir()
+        self.fw = self.tmp / "sglang"
+        (self.fw / "python").mkdir(parents=True)
+        (self.fw / "python" / "pyproject.toml").write_text('test = [\n  "pytest",\n  "sgl-eval==0.1.3",\n]\n')
+        self.s = dict(S(tmp.name), framework_dir=str(self.fw), sgl_eval_venv=str(self.tmp / "sgl-eval"),
+                      sgl_eval_link=str(self.tmp / "bin" / "sgl-eval"))
+        self.exe = self.tmp / "sgl-eval" / "bin" / "sgl-eval"
+
+    def test_the_version_the_framework_pins_in_a_venv_of_its_own(self):
+        def pip_installs_it(cmd):
+            if "pip" in cmd:
+                make_exe(self.exe)
+            return OK
+        with mock.patch.object(bs.shutil, "which", return_value=None), \
+                mock.patch.object(bs, "_run", side_effect=pip_installs_it) as run, Quiet():
+            self.assertEqual(bs.ensure_sgl_eval(self.s), ("installed", str(self.exe)))
+        self.assertEqual(run.call_args_list[-1][0][0][-1], "sgl-eval==0.1.3")
+        self.assertEqual(os.readlink(self.s["sgl_eval_link"]), str(self.exe))
+
+    def test_a_given_version_wins_and_none_pinned_takes_the_newest(self):
+        self.assertEqual(bs.pinned_sgl_eval(str(self.fw)), "0.1.3")
+        self.assertEqual(bs.pinned_sgl_eval(str(self.tmp / "nowhere")), "")
+        for s, spec in ((dict(self.s, sgl_eval_version="0.2.0"), "sgl-eval==0.2.0"),
+                        (dict(self.s, framework_dir=str(self.tmp / "nowhere")), "sgl-eval")):
+            with mock.patch.object(bs.shutil, "which", return_value=None), \
+                    mock.patch.object(bs, "_run", side_effect=[OK, SimpleNamespace(returncode=1)]) as run, Quiet() as q:
+                self.assertEqual(bs.ensure_sgl_eval(s)[0], "failed")
+            self.assertEqual(run.call_args_list[-1][0][0][-1], spec)
+            self.assertIn("scripts/eval_accuracy.sh", q.err.getvalue())
+
+
 def node_tarball(version, plat="linux-x64"):
     buf = io.BytesIO()
     name = "node-%s-%s" % (version, plat)
@@ -1186,7 +1225,8 @@ class CursorNextStepsTest(unittest.TestCase):
 
 class MainTest(unittest.TestCase):
     STEPS = ["ensure_checkout", "ensure_keys", "ensure_claude_code", "ensure_path", "ensure_claude_config",
-             "ensure_git_trust", "ensure_git_identity", "ensure_shell_env", "ensure_framework", "ensure_evalscope"]
+             "ensure_git_trust", "ensure_git_identity", "ensure_shell_env", "ensure_framework", "ensure_evalscope",
+             "ensure_sgl_eval"]
     CURSOR_STEPS = ["ensure_node", "ensure_cursor_cli"]
 
     def run_main(self, argv, container=False, root=False, failing=None, status=None, env_extra=None):

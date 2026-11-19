@@ -25,10 +25,11 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
      `root` identity (step 2 resets those); each finding in the code is a work package, and what the
      last scan (step 5) still finds goes in `leaks`.
    - **Tests the PR carries:** only tests the repository's CI runs, the fewest that cover the change: a
-     change to outputs carries one end-to-end accuracy test at the feature's defaults (sglang:
-     `test/registered/amd/accuracy/...` with `register_amd_ci`, 5-shot GSM8K). The oracles and
-     harnesses of InferPilot's gates (G1, G3–G5) stay in `RUN_DIR/tests`: a work package takes them off
-     the branch.
+     change to outputs carries one end-to-end accuracy test at the feature's defaults (sglang: GSM8K
+     under `test/registered/amd/accuracy/...` with `register_amd_ci`, scored through sgl-eval:
+     `GSM8KMixin` with `gsm8k_backend = "sgl_eval"`, as its `write-sglang-test` skill says). The
+     oracles and harnesses of InferPilot's gates (G1, G3–G5) stay in `RUN_DIR/tests`: a work package
+     takes them off the branch.
    - **The smallest diff:** every hunk is needed by the change. Code CUDA also runs changes only by
      addition: a new branch behind the switch or a module-level platform constant (sglang:
      `_is_hip = is_hip()` at import, never a call such as `get_platform().is_hip` per use), no
@@ -61,7 +62,7 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
    feature on (`launch_checked`; false, with the error, is a work package).
 5. **Description:** write `RUN_DIR/pr_body.md` from `templates/pr_body.md` and the validation report,
    following `pr_playbook.md` §Description (the template kept as it is, Motivation in at most 100 words,
-   one sentence per changed file, HIP-only checked and said, 5-shot GSM8K 1319 at the defaults, one speed
+   one sentence per changed file, HIP-only checked and said, GSM8K 1319 at the defaults, one speed
    scenario against the baseline, the way a person writes); title in the repository's convention
    (sglang: `[Type] [Hardware] scope: title`). When the task was to push an existing PR, write the
    verification comment for that PR instead, at the same path. Run the leak scan again with

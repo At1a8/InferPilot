@@ -150,7 +150,8 @@ agent status                    # Logged in as ...
 | git 身份 | root 以 key 文件（或环境变量）里的 `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` 提交，所以不会出现作者为 `root@<本机主机名>` 的提交；两者都没有时，它会提示，不会自己编一个 |
 | shell | 在 root 的 `~/.bashrc` 里设置 `PYTHONDONTWRITEBYTECODE=1`（宿主机挂载目录里的 checkout 不会出现 root 所有的 `__pycache__`）和 `DISABLE_AUTOUPDATER=1`，并加载 key 文件，之后才放进去的也会加载；设置了 `LLM_GATEWAY_KEY` 且没有 `ANTHROPIC_BASE_URL` 时，让 Claude Code 走 AMD LLM 网关 |
 | 框架 | 镜像里的 `/sgl-workspace/sglang`，原样保留：用每日镜像新建的容器里，run_docker.sh 已经把它切到当前的 main（第 2 步）；用指定的 `IMAGE` 新建的容器、以及再次进入的容器，代码保持原样。这里有未提交的改动时会提示，因为任务的 Setup 会因此停下，直到你自己处理（用指定 `IMAGE` 新建的容器里，就是镜像构建对打包文件的改动）；用 `--framework-dir` 可以改用宿主机上的 checkout（已有的原样使用，缺失时带完整历史克隆） |
-| evalscope | 供 `scripts/eval_accuracy.sh` 使用：装在单独的 venv `/opt/evalscope` 里（约一分钟、1.2 GB），并链接为 `/usr/local/bin/evalscope`。不装进镜像的 Python，否则会把 `datasets` 和 `fsspec` 降到比 sglang 自带的更低的版本；`PATH` 上已经有 `evalscope` 时保留原样 |
+| evalscope | 供 `scripts/eval_accuracy.sh` 测 simple_qa 使用：装在单独的 venv `/opt/evalscope` 里（约一分钟、1.2 GB），并链接为 `/usr/local/bin/evalscope`。不装进镜像的 Python，否则会把 `datasets` 和 `fsspec` 降到比 sglang 自带的更低的版本；`PATH` 上已经有 `evalscope` 时保留原样 |
+| sgl-eval | 供 `scripts/eval_accuracy.sh` 测 gsm8k 和 gpqa_diamond 使用：sglang 自己的精度评测客户端，版本取框架 `python/pyproject.toml` 里固定的那个，装在单独的 venv `/opt/sgl-eval` 里，并链接为 `/usr/local/bin/sgl-eval`；`PATH` 上已经有时保留原样 |
 | node、cursor | node 在加 `--runner` 或 `--cursor` 时运行，供 `runtime/run.mjs` 使用：安装 Node.js（默认最新的 LTS，可用 `INFERPILOT_NODE_VERSION` 指定），按 nodejs.org 的校验和核对后解压到 `/opt/node/<版本>`，并链接到 `/usr/local/bin`。cursor 只在加 `--cursor` 时运行，供 `--backend cursor` 使用：用官方安装脚本装 Cursor CLI（`agent`）。已有的 Node.js 20+ 或 `agent` 保留原样。CLI 需要你自己登录，每个容器一次：`NO_OPEN_BROWSER=1 agent login`，在浏览器里打开打印出的链接；或者在宿主机上你的 key 文件里设置 `CURSOR_API_KEY` |
 | 检查 | GPU、sglang、evalscope、API 访问、`GITHUB_TOKEN`，key 文件里设置的也算；加 `--cursor` 时还检查 Cursor CLI（只检测） |
 
@@ -290,6 +291,7 @@ docker cp <name>:/workspace/inferpilot/exp/<run> ~/
 | `CLAUDE_VERSION`、`CLAUDE_BIN_DIR` | bootstrap | `latest`，`~/.local/bin` |
 | `CLAUDE_CONFIG_DIR` | Claude Code、bootstrap | 不设置（`~`）：Claude Code 自己的变量，指它的配置所在的目录；bootstrap 把首次启动的回答写在那里 |
 | `EVALSCOPE_VERSION`、`EVALSCOPE_VENV` | bootstrap | `latest`，`/opt/evalscope` |
+| `SGL_EVAL_VERSION`、`SGL_EVAL_VENV` | bootstrap | 框架固定的版本，`/opt/sgl-eval` |
 | `INFERPILOT_CLAUDE`、`INFERPILOT_CURSOR`、`INFERPILOT_RUNNER`、`INFERPILOT_NODE_VERSION` | bootstrap | 不设置；设为 `1` 时分别等同于 `--claude`、`--cursor`、`--runner`（设为 `0` 表示关闭；前两个都没有时装 Claude Code）；默认装最新的 Node.js LTS（`22` 表示最新的 22.x，也可以写确切的 `v22.11.0`） |
 | `INFERPILOT_CLAUDE_BIN`、`INFERPILOT_CURSOR_BIN` | `runtime/run.mjs` | `PATH` 上的 `claude`、`agent`：`--backend claude` 和 `--backend cursor` 运行的 CLI |
 | `INFERPILOT_GIT_NAME`、`INFERPILOT_GIT_EMAIL` | `~/.inferpilot_env`、bootstrap | 不设置；容器里 root 提交时用的身份 |
@@ -367,8 +369,7 @@ python3 scripts/run_lock.py release --force   # 那个运行已经中断时，�
 |---|---|
 | `scripts/scan_issues.py` | 开放的 AMD issue，附关联 PR、回复情况和预计的 60 天自动关闭日期 |
 | `scripts/scan_ci.py` | 从 main 上 AMD CI 自己的运行和日志读出现状（每个失败 job：从何时开始失败、上次通过的时间、失败的测试、第一条错误），以及 Failure Tracker 的失败簇 |
-| `scripts/eval_accuracy.sh` | 测一个正在运行的 server 的精度：默认通过 `scripts/few_shot_gsm8k.py` 跑一遍 5-shot GSM8K 全部 1319 题（G2 门禁，比基线低不超过 1 个点）；其他测试集按名字指定，走 evalscope（bootstrap 会安装；有损特性的目标要求时加 gpqa_diamond 和 simple_qa）；key 只从环境变量读取 |
-| `scripts/few_shot_gsm8k.py` | 对 OpenAI 兼容的 server 跑 5-shot GSM8K，用 sglang 的 few-shot prompt，贪心；只依赖标准库 |
+| `scripts/eval_accuracy.sh` | 测一个正在运行的 server 的精度，即 G2 门禁（每个测试集比基线低不超过 1 个点）：默认跑 gsm8k 全部 1319 题，gsm8k 和 gpqa_diamond 走 sgl-eval；simple_qa（LLM judge 打分）和其他测试集走 evalscope；可能有损的改动跑 gsm8k、gpqa_diamond 和 simple_qa 三个；key 只从环境变量读取 |
 | `scripts/scan_upstream.py` | 已合入的上游提交：新增的 CUDA 门控、CUDA 优先的特性、新模型 |
 | `scripts/audit_platform_gates.py` | 换到新架构时需要重新检查的平台门控（在 gfx1250 上为真的能力判断、wave32 假设） |
 | `scripts/audit_host_syncs.py` | 热路径上的 host-device 同步和拷贝候选点（供 profile 参考的线索） |

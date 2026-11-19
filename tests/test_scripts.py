@@ -28,7 +28,6 @@ import check_framework_skills  # noqa: E402
 import latest_image  # noqa: E402
 import daily_report  # noqa: E402
 import leak_scan  # noqa: E402
-import few_shot_gsm8k  # noqa: E402
 import find_skill  # noqa: E402
 import gpu_status  # noqa: E402
 import propose_knowledge  # noqa: E402
@@ -238,122 +237,8 @@ class DailyReportTest(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("bash"), "needs bash")
-def write_gsm8k(path: Path, n: int) -> list:
-    """n GSM8K-shaped rows: question q<i>, reference answer 3*i after '####'."""
-    rows = [{"question": "q%d?" % i, "answer": "Work for %d.\n#### %d" % (i, 3 * i)} for i in range(n)]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
-    return rows
-
-
-class FakeCompletions:
-    """An OpenAI completions server on 127.0.0.1 that answers q<i> with 3*i for i in `right`, else 999,
-    and fails every request for i in `fail`."""
-
-    def __init__(self, right=(), fail=()):
-        import http.server
-        import threading
-        outer = self
-        self.right, self.fail, self.prompts = set(right), set(fail), []
-
-        class Handler(http.server.BaseHTTPRequestHandler):
-            def log_message(self, *a):
-                pass
-
-            def reply(self, code, body):
-                data = json.dumps(body).encode()
-                self.send_response(code)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-
-            def do_GET(self):
-                if self.path == "/v1/models":
-                    self.reply(200, {"data": [{"id": "fake-model"}]})
-                elif self.path == "/server_info":
-                    self.reply(200, {"internal_states": [{"avg_spec_accept_length": 6.5}]})
-                else:
-                    self.reply(200, {})
-
-            def do_POST(self):
-                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
-                if self.path != "/v1/completions":
-                    return self.reply(200, {})
-                outer.prompts.append(body)
-                i = int(re.findall(r"Question: q(\d+)\?\nAnswer:$", body["prompt"])[0])
-                if i in outer.fail:
-                    return self.reply(500, {"error": "boom"})
-                text = " So it is %d." % (3 * i if i in outer.right else 999)
-                self.reply(200, {"choices": [{"text": text}], "usage": {"completion_tokens": 5}})
-
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.url = "http://127.0.0.1:%d" % self.server.server_address[1]
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-
-    def __enter__(self):
-        self.thread.start()
-        return self
-
-    def __exit__(self, *a):
-        self.server.shutdown()
-        self.server.server_close()
-
-
-class FewShotGsm8kTest(unittest.TestCase):
-    """scripts/few_shot_gsm8k.py against a local fake server."""
-
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.tmp = Path(tmp.name)
-        self.data = self.tmp / "gsm8k.jsonl"
-        write_gsm8k(self.data, 8)
-
-    def run_main(self, server, *extra):
-        out = io.StringIO()
-        with redirect_stdout(out), redirect_stderr(io.StringIO()):
-            rc = few_shot_gsm8k.main(["--api-url", server.url + "/v1", "--data-path", str(self.data), "--tag", "t",
-                                   "--result-root", str(self.tmp / "res"), "--parallel", "4", "--retries", "0",
-                                   *extra])
-        return rc, out.getvalue()
-
-    def test_answer_value_is_the_last_integer(self):
-        self.assertEqual(few_shot_gsm8k.answer_value("1,234 apples, then 56."), 56)
-        self.assertEqual(few_shot_gsm8k.answer_value("Step one.\n#### 1,319"), 1319)
-        self.assertIsNone(few_shot_gsm8k.answer_value("no number"))
-
-    def test_scores_every_question_with_five_shots_greedy(self):
-        with FakeCompletions(right=[0, 1, 2, 3, 4, 5]) as server:
-            rc, out = self.run_main(server)
-        self.assertEqual(rc, 0, out)
-        self.assertEqual(len(server.prompts), 8)
-        first = next(p for p in server.prompts if p["prompt"].endswith("Question: q7?\nAnswer:"))
-        self.assertTrue(first["prompt"].startswith("Question: q0?\nAnswer: Work for 0.\n#### 0\n\nQuestion: q1?"))
-        self.assertEqual(first["prompt"].count("####"), 5)
-        self.assertEqual((first["temperature"], first["max_tokens"], first["model"]), (0, 512, "fake-model"))
-        self.assertIn("Question", first["stop"])
-        summary = (self.tmp / "res" / "summary.txt").read_text()
-        self.assertIn("t gsm8k_5shot: accept_length=[6.5]", summary)
-        self.assertIn("'accuracy': 0.75, 'invalid': 0.0", summary)
-        answers = [json.loads(line) for line in (self.tmp / "res" / "t_gsm8k_5shot.jsonl").read_text().splitlines()]
-        self.assertEqual([a["pred"] == a["label"] for a in answers], [True] * 6 + [False] * 2)
-
-    def test_a_failed_request_fails_the_run_and_writes_no_score(self):
-        with FakeCompletions(right=range(8), fail=[3]) as server:
-            rc, out = self.run_main(server)
-        self.assertEqual(rc, 1)
-        self.assertIn("errors=1", out)
-        self.assertFalse((self.tmp / "res" / "summary.txt").exists())
-
-    def test_no_server_is_an_error(self):
-        with redirect_stderr(io.StringIO()):
-            rc = few_shot_gsm8k.main(["--api-url", "http://127.0.0.1:9/v1", "--data-path", str(self.data)])
-        self.assertEqual(rc, 1)
-
-
 class EvalAccuracyTest(unittest.TestCase):
-    """scripts/eval_accuracy.sh against a fake server (curl) and a fake evalscope."""
+    """scripts/eval_accuracy.sh against a fake server (curl), a fake evalscope and a fake sgl-eval."""
 
     SCRIPT = SCRIPTS / "eval_accuracy.sh"
 
@@ -364,7 +249,8 @@ class EvalAccuracyTest(unittest.TestCase):
         fake = self.tmp / "bin"
         fake.mkdir()
         self.calls = self.tmp / "evalscope_calls.txt"
-        # The server answers /models and /server_info; the judge probe (the call with -w) answers FAKE_JUDGE.
+        # The server answers /models and /server_info; the judge probe (the call with -w) answers FAKE_JUDGE;
+        # ModelScope's GPQA file (-o <file>) holds two rows.
         (fake / "curl").write_text(textwrap.dedent("""\
             #!/bin/bash
             url="${@: -1}"
@@ -372,8 +258,31 @@ class EvalAccuracyTest(unittest.TestCase):
             case "$url" in
               */v1/models) echo '{"data": [{"id": "fake-model"}]}' ;;
               */server_info) echo '{"internal_states": [{"avg_spec_accept_length": 4.0}]}' ;;
+              *modelscope.cn*gpqa_diamond*)
+                prev=""; for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
+                printf '%s\\n' '{"Question": "q1"}' '{"Question": "q2"}' > "$out" ;;
             esac
             """))
+        # sgl-eval writes <out dir>/sgl_eval_<name>_<time>/metrics.json; FAKE_ERROR_RATE and FAKE_NUM spoil it.
+        (fake / "sgl-eval").write_text(textwrap.dedent("""\
+            #!/usr/bin/env python3
+            import json, os, sys
+            argv = sys.argv[1:]
+            with open(os.environ["CALLS"] + ".sgl", "a") as f:
+                f.write(" ".join(argv) + "\\n")
+            name = argv[1]
+            n = {"gsm8k": 1319, "gpqa": 198}[name]
+            if "--num-examples" in argv:
+                n = min(n, int(argv[argv.index("--num-examples") + 1]))
+            d = os.path.join(argv[argv.index("--out-dir") + 1], "sgl_eval_%s_20261119-120000" % name)
+            os.makedirs(d, exist_ok=True)
+            agg = {"score": 0.95, "error_rate": float(os.environ.get("FAKE_ERROR_RATE", 0)), "truncated_rate": 0.0}
+            with open(os.path.join(d, "metrics.json"), "w") as f:
+                json.dump({"aggregate": agg, "num_examples": int(os.environ.get("FAKE_NUM", n)), "n_repeats": 1}, f)
+            """))
+        prepare = self.tmp / "pylib" / "sgl_eval" / "_vendored" / "nemo_skills" / "dataset" / "gpqa" / "prepare.py"
+        prepare.parent.mkdir(parents=True)
+        prepare.write_text('def format_entry(entry):\n    return {"problem": entry["Question"], "expected_answer": "A"}\n')
         (fake / "evalscope").write_text(textwrap.dedent("""\
             #!/bin/bash
             echo "$*" >> "$CALLS"
@@ -388,7 +297,12 @@ class EvalAccuracyTest(unittest.TestCase):
         for f in fake.iterdir():
             f.chmod(0o755)
         self.env = {"PATH": "%s:/usr/bin:/bin" % fake, "HOME": str(self.tmp), "CALLS": str(self.calls),
-                    "API_URL": "http://fake:30010/v1", "RESULT_ROOT": str(self.tmp / "results")}
+                    "API_URL": "http://fake:30010/v1", "RESULT_ROOT": str(self.tmp / "results"),
+                    "PYTHONPATH": str(self.tmp / "pylib")}
+
+    def sgl_calls(self):
+        p = Path(str(self.calls) + ".sgl")
+        return p.read_text().splitlines() if p.exists() else []
 
     def run_script(self, *args, **env):
         return subprocess.run(["bash", str(self.SCRIPT), *args], env={**self.env, **env},
@@ -401,27 +315,49 @@ class EvalAccuracyTest(unittest.TestCase):
         self.assertIsNone(re.search(r"hf_[A-Za-z0-9]{20,}", text), "a Hugging Face token in the script")
         self.assertIsNone(re.search(r"(KEY|TOKEN|NTID):-[^}$]", text), "a key, token or user name as a default")
 
-    def test_5shot_gsm8k_by_default_without_evalscope(self):
-        with FakeCompletions(right=range(8)) as server:
-            cache = self.tmp / "cache"
-            write_gsm8k(cache / "inferpilot" / "gsm8k_test.jsonl", 8)
-            r = self.run_script(API_URL=server.url + "/v1", XDG_CACHE_HOME=str(cache))
+    def test_gsm8k_once_by_default_through_sgl_eval(self):
+        r = self.run_script()
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-        self.assertFalse(self.calls.exists(), "evalscope ran for the default set")
+        self.assertFalse(self.calls.exists(), "evalscope ran for gsm8k")
+        calls = self.sgl_calls()
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0].startswith("run gsm8k --base-url http://fake:30010/v1 --model fake-model "), calls[0])
+        for arg in ("--n-repeats 1", "--thinking", "--chat-template-kwarg enable_thinking=true", "--reasoning-effort max"):
+            self.assertIn(arg, calls[0])
+        self.assertNotIn("--max-tokens", calls[0], "no output cap unless MAX_TOKENS is given")
         summary = (self.tmp / "results" / "summary.txt").read_text()
-        self.assertIn("eval gsm8k_5shot: accept_length=[6.5]", summary)
-        self.assertIn("'accuracy': 1.0", summary)
+        self.assertIn("eval gsm8k: accept_length=[4.0] aggregate={'score': 0.95, 'num': 1319,", summary)
 
-    def test_chat_gsm8k_once_through_evalscope(self):
-        r = self.run_script("gsm8k")
+    def test_gpqa_diamond_from_modelscope_in_sgl_evals_own_form(self):
+        r = self.run_script("gpqa_diamond", MAX_TOKENS="4096", ENABLE_THINKING="0", REASONING_EFFORT="")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        data = self.tmp / "results" / "gpqa_diamond.sgl_eval.jsonl"
+        call = self.sgl_calls()[0]
+        for arg in ("run gpqa ", "--from-dataset %s" % data, "--max-tokens 4096", "--no-thinking"):
+            self.assertIn(arg, call)
+        self.assertEqual([json.loads(line)["problem"] for line in data.read_text().splitlines()], ["q1", "q2"])
+        hf = self.run_script("gpqa_diamond", DATASET_HUB="huggingface", RESULT_ROOT=str(self.tmp / "hf"))
+        self.assertEqual(hf.returncode, 0, hf.stderr)
+        self.assertNotIn("--from-dataset", self.sgl_calls()[-1])
+
+    def test_a_failed_request_or_a_missing_question_fails_an_sgl_eval_set(self):
+        r = self.run_script("gsm8k", FAKE_ERROR_RATE="0.01")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("1.00% of the requests failed", r.stderr)
+        self.assertFalse((self.tmp / "results" / "summary.txt").exists())
+        short = self.run_script("gsm8k", FAKE_NUM="1300")
+        self.assertEqual(short.returncode, 1)
+        self.assertIn("1300 of 1319 questions", short.stderr)
+        self.assertEqual(self.run_script("gsm8k", LIMIT="5000").returncode, 0, "LIMIT above the count is all of it")
+
+    def test_an_evalscope_set_once(self):
+        r = self.run_script("mmlu_pro")
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         calls = [line for line in self.calls.read_text().splitlines() if line.startswith("eval ")]
         self.assertEqual(len(calls), 1)
-        self.assertIn("--datasets gsm8k", calls[0])
+        self.assertIn("--datasets mmlu_pro", calls[0])
         self.assertIn("--repeats 1", calls[0])
-        summary = (self.tmp / "results" / "summary.txt").read_text()
-        self.assertIn("eval gsm8k: accept_length=[4.0]", summary)
-        self.assertIn("'num': 1319", summary)
+        self.assertIn("eval mmlu_pro: accept_length=[4.0]", (self.tmp / "results" / "summary.txt").read_text())
 
     def test_options_reach_evalscope_whole(self):
         data = self.tmp / "long bench"
@@ -645,7 +581,7 @@ class BaselineCacheTest(unittest.TestCase):
         self.server.write_text("python -m sglang.launch_server --tp 1\n")
         self.run_dir = self.root / "run"
         (self.run_dir / "accuracy").mkdir(parents=True)
-        (self.run_dir / "accuracy" / "summary.txt").write_text("baseline gsm8k_5shot: aggregate={'accuracy': 0.91}\n")
+        (self.run_dir / "accuracy" / "summary.txt").write_text("baseline gsm8k: aggregate={'score': 0.91}\n")
         self.cache = str(self.root / "cache")
 
     def key(self, **over):

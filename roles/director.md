@@ -99,12 +99,12 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
      record the run they came from in the ledger, and skip the measurements below; the warm-up launch
      confirms the environment. A miss: measure, then `store` with the same key, `--run-dir RUN_DIR
      --files RUN_DIR/accuracy RUN_DIR/bench/baseline`.
-   - `feature`, `perf`: accuracy is 5-shot GSM8K on all 1319 questions, once
+   - `feature`, `perf`: accuracy is gsm8k on all 1319 questions, once
      (`API_URL=http://127.0.0.1:<port>/v1 TAG=baseline RESULT_ROOT=RUN_DIR/accuracy
-     bash <inferpilot_dir>/scripts/eval_accuracy.sh`, about a minute for an 8B model); other suites or
-     more runs only when `goal` asks (`eval_accuracy.sh gsm8k_5shot gpqa_diamond simple_qa` for a lossy
-     feature whose goal asks, `acceptance.md` §1.1; simple_qa needs the LLM judge, which the script
-     probes before any inference).
+     bash <inferpilot_dir>/scripts/eval_accuracy.sh`, sgl-eval), and for a change that may lose
+     accuracy (`acceptance.md` §1.1) gpqa_diamond and simple_qa as well (`eval_accuracy.sh gsm8k
+     gpqa_diamond simple_qa`; simple_qa goes through evalscope and needs the LLM judge, which the script
+     probes before any inference); other suites or more runs only when `goal` asks.
      Performance is the task's `client_script` with `OUT_DIR=RUN_DIR/bench/<tag>`, at least twice, and
      the spread recorded (`validation_doctrine.md`). The baseline passes when repeat runs agree within
      the recorded spread.
@@ -112,6 +112,10 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
      benchmark. Record them in `RUN_DIR/run.json` as given; every later measurement runs them unchanged.
      With `held_out` on, record the held-out operating point next to them (`perf_evaluation.md` §3:
      half the concurrency, when the client reads `CONCURRENCY`), before any number is seen.
+   - A feature that ports an upstream PR is measured on that PR's own scenarios (PHASE=spec, step 1):
+     Setup runs the task's `client_script` only when it reproduces them or `goal` names its workload;
+     otherwise the baseline's performance is measured on the scenarios the spec fixes, in the
+     Performance phase, and `baseline` says so.
    - `issue`, `ci`: prepare the environment the reproduction needs; run a baseline only if the task
      needs one now. Report `baseline_status: "skip"` with the reason otherwise.
 5. **Artifact:** the environment and baseline sections of `RUN_DIR/experiment_ledger.md`
@@ -129,15 +133,16 @@ Return:
 ## PHASE=spec (feature)
 
 1. Identify the source of truth (upstream PR, design or paper) and its commit; list unmerged
-   dependencies and the commits to cherry-pick. Write down the benchmark it reports: data sets, input
-   and output lengths, concurrency, sampling, thinking on or off, hardware and its numbers (a port's
-   first claim is that gain, reproduced here).
-   - **Feasibility.** Read the documented range of every model the feature uses (model cards and
-     configs: the context a draft model was trained at, `max_position_embeddings`, the checkpoint's
-     precision) and the range the source was tested on. A task workload outside it goes in the spec's
-     Feasibility section with what to expect (a speculative draft trained on 1k-token sequences
-     accepts little at 8k, so the feature slows that workload down), and in `notes`: the user decides
-     whether that workload stays a target.
+   dependencies and the commits to cherry-pick. Write down the scenarios it reports: data sets, input
+   and output lengths, concurrency, sampling, thinking on or off, hardware and its numbers. **A port is
+   measured on the source's own scenarios**: they are its workload, and the source's gain on them,
+   reproduced here, is its claim.
+   - **Out of scope by default.** A scenario the source did not consider, the task's own workload
+     included, is not measured unless `goal` names it; it goes under Non-goals with the reason (the
+     PARD-2 port: vLLM's PR measured 256-token answers at concurrency 1 and its drafts were trained on
+     1k-token sequences, so 8k/1k is no target). Read the documented range of every model the feature
+     uses (model cards and configs: the context a draft model was trained at,
+     `max_position_embeddings`, the checkpoint's precision) for that reason, in the Feasibility section.
 2. Select feature skills: `python3 <inferpilot_dir>/scripts/find_skill.py "<task title, request, goal>"`
    lists the candidates by tag; keep those whose `match` fits (`feature_skills/README.md`) and read a
    matching skill in full. A near match is the start of a port, not a plan to reuse blindly.
@@ -146,17 +151,17 @@ Return:
    acceptance criteria per gate with a named suite and a threshold relative to the same-pattern
    baseline, non-goals, unsupported combinations (each with a startup rejection), constraints, time-box.
 4. `perf_claim`: the measurable performance benefit the feature promises (workload, budget, metric,
-   size), or empty when it claims none. For a port, the first claim is the source's own benchmark
-   (step 1), measured with a client that reproduces it; the task's workload, when it has one, comes after
-   and is judged with the Feasibility section in view. Performance is measured on these and the guard
-   workloads its `goal` names, nothing more by default: with `guards` on, add guard workloads of your
+   size), or empty when it claims none. For a port, the claim is the source's gain on its own scenarios
+   (step 1), measured with a client that reproduces them: the task's `client_script` when it does,
+   otherwise one written to `RUN_DIR/scripts/` and recorded in `run.json`. Performance is measured on
+   these and the workloads `goal` names, nothing more by default: with `guards` on, add guard workloads of your
    own (`perf_evaluation.md` §2); with `sweep` on, points beyond the workload's own (more concurrencies
    or lengths, `acceptance.md` §1); with `held_out` on, the claim also names its held-out operating
    point (`perf_evaluation.md` §3), fixed here with the workload.
-5. Accuracy: 5-shot GSM8K 1319 once per arm, at most 1 point below the baseline, and no token-level
-   comparison (`validation_doctrine.md`, G2); for a lossy feature the spec recommends gpqa_diamond and
-   simple_qa, which run when `goal` asks (`acceptance.md` §1.1). Performance: one
-   A/B round on the task's workload (`perf_evaluation.md` §3). A result that misses is reproduced at
+5. Accuracy: say whether the change is lossless or may lose accuracy (`acceptance.md` §1.1). Lossless:
+   gsm8k 1319; may lose: gsm8k, gpqa_diamond and simple_qa; each once per arm, at most 1 point below the
+   baseline, with no token-level comparison (`validation_doctrine.md`, G2). Performance: one
+   A/B round on the workload of step 4 (`perf_evaluation.md` §3). A result that misses is reproduced at
    most twice and judged on the median. The feature's knobs take the values of the target PR or design;
    only with `tune` on are they chosen by measurement (`perf_evaluation.md` §3).
 

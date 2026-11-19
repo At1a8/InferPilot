@@ -1,14 +1,16 @@
 #!/bin/bash
 # Accuracy of one running server: InferPilot's G2 harness.
 #
-#   bash scripts/eval_accuracy.sh                        # 5-shot GSM8K, all 1319 questions, once: the G2 gate
-#   bash scripts/eval_accuracy.sh gsm8k_5shot gpqa_diamond   # several sets, one after the other
+#   bash scripts/eval_accuracy.sh                                 # gsm8k, all 1319 questions, once
+#   bash scripts/eval_accuracy.sh gsm8k gpqa_diamond simple_qa    # a change that may lose accuracy
 #   API_URL=http://127.0.0.1:30010/v1 TAG=baseline RESULT_ROOT=<run dir>/accuracy bash scripts/eval_accuracy.sh
 #
-# Sets: gsm8k_5shot (1319, sglang's few-shot prompt, greedy, through scripts/few_shot_gsm8k.py), and through
-# evalscope: gsm8k (1319, chat, thinking on), gpqa_diamond (198), mmlu_pro (12032), simple_qa (4326, LLM
-# judge), hle (the 2158 text-only questions, LLM judge), longbench_v2 (503; LONGBENCH_LOCAL_PATH for a
-# local copy). The evalscope settings below do not apply to gsm8k_5shot.
+# Sets: gsm8k (1319) and gpqa_diamond (198) through sgl-eval (SGL_EVAL, default sgl-eval on PATH, which the
+# bootstrap installs), as sglang's CI scores them; simple_qa (4326, LLM judge) through evalscope, and so
+# mmlu_pro (12032), hle (the 2158 text-only questions, LLM judge) and longbench_v2 (503;
+# LONGBENCH_LOCAL_PATH for a local copy). GPQA's questions come from ModelScope (DATASET_HUB=huggingface:
+# from the gated Hugging Face set, with HF_TOKEN). An sgl-eval set runs once (N_REPEATS for more), with
+# no output cap unless MAX_TOKENS is given; TOP_K does not reach it.
 #
 # Every key comes from the environment (InferPilot's ~/.inferpilot_env); none is written here.
 #   API_URL           the server's OpenAI endpoint (default http://127.0.0.1:30000/v1)
@@ -19,14 +21,17 @@
 #                     sglang retracts requests and the run slows down
 #   LIMIT             at most this many questions per subset: a smoke test, not a result
 #   WAIT_SERVER       seconds to wait for a server that is still starting (default 0)
-#   MAX_TOKENS        default 102400: a truncated reasoning trace leaves the answer empty
-#   REASONING_EFFORT  default max; ENABLE_THINKING default 1 (chat_template_kwargs.thinking). Thinking
-#                     models score wrongly without them; ENABLE_THINKING=0 REASONING_EFFORT= for others
+#   MAX_TOKENS        evalscope sets: default 102400, as a truncated reasoning trace leaves the answer
+#                     empty; sgl-eval sets: no cap unless given
+#   N_REPEATS         passes over an sgl-eval set (default 1)
+#   REASONING_EFFORT  default max; ENABLE_THINKING default 1 (chat_template_kwargs.thinking, and
+#                     enable_thinking for sgl-eval sets). Thinking models score wrongly without them;
+#                     ENABLE_THINKING=0 REASONING_EFFORT= for others
 #   TOP_P, TOP_K      sampling overrides (default: the server's own)
 #   DATASET_HUB       modelscope (default) or huggingface; HF_TOKEN for gated sets
 #   CACHE_DIR, RERUN_REVIEW=1   resume an earlier work dir; re-run only the judging
-#   EVALSCOPE         the evalscope executable (default: evalscope on PATH, which the bootstrap installs
-#                     in a venv of its own)
+#   EVALSCOPE, SGL_EVAL   the evalscope and sgl-eval executables (default: on PATH; the bootstrap
+#                     installs each in a venv of its own)
 #   Judge-graded sets: JUDGE_KEY (default LLM_GATEWAY_KEY), JUDGE_URL (default the AMD LLM gateway),
 #   JUDGE_MODEL (default Claude-Opus-5; never the model under test), JUDGE_NTID (the gateway's user
 #   header, which its SDK route requires)
@@ -36,15 +41,16 @@
 # Exit status: 0 when every set produced a report, 1 otherwise.
 set -u
 
-[ $# -eq 0 ] && set -- gsm8k_5shot
-HERE=$(cd "$(dirname "$0")" && pwd)
+[ $# -eq 0 ] && set -- gsm8k
 
 API_URL=${API_URL:-http://127.0.0.1:30000/v1}
 TAG=${TAG:-eval}
 RESULT_ROOT=${RESULT_ROOT:-./results}
 WAIT_SERVER=${WAIT_SERVER:-0}
 DATASET_HUB=${DATASET_HUB:-modelscope}
+MAX_TOKENS_SET=${MAX_TOKENS:+1}
 MAX_TOKENS=${MAX_TOKENS:-102400}
+SGL_EVAL=${SGL_EVAL:-sgl-eval}
 TOP_P=${TOP_P:-}
 TOP_K=${TOP_K:-}
 REASONING_EFFORT=${REASONING_EFFORT-max}
@@ -60,17 +66,16 @@ JUDGE_NTID=${JUDGE_NTID:-}
 
 # DS_TOTAL checks the denominator afterwards: evalscope's --ignore-errors drops failed samples from both
 # the predictions and the mean, so a missing question is invisible in the score. 0: not a fixed count.
-dataset_profile() {  # <set> -> DS_BATCH, DS_ARGS, DS_TOTAL, DS_JUDGE
+dataset_profile() {  # <set> -> DS_TOOL, DS_EVAL, DS_BATCH, DS_ARGS, DS_TOTAL, DS_JUDGE
+    DS_TOOL=evalscope
+    DS_EVAL=""
     DS_BATCH=256
     DS_ARGS=""
     DS_TOTAL=0
     DS_JUDGE=0
     case "$1" in
-        gsm8k_5shot)  DS_TOTAL=1319; DS_BATCH=128 ;;
-        gsm8k)        DS_TOTAL=1319 ;;
-        gpqa_diamond) DS_TOTAL=198
-                      [ "${DATASET_HUB}" = huggingface ] && \
-                          DS_ARGS='{"gpqa_diamond":{"dataset_id":"Idavidrein/gpqa","subset_list":["gpqa_diamond"]}}' ;;
+        gsm8k)        DS_TOOL=sgl-eval; DS_EVAL=gsm8k; DS_TOTAL=1319; DS_BATCH=64 ;;
+        gpqa_diamond) DS_TOOL=sgl-eval; DS_EVAL=gpqa; DS_TOTAL=198; DS_BATCH=64 ;;
         mmlu_pro)     DS_TOTAL=12032 ;;
         simple_qa)    DS_TOTAL=4326; DS_JUDGE=1
                       [ "${DATASET_HUB}" = huggingface ] && \
@@ -148,6 +153,99 @@ check_fingerprint() {  # <work dir>
 FAILED=0
 SUMMARY=""
 
+accept_length() {  # what /server_info says the speculative accept length is, one value per DP rank
+    curl -s --max-time 20 "${SERVER_URL}/server_info" | python3 -c \
+        "import json,sys; print([s.get('avg_spec_accept_length') for s in json.load(sys.stdin)['internal_states']])" \
+        2>/dev/null
+}
+
+fail_set() {  # <set> <why> <log>
+    echo "$1: $2; the end of $3:" >&2
+    tail -8 "$3" | cut -c1-200 >&2
+    SUMMARY="${SUMMARY}\n  $1: $2"
+    FAILED=1
+}
+
+# GPQA's source on Hugging Face is gated. ModelScope's copy holds the same 198 rows in the same order;
+# sgl-eval's own prepare step (choices shuffled with seed 42) turns them into the set sgl-eval builds
+# from Hugging Face, in the form --from-dataset reads.
+gpqa_from_modelscope() {  # <file>
+    local -a py
+    read -r -a py <<< "$(sed -n '1s/^#!//p' "$(command -v "${SGL_EVAL}")" 2>/dev/null)"
+    curl -sfL --max-time 120 -o "$1.src" \
+        "https://www.modelscope.cn/api/v1/datasets/AI-ModelScope/gpqa_diamond/repo?Revision=master&FilePath=train.jsonl" \
+        || return 1
+    "${py[@]:-python3}" - "$1.src" "$1" <<'EOF'
+import json, random, sys
+from sgl_eval._vendored.nemo_skills.dataset.gpqa.prepare import format_entry
+rows = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+random.seed(42)
+with open(sys.argv[2], "w", encoding="utf-8") as f:
+    for row in rows:
+        f.write(json.dumps(format_entry(row)) + "\n")
+EOF
+}
+
+# gsm8k and gpqa_diamond are scored by sgl-eval, as sglang's CI scores them: one pass (N_REPEATS for
+# more), greedy, thinking as ENABLE_THINKING says. A failed request fails the set, since sgl-eval would
+# count it as a wrong answer.
+run_sgl_eval() {  # <set> <threads> <work dir> <log>
+    local ds=$1 threads=$2 work_dir=$3 log=$4 rc accept metrics line gpqa
+    local -a args=(run "${DS_EVAL}" --base-url "${API_URL}" --model "${MODEL}" --num-threads "${threads}"
+                   --n-repeats "${N_REPEATS:-1}" --out-dir "${work_dir}")
+    [ -n "${LIMIT:-}" ] && args+=(--num-examples "${LIMIT}")
+    [ -n "${MAX_TOKENS_SET}" ] && args+=(--max-tokens "${MAX_TOKENS}")
+    [ -n "${TOP_P}" ] && args+=(--top-p "${TOP_P}")
+    [ -n "${REASONING_EFFORT}" ] && args+=(--reasoning-effort "${REASONING_EFFORT}")
+    if [ "${ENABLE_THINKING}" = 1 ]; then
+        args+=(--thinking --chat-template-kwarg enable_thinking=true)
+    else
+        args+=(--no-thinking --chat-template-kwarg enable_thinking=false)
+    fi
+    if [ "${ds}" = gpqa_diamond ] && [ "${DATASET_HUB}" != huggingface ]; then
+        gpqa="${RESULT_ROOT}/gpqa_diamond.sgl_eval.jsonl"
+        if [ ! -s "${gpqa}" ] && ! gpqa_from_modelscope "${gpqa}" >> "${log}.prepare" 2>&1; then
+            fail_set "${ds}" "could not prepare GPQA from ModelScope (DATASET_HUB=huggingface with HF_TOKEN takes it from Hugging Face)" "${log}.prepare"
+            return
+        fi
+        args+=(--from-dataset "${gpqa}")
+    fi
+    echo "== ${ds}: sgl-eval ${DS_EVAL}, model=${MODEL} threads=${threads}; log ${log}"
+    curl -s -X POST --max-time 60 "${SERVER_URL}/flush_cache" > /dev/null
+    touch "${log}.start"
+    "${SGL_EVAL}" "${args[@]}" > "${log}" 2>&1
+    rc=$?
+    accept=$(accept_length)
+    metrics=$(find "${work_dir}" -path "*/sgl_eval_${DS_EVAL}_*/metrics.json" -newer "${log}.start" 2>/dev/null \
+        | sort | tail -1)
+    if [ "${rc}" != 0 ] || [ -z "${metrics}" ]; then
+        fail_set "${ds}" "failed (sgl-eval exit ${rc})" "${log}"
+        return
+    fi
+    line=$(TOTAL="${DS_TOTAL}" LIMIT="${LIMIT:-}" python3 -c "
+import json, os, sys
+m = json.load(open(sys.argv[1]))
+a, n = m['aggregate'], m['num_examples']
+total = int(os.environ['TOTAL'])
+want = min(int(os.environ['LIMIT']), total) if os.environ['LIMIT'] else total
+bad = []
+if a.get('error_rate'):
+    bad.append('%.2f%% of the requests failed' % (100 * a['error_rate']))
+if n != want:
+    bad.append('%d of %d questions' % (n, want))
+agg = {'score': a['score'], 'num': n, 'n_repeats': m.get('n_repeats', 1), 'truncated_rate': a.get('truncated_rate', 0)}
+print('BAD ' + '; '.join(bad) if bad else 'OK %s' % agg)
+" "${metrics}" 2>/dev/null)
+    case "${line}" in
+        "OK "*) line=${line#OK } ;;
+        "BAD "*) fail_set "${ds}" "${line#BAD }" "${log}"; return ;;
+        *) fail_set "${ds}" "unreadable ${metrics}" "${log}"; return ;;
+    esac
+    echo "${ds}: ${line}  accept_length=${accept:-?}"
+    SUMMARY="${SUMMARY}\n  ${ds}: ${line}  accept_length=${accept:-?}"
+    echo "${TAG} ${ds}: accept_length=${accept:-[None]} aggregate=${line}" >> "${RESULT_ROOT}/summary.txt"
+}
+
 run_one() {  # <set>
     local ds=$1 batch work_dir log eb="" tail_cfg gen_cfg judge_args rc accept rep line
     local -a cache_arg=() limit_arg=() args_arg=()
@@ -157,22 +255,8 @@ run_one() {  # <set>
     log="${RESULT_ROOT}/${TAG}_${ds}.log"
     mkdir -p "${RESULT_ROOT}"
 
-    if [ "${ds}" = gsm8k_5shot ]; then
-        [ -n "${LIMIT:-}" ] && limit_arg=(--limit "${LIMIT}")
-        echo "== ${ds}: model=${MODEL} parallel=${batch}; log ${log}"
-        python3 "${HERE}/few_shot_gsm8k.py" --api-url "${API_URL}" --model "${MODEL}" --tag "${TAG}" \
-            --result-root "${RESULT_ROOT}" --parallel "${batch}" "${limit_arg[@]}" > "${log}" 2>&1
-        rc=$?
-        line=$(grep '^gsm8k_5shot: ' "${log}" | tail -1)
-        if [ "${rc}" != 0 ] || [ -z "${line}" ]; then
-            echo "${ds}: failed (exit ${rc}); the end of ${log}:" >&2
-            tail -8 "${log}" | cut -c1-200 >&2
-            SUMMARY="${SUMMARY}\n  ${ds}: failed (exit ${rc})"
-            FAILED=1
-            return
-        fi
-        echo "${line}"
-        SUMMARY="${SUMMARY}\n  ${line}"
+    if [ "${DS_TOOL}" = sgl-eval ]; then
+        run_sgl_eval "${ds}" "${batch}" "${work_dir}" "${log}"
         return
     fi
 
@@ -239,9 +323,7 @@ run_one() {  # <set>
         --repeats 1 > "${log}" 2>&1
     rc=$?
 
-    accept=$(curl -s --max-time 20 "${SERVER_URL}/server_info" | python3 -c \
-        "import json,sys; print([s.get('avg_spec_accept_length') for s in json.load(sys.stdin)['internal_states']])" \
-        2>/dev/null)
+    accept=$(accept_length)
     rep=$(find "${work_dir}" -name '*.json' -path '*/reports/*' 2>/dev/null | sort | tail -1)
     if [ -z "${rep}" ]; then
         echo "${ds}: no report (evalscope exit ${rc}); the end of ${log}:" >&2

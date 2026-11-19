@@ -32,15 +32,18 @@ Two rules hold across the dimensions:
 
 ### 1.1 Accuracy
 
-- **Every change, at this stage of development:** 5-shot GSM8K on all 1319 questions, greedy, one run
-  per arm on the same server settings (`scripts/eval_accuracy.sh`, its default set), the change at most
-  1 point below the baseline (`validation_doctrine.md`, G2). Outputs need not match the baseline token
-  for token.
-- **More only when the goal asks**, declared before anything is measured: other sets, more runs or
-  another budget. A lossy change (relaxed draft verification, quantization, sparse attention, KV
-  compression) can hide its loss on GSM8K, so its spec recommends gpqa_diamond (198) and simple_qa
-  (4326, LLM-judged), each at most 1 point below the baseline, and the report says when they were not
-  run; KV compression, a long-context set; a determinism task, token equality (§1.4).
+- **The rule:** every set at most 1 point below the baseline, one run per arm on the same server
+  settings (`validation_doctrine.md`, G2). Outputs need not match the baseline token for token.
+- **Lossless changes** (a kernel swap, scheduling, parallelism, memory layout, a speculative method
+  that verifies exactly): gsm8k, all 1319 questions (`scripts/eval_accuracy.sh`, its default set).
+- **Changes that may lose accuracy** (relaxed draft verification such as FLy, quantization, sparse
+  attention, KV compression): gsm8k, gpqa_diamond (198) and simple_qa (4326, LLM-judged)
+  (`eval_accuracy.sh gsm8k gpqa_diamond simple_qa`); GSM8K alone can hide the loss. The spec says which
+  of the two a change is, before anything is measured.
+- **Harnesses:** gsm8k and gpqa_diamond through sgl-eval, simple_qa through evalscope, all three from
+  `scripts/eval_accuracy.sh`. A goal may ask for more, declared before anything is measured: other sets
+  (a long-context set for KV compression), more runs or another budget; a determinism task, token
+  equality (§1.4).
 - **Capability suites**, for what the change touches: long context (needle-in-a-haystack, G3),
   reasoning (GPQA, AIME), tool calls, multimodal input.
 - **Parity with a reference**, for a new model, a new kernel or a refactor: logprobs or the KL
@@ -105,7 +108,7 @@ extra items of its feature classes (§1.4).
 | Dimension | Upstream feature | Issue fix | CI fix | Performance | Requirement |
 |---|---|---|---|---|---|
 | Correctness | required | required; the reproduction becomes a regression test | required; the failing test passes on every lane it failed on | required | required |
-| Accuracy | required: 5-shot GSM8K, at most 1 point below the baseline; other sets when the goal asks (§1.1) | when the issue is an accuracy loss | no regression | required: 5-shot GSM8K (§1.1) | on the requester's data set |
+| Accuracy | required: gsm8k; for a change that may lose accuracy gsm8k, gpqa_diamond and simple_qa; each at most 1 point below the baseline (§1.1) | when the issue is an accuracy loss | no regression | required, as for a feature (§1.1) | on the requester's data set |
 | Performance | when the feature claims a gain | when the issue is a performance problem: the reported number comes back | — | required: the gain; a guard and a held-out point when the task asks (`guards`, `held_out`) | the requester's SLA |
 | Stability | required (G4) | when the issue is a crash or hang | a flaky test passes repeatedly (§4) | when the change touches memory or scheduling | required, with a soak |
 | Compatibility | required | required | required | required | the requester's platforms |

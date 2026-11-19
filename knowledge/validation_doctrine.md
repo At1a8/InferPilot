@@ -14,16 +14,16 @@ Which of these gates a task needs, how its acceptance criteria are written and w
 |---|---|---|
 | G0 feature off | the change is inert when disabled | baseline suites on the feature branch with the switch off |
 | G1 unit / oracle | each new kernel or data structure does what it claims | standalone tests vs a reference implementation, each able to fail: on the parent commit when the change alters behaviour, on a copy of the change broken in one way when it keeps behaviour (`reward_hacks.md` T1) |
-| G2 accuracy | quality stays within its budget | 5-shot GSM8K, all 1319 questions, greedy, once per arm (`scripts/eval_accuracy.sh`, its default set), at most 1 point below the baseline; other sets only when the goal asks; a set that misses its budget is reproduced at most twice and judged on the median |
+| G2 accuracy | quality stays within its budget | every set at most 1 point below the baseline, once per arm (`scripts/eval_accuracy.sh`): gsm8k (1319, sgl-eval) for a lossless change; a change that may lose accuracy adds gpqa_diamond (198, sgl-eval) and simple_qa (4326, evalscope, LLM judge); a set that misses its budget is reproduced at most twice and judged on the median |
 | G3 long context | the feature's own data path is exercised and correct | needle-in-a-haystack: single and multi-needle |
 | G4 stability | no crash / hang / collapse under capacity pressure | many long prompts at high concurrency |
 | G5 performance | the claimed benefit exists on the task's workload; the guards the task names hold | see `perf_evaluation.md`; a held-out point, more guards and sweeps only when the task asks (`held_out`, `guards`, `sweep`) |
 
 Notes per gate:
 
-- **Cheap gates first.** G0 and G2 (5-shot GSM8K, about a minute for an 8B model) run before G3 and
-  G4, and a blocking failure ends the round: an hour of long-context runs on a build that already fails
-  accuracy is wasted. Suites of hours (thinking-on sets, simple_qa) run once, after every other gate
+- **Cheap gates first.** G0 and gsm8k (about ten minutes for an 8B model with thinking on) run before
+  G3 and G4, and a blocking failure ends the round: an hour of long-context runs on a build that already
+  fails accuracy is wasted. gpqa_diamond and simple_qa, which take longer, run after every other gate
   passed. Each gate has a time cap (`roles/verify_engineer.md`); a report-only item that misses is
   reported, never investigated.
 - **G2 does not prove a long-context feature works.** Short prompts may never engage it (HiSparse V2
@@ -33,14 +33,20 @@ Notes per gate:
   composition, kernel choice and speculative verification all flip near-ties, and chasing those flips
   costs runs without finding a defect. A token comparison is a diagnosis aid (the failure taxonomy
   below) or the subject of a determinism task, never the accuracy gate.
-- **GSM8K alone may not show a lossy feature's loss.** Relaxed speculative verification (FLy) left
-  gsm8k within ±0.4pp at every setting while simple_qa lost up to 3pp (`feature_skills/fly-dspark`).
-  The spec of a lossy feature says so and recommends gpqa_diamond (198) and simple_qa (4326, LLM judge);
-  they run when the goal asks for them, once per arm, each at most 1 point below the baseline, with the
-  feature's engagement number per set (accept length), and a report without them says they were not
-  run. A set that misses is reproduced at most twice, three results in all, and judged on their median,
-  every run reported: one simple_qa run is good to about ±0.5pp, and a 0.6pp loss took 5 runs against
-  8 baselines to separate from the noise (two runs had called it noise).
+- **A change that may lose accuracy runs three sets: gsm8k, gpqa_diamond and simple_qa.** GSM8K alone
+  may not show the loss: relaxed speculative verification (FLy) left gsm8k within ±0.4pp at every
+  setting while simple_qa lost up to 3pp (`feature_skills/fly-dspark`). "May lose" is decided in the
+  spec, before anything is measured: relaxed draft verification, quantization, sparse attention, KV
+  compression and any approximation of the computation do; a kernel swap, scheduling, parallelism or a
+  speculative method that verifies exactly does not, and runs gsm8k alone. Each set runs once per arm,
+  at most 1 point below the baseline, with the feature's engagement number per set (accept length). A
+  set that misses is reproduced at most twice, three results in all, and judged on their median, every
+  run reported: one simple_qa run is good to about ±0.5pp, and a 0.6pp loss took 5 runs against 8
+  baselines to separate from the noise (two runs had called it noise).
+- **Harnesses:** gsm8k and gpqa_diamond through sgl-eval, sglang's own client (`sgl-eval run gsm8k`,
+  `sgl-eval run gpqa`, as sglang's CI runs them); simple_qa through evalscope with an LLM judge.
+  `scripts/eval_accuracy.sh` runs each with the right tool, flushes the prefix cache before each set and
+  reads the accept length after it; both arms use the same settings.
 - **G3/G4 must be sized so the feature engages.** For a memory-tier feature that means total context
   well above the device pool (force eviction/demotion), and concurrency high enough that several engaged
   requests decode in the same batch. Log the engagement (e.g. demotion counters) and attach it.
@@ -109,7 +115,8 @@ A debugging check that reports a false positive costs as much as a missed bug.
 
 The `hisparse-v2` skill records concrete settings and expected numbers; in short:
 
-- **G2:** 5-shot GSM8K, all 1319 questions, greedy, once, with `scripts/eval_accuracy.sh` (its default set).
+- **G2:** gsm8k, all 1319 questions, once, with `scripts/eval_accuracy.sh` (its default set, through
+  sgl-eval).
 - **G3:** NIAH single-needle and 8-needle prompts of ~30–37k tokens at concurrency 1, 8 and 16.
 - **G4:** 32 prompts × ~37k tokens, 8 needles, concurrency 32, `max_new_tokens` 120, fixed seed, on a
   device pool small enough to force the feature's memory path, plus the same-pattern baseline control.

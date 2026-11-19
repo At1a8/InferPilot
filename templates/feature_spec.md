@@ -8,15 +8,16 @@
 - Upstream design: <PR / paper / design doc link>, at commit <sha>
 - Dependencies that are not merged yet: <PR links, commits to cherry-pick>
 - Matching feature skill, if any: `knowledge/feature_skills/<id>/SKILL.md` (status: <validated / stale>)
-- Benchmark the source reports: <data sets, input / output lengths, concurrency, sampling, thinking,
-  hardware, and its numbers>; reproducing that gain here is the first performance claim
+- Scenarios the source reports: <data sets, input / output lengths, concurrency, sampling, thinking,
+  hardware, and its numbers>; the port is measured on these, and their gain reproduced here is the
+  performance claim
 
 ## Feasibility
 
 <!-- The documented range of each model the feature uses (model card, config: training context of a
      draft model, max_position_embeddings, checkpoint precision) and the range the source was tested
-     on. A task workload outside it: what to expect there, and that the user decides whether it stays
-     a target. -->
+     on. A scenario outside the source's, the task's own workload included, is a non-goal unless the
+     goal names it: say why here and list it under Non-goals. -->
 
 ## Target
 
@@ -41,7 +42,7 @@
 |---|---|---|
 | G0 feature off | | the baseline's tests pass; accuracy and throughput as the baseline's |
 | G1 unit / oracle | | all cases pass, including self-check mode |
-| G2 accuracy | 5-shot GSM8K, 1319 questions | at most 1 point below the baseline |
+| G2 accuracy | gsm8k (1319); a change that may lose accuracy adds gpqa_diamond and simple_qa | each at most 1 point below the baseline |
 | G3 long context | | e.g. NIAH pass rate within baseline spread, feature engaged |
 | G4 stability | | no crash; failure taxonomy not worse than baseline |
 | G5 performance | | e.g. >= +X% output tok/s at equal HBM on <workload> |

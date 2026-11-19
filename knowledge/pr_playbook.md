@@ -12,7 +12,8 @@ send what is missing back as work packages, so the branch that is pushed is the 
 - [ ] New tests registered where the repo's CI discovers them (sglang: `test/registered/...` with the
       CI registration helper), not only in a private scratch directory.
 - [ ] Only tests CI runs, the fewest that cover the change: one end-to-end accuracy test at the
-      defaults for a change to outputs (sglang: 5-shot GSM8K under `test/registered/amd/accuracy/`).
+      defaults for a change to outputs (sglang: GSM8K under `test/registered/amd/accuracy/`, scored
+      through sgl-eval, `gsm8k_backend = "sgl_eval"`).
       InferPilot's gate oracles and harnesses stay in the run directory.
 - [ ] The smallest diff: code CUDA also runs changes only by addition, behind the switch or a
       module-level platform constant (sglang: `_is_hip = is_hip()` at import); no refactor, rename,
@@ -53,7 +54,7 @@ footnotes, no definitions of your own shorthand. Read two or three merged PRs of
   say how the diff makes sure of it (an `is_hip()` gate, a ROCm-only file, a startup rejection on other
   platforms, new arguments that stay `None` on CUDA). Check it in the diff first: every changed line that
   CUDA also runs must sit behind such a gate. A limitation is a sentence here, not a new section.
-- **Accuracy Tests:** 5-shot GSM8K on all 1319 questions with the feature at its default settings, next to the
+- **Accuracy Tests:** GSM8K on all 1319 questions with the feature at its default settings, next to the
   baseline measured with the same harness; name the model, hardware, TP, harness and sampling. A loss the
   validation found elsewhere gets one sentence; other suites only when the change targets them (NIAH for
   a long-context feature).
