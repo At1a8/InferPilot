@@ -3,7 +3,7 @@
 //
 //   node tests/runtime_selftest.mjs
 import path from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,7 @@ import { BACKENDS, cliBackend } from '../runtime/backends.mjs';
 const INFERPILOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TMP = mkdtempSync(path.join(tmpdir(), 'inferpilot-runtime-'));
 const quiet = () => {};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
 let passed = 0;
@@ -264,6 +265,54 @@ return { status: r.ok ? 'done' : 'no', n: args.n };`);
     check(r.status === 'done' && r.n === 5 && JSON.parse(readFileSync(resultFile, 'utf8')).n === 5, `result ${out}`);
     const bad = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'nope'], { encoding: 'utf8' });
     check(bad.status === 2 && bad.stderr.includes('usage:'), 'an unknown backend prints the usage');
+  }],
+  ['run.mjs: SIGTERM stops the agents and what they started with setsid, frees the lock, writes an interrupted result', async () => {
+    if (!existsSync('/proc/self/environ')) return;
+    const script = path.join(TMP, 'stop.js');
+    writeFileSync(script, `phase('Long');\nawait agent('go', { label: 'long' });\nreturn { status: 'done' };`);
+    const lock = path.join(TMP, 'stop.lock');
+    const runDir = path.join(TMP, 'stop-run');
+    const cli = fakeCli('long.sh', `python3 ${path.join(INFERPILOT, 'scripts', 'run_lock.py')} acquire --run-dir ${runDir} >/dev/null
+setsid sleep 41.25 > /dev/null 2>&1 < /dev/null &
+sleep 42.25 & wait`);
+    const resultFile = path.join(TMP, 'stop.result.json');
+    const runner = spawn(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
+      '--args', '{}', '--result-file', resultFile], { env: { ...process.env, INFERPILOT_CURSOR_BIN: cli, INFERPILOT_LOCK_FILE: lock },
+      stdio: ['ignore', 'ignore', 'pipe'] });
+    let log = '';
+    runner.stderr.on('data', (d) => { log += d; });
+    const running = (what) => spawnSync('pgrep', ['-f', what]).status === 0;
+    for (let i = 0; i < 100 && !(running('sleep 41.25') && running('sleep 42.25') && existsSync(lock)); i++) await sleep(100);
+    check(running('sleep 41.25') && running('sleep 42.25'), 'the agent and its setsid child started');
+    runner.kill('SIGTERM');
+    const code = await new Promise((r) => runner.on('exit', (c) => r(c)));
+    check(code === 143, `exit ${code}`);
+    check(!running('sleep 41.25'), 'the setsid child of the agent was stopped');
+    check(!running('sleep 42.25'), 'the agent was stopped');
+    const result = JSON.parse(readFileSync(resultFile, 'utf8'));
+    check(result.status === 'interrupted' && result.signal === 'SIGTERM' && result.at === 'Long', `result ${JSON.stringify(result)}`);
+    const st = JSON.parse(execFileSync('python3', [path.join(INFERPILOT, 'scripts', 'run_lock.py'), '--lock', lock, 'status'], { encoding: 'utf8' }));
+    check(st.status === 'free', `the lock is ${st.status}`);
+    check(/=== END \(interrupted by SIGTERM in Long\)/.test(log), 'the log ends with the interruption');
+  }],
+  ['run.mjs: what the agents left running is stopped at the end; orphans are listed, and stopped with --kill-orphans', async () => {
+    if (!existsSync('/proc/self/environ')) return;
+    const script = path.join(TMP, 'tidy.js');
+    writeFileSync(script, `phase('Only');\nreturn { status: (await agent('go', { label: 'only', schema: ${JSON.stringify(SCHEMA)} })).ok };`);
+    const run = (...extra) => spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
+      '--args', '{}', ...extra], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('tidy.sh',
+      `setsid sleep 43.25 > /dev/null 2>&1 < /dev/null &\n${OK_JSON}`), INFERPILOT_LOCK_FILE: path.join(TMP, 'tidy.lock') }, encoding: 'utf8' });
+    const running = (what) => spawnSync('pgrep', ['-f', what]).status === 0;
+    const r = run();
+    check(r.status === 0 && /stopped 1 process\(es\) the run's agents left running/.test(r.stderr), `end ${r.stderr.slice(-300)}`);
+    check(!running('sleep 43.25'), 'the leftover was stopped');
+    const orphan = spawn('sleep', ['44.25'], { env: { ...process.env, INFERPILOT_RUN_TAG: '999999999-1' }, detached: true, stdio: 'ignore' });
+    orphan.unref();
+    await sleep(200);
+    const warned = run();
+    check(/1 process\(es\) left by runs that are gone/.test(warned.stderr) && running('sleep 44.25'), 'an orphan is listed and left alone');
+    const killed = run('--kill-orphans');
+    check(/stopped 1 process\(es\) left by runs that are gone/.test(killed.stderr) && !running('sleep 44.25'), 'and stopped on request');
   }],
 ];
 

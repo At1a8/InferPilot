@@ -4,14 +4,16 @@ shares with the host (scripts/run_docker.sh starts them that way), which no othe
 which a reboot clears.
 
     python3 scripts/run_lock.py acquire --run-dir DIR --mode MODE --task TEXT [--idle-hours 12]
-    python3 scripts/run_lock.py release --run-dir DIR        # or: release --force
+    python3 scripts/run_lock.py release --run-dir DIR        # or: release --run-tag TAG, release --force
     python3 scripts/run_lock.py status
 
 acquire exits 1 when another task holds the machine and prints who. A lock is taken over without
-asking when its run has finished (a report newer than the lock) or has written nothing in its run
-directory for the holder's --idle-hours. A run directory this container cannot see (the run is in
-another container) is never taken over that way; a lock left by a run that died is freed at once with
-`release --force`. Standard library only.
+asking when its run has finished (a report newer than the lock), when the runner that took it is gone,
+or when its run has written nothing in its run directory for the holder's --idle-hours. The runner is
+the process named by INFERPILOT_RUN_TAG (<pid>-<start time>, set by runtime/run.mjs for every agent);
+it is checked only from the pid namespace it was recorded in. A run directory this container cannot
+see (the run is in another container) is never taken over for silence; a lock left by a run that died
+is freed at once with `release --force`. Standard library only.
 """
 from __future__ import annotations
 
@@ -60,6 +62,24 @@ def _write(fd: int, data: dict) -> None:
         os.write(fd, (json.dumps(data, indent=1) + "\n").encode())
 
 
+def pid_ns() -> str:
+    try:
+        return os.readlink("/proc/self/ns/pid")
+    except OSError:
+        return ""
+
+
+def runner_alive(tag: str) -> bool:
+    """Whether the process a run tag (<pid>-<start time in clock ticks>) names is still running."""
+    pid, _, start = tag.partition("-")
+    try:
+        with open("/proc/%s/stat" % int(pid), encoding="utf-8") as f:
+            stat = f.read()
+    except (OSError, ValueError):
+        return False
+    return start in ("", "0") or stat[stat.rindex(")") + 2:].split(" ")[19] == start
+
+
 def last_activity(holder: dict) -> float:
     """When the holder last showed life: its start, or the newest entry of its run directory or logs/."""
     latest = float(holder.get("started", 0))
@@ -88,6 +108,9 @@ def stale_reason(holder: dict, now: float) -> str:
                 return "its run finished"
         except OSError:
             pass
+    tag = holder.get("run_tag", "")
+    if tag and holder.get("pid_ns") and holder["pid_ns"] == pid_ns() and not runner_alive(tag):
+        return "its runner is gone"
     if not os.path.isdir(holder["run_dir"]):
         # Run directories live in their container: from another one, silence proves nothing.
         return ""
@@ -112,7 +135,8 @@ def acquire(lock: str, run_dir: str, task: str = "", mode: str = "", idle_hours:
             return {"status": "busy", "holder": holder}
         new = {"run_dir": run_dir, "mode": mode, "task": task, "idle_hours": idle_hours, "started": now,
                "started_at": time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(now)),
-               "host": socket.gethostname(), "container": os.environ.get("INFERPILOT_CONTAINER", "")}
+               "host": socket.gethostname(), "container": os.environ.get("INFERPILOT_CONTAINER", ""),
+               "run_tag": os.environ.get("INFERPILOT_RUN_TAG", ""), "pid_ns": pid_ns()}
         _write(fd, new)
         out = {"status": "acquired", "holder": new}
         if reason != "free":
@@ -122,7 +146,7 @@ def acquire(lock: str, run_dir: str, task: str = "", mode: str = "", idle_hours:
         os.close(fd)  # closing the descriptor releases the flock
 
 
-def release(lock: str, run_dir: str = "", force: bool = False) -> dict:
+def release(lock: str, run_dir: str = "", force: bool = False, run_tag: str = "") -> dict:
     try:
         fd = os.open(lock, os.O_RDWR)
     except FileNotFoundError:
@@ -132,7 +156,8 @@ def release(lock: str, run_dir: str = "", force: bool = False) -> dict:
         holder = _read(fd)
         if not holder.get("run_dir"):
             return {"status": "free"}
-        if force or (run_dir and holder["run_dir"] == os.path.abspath(run_dir)):
+        if force or (run_dir and holder["run_dir"] == os.path.abspath(run_dir)) \
+                or (run_tag and holder.get("run_tag") == run_tag):
             _write(fd, {})
             return {"status": "released", "holder": holder}
         return {"status": "held", "holder": holder}
@@ -154,6 +179,8 @@ def status(lock: str, now: float | None = None) -> dict:
     if not holder.get("run_dir"):
         return {"status": "free"}
     out = {"status": "held", "holder": holder, "idle_hours_so_far": round((now - last_activity(holder)) / 3600, 1)}
+    if holder.get("run_tag") and holder.get("pid_ns") == pid_ns():
+        out["runner"] = "running" if runner_alive(holder["run_tag"]) else "gone"
     reason = stale_reason(holder, now)
     if reason:
         out.update(status="stale", reason=reason)
@@ -172,13 +199,14 @@ def main(argv=None) -> int:
                      help="hours without a write in the run directory after which the lock counts as stale")
     rel = sub.add_parser("release", help="free the machine")
     rel.add_argument("--run-dir", default="")
+    rel.add_argument("--run-tag", default="", help="free it when the runner with this tag holds it")
     rel.add_argument("--force", action="store_true", help="free it whoever holds it (a run that died)")
     sub.add_parser("status", help="who holds the machine")
     a = ap.parse_args(argv)
     if a.cmd == "acquire":
         out = acquire(a.lock, a.run_dir, a.task, a.mode, a.idle_hours)
     elif a.cmd == "release":
-        out = release(a.lock, a.run_dir, a.force)
+        out = release(a.lock, a.run_dir, a.force, a.run_tag)
     else:
         out = status(a.lock)
     print(json.dumps(out, indent=1))

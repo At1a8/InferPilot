@@ -188,5 +188,5 @@ export function createRuntime({
     return fn(agent, parallel, pipeline, phase, scriptLog, workflow, args, budget);
   }
 
-  return { agent, parallel, pipeline, phase, log: scriptLog, runScript, state, summary };
+  return { agent, parallel, pipeline, phase, log: scriptLog, runScript, state, summary, current: () => current };
 }
