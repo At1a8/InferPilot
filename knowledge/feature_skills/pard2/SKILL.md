@@ -13,7 +13,7 @@ match:
 depends_on: ["vllm-project/vllm#49406", "vllm-project/vllm#55257"]   # vLLM port (MRv2 head cc933753); the anchor fix
 reference_pr: "sgl-project/sglang#51465"
 expects:
-  accuracy: "5-shot GSM8K (all 1319 questions, greedy) within 1 point of the target alone"
+  accuracy: "gsm8k (all 1319 questions) within 1 point of the target alone; lossless (exact verification), so gsm8k only"
   long_context: "not claimed: the released drafts were trained at 1024 tokens and accept ~1 token per step on >= 4k contexts, in the reference implementation too"
   stability: "not claimed as a dedicated stress test"
   perf: "at least vLLM #49406's speed-up over no speculation at concurrency 1 on its 4 x 80-prompt case"
@@ -144,9 +144,10 @@ Startup logs `PARD2 draft worker: mode=..., target_proj loaded=...`.
 
 - G1 (reference): first-step draft logits against the PARD-2 HF reference (`pard/pard2_infer.py` of
   AMD-AGI/PARD) on 16 prompts, TD and TI: top-1 identical.
-- G2 accuracy: 5-shot GSM8K, all 1319 questions, greedy, within 1 point of the target alone; the CI test
-  also asserts accuracy > 0.88 and accept length > 5.0. Measured: TD 0.9075 at 6.65, TI 0.9037 at 5.34,
-  the target alone 0.9067.
+- G2 accuracy: gsm8k, all 1319 questions (`scripts/eval_accuracy.sh`, sgl-eval), within 1 point of the
+  target alone. PARD-2 verifies exactly, so it is a lossless change: gpqa_diamond and simple_qa are not
+  needed. Measured with the PR's CI test (5-shot, greedy; it also asserts accuracy > 0.88 and accept
+  length > 5.0): TD 0.9075 at 6.65, TI 0.9037 at 5.34, the target alone 0.9067.
 - G5 performance, vLLM's case: 80 prompts each of GSM8K and HumanEval (PARD-2's eval set, `datas/bmk` of
   AMD-AGI/PARD), MATH-500 (its first 80 problems; PARD-2's set is the first 20) and MT-Bench (the first
   turns of its 80 questions); PARD-2's template (system prompt "You are a helpful assistant.",
@@ -169,7 +170,8 @@ Startup logs `PARD2 draft worker: mode=..., target_proj loaded=...`.
   prompts (8 prompts): a possible follow-up.
 - 6 to 8x slower than no speculation on random 8k/1k at concurrency 32 → the acceptance above, and ~128 ms
   per speculative step (16-row verify plus two draft passes over 8k of KV, the context pass eager) against
-  ~14 ms per decode step → benchmark PARD-2 on the upstream short-prompt case.
+  ~14 ms per decode step → a port is measured on its source's scenarios, and vLLM's PR never ran 8k/1k:
+  benchmark PARD-2 on vLLM's short-prompt case only, and leave 8k/1k out unless a goal names it.
 - A gate "greedy outputs equal to the target's alone" fails → baseline nondeterminism → judge correctness
   by accuracy (and, if needed, by whether each divergence starts at a near-tie).
 - The docs coverage test fails → the new flag needs a `server_arguments.mdx` row.
