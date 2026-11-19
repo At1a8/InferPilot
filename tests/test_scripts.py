@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -29,6 +30,7 @@ import daily_report  # noqa: E402
 import leak_scan  # noqa: E402
 import few_shot_gsm8k  # noqa: E402
 import find_skill  # noqa: E402
+import gpu_status  # noqa: E402
 import propose_knowledge  # noqa: E402
 import run_lock  # noqa: E402
 import scan_ci  # noqa: E402
@@ -591,6 +593,31 @@ class RunLockTest(unittest.TestCase):
         took = run_lock.acquire(self.lock, self.b, now=1100.0)
         self.assertEqual((took["status"], took["took_over"]["reason"]), ("acquired", "its runner is gone"))
 
+    def test_tasks_on_separate_gpus_in_separate_containers_run_at_once(self):
+        def take(run, gpus, container):
+            with mock.patch.dict(os.environ, {"INFERPILOT_CONTAINER": container}):
+                return run_lock.acquire(self.lock, str(self.root / run), gpus=gpus)
+        for run in ("c", "d", "e"):
+            (self.root / run).mkdir()
+        self.assertEqual(take("run_a", [0, 1], "box1")["status"], "acquired")
+        self.assertEqual(take("run_b", [2, 3], "box2")["status"], "acquired")
+        shared = take("c", [1, 4], "box3")
+        self.assertEqual((shared["status"], shared["holder"]["run_dir"]), ("busy", self.a))
+        self.assertEqual(take("d", [5], "box1")["status"], "busy")  # one task per container
+        self.assertEqual(take("e", [], "box4")["status"], "busy")   # the whole machine
+        self.assertEqual([h["holder"]["gpus"] for h in run_lock.status(self.lock)["holders"]], [[0, 1], [2, 3]])
+        self.assertEqual(run_lock.release(self.lock, self.a)["status"], "released")
+        self.assertEqual(take("c", [1, 4], "box3")["status"], "acquired")
+        self.assertEqual(len(run_lock.status(self.lock)["holders"]), 2)
+
+    def test_a_lock_file_from_before_gpu_sets_holds_the_machine(self):
+        Path(self.lock).write_text(json.dumps({"run_dir": self.a, "started": time.time()}))
+        os.chmod(self.lock, 0o666)
+        self.assertEqual(run_lock.acquire(self.lock, self.b, gpus=[0])["status"], "busy")
+        self.assertEqual(run_lock.status(self.lock)["holder"]["run_dir"], self.a)
+        self.assertEqual(run_lock.release(self.lock, self.a)["status"], "released")
+        self.assertEqual(run_lock.status(self.lock)["status"], "free")
+
     def test_a_runner_in_another_pid_namespace_is_not_judged(self):
         with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "999999999-1"}), \
                 mock.patch.object(run_lock, "pid_ns", return_value="pid:[1]"):
@@ -649,6 +676,47 @@ class BaselineCacheTest(unittest.TestCase):
             self.assertEqual(baseline_cache.main(["store", *common, "--run-dir", str(self.run_dir), "--files",
                                                   str(self.run_dir / "accuracy")]), 0)
             self.assertEqual(baseline_cache.main(["lookup", *common]), 0)
+
+
+class GpuStatusTest(unittest.TestCase):
+    """scripts/gpu_status.py on a fake KFD tree whose node order differs from HIP's."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.kfd = Path(tmp.name) / "kfd"
+        nodes = self.kfd / "topology" / "nodes"
+        for node, gpu_id, bus in [(0, 0, 0), (1, 111, 0x75), (2, 222, 0x05), (3, 333, 0x65)]:
+            (nodes / str(node)).mkdir(parents=True)
+            (nodes / str(node) / "gpu_id").write_text("%d\n" % gpu_id)
+            (nodes / str(node) / "properties").write_text("location_id %d\ndomain 0\n" % (bus << 8))
+        for pid, gpu_id, mib in [(4242, 222, 4096), (5151, 333, 100)]:
+            (self.kfd / "proc" / str(pid)).mkdir(parents=True)
+            (self.kfd / "proc" / str(pid) / ("vram_%d" % gpu_id)).write_text("%d\n" % (mib * 2 ** 20))
+        # HIP numbers the GPUs by PCI bus here: 0x05 first, so HIP 0 is KFD node 2
+        self.devices = Path(tmp.name) / "devices.json"
+        self.devices.write_text(json.dumps([{"index": 0, "bus": 0x05}, {"index": 1, "bus": 0x65}, {"index": 2, "bus": 0x75}]))
+
+    def run_main(self, *args):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = gpu_status.main(["--kfd", str(self.kfd), "--devices", str(self.devices), *args])
+        return rc, json.loads(out.getvalue())
+
+    def test_memory_is_matched_to_the_hip_number_by_pci_bus(self):
+        rc, out = self.run_main()
+        rows = {r["index"]: r for r in out["gpus"]}
+        self.assertEqual((rows[0]["kfd_node"], rows[0]["used_mib"], rows[0]["pids"]), (2, 4096, {"4242": 4096}))
+        self.assertEqual((rows[1]["kfd_node"], rows[1]["used_mib"]), (3, 0))  # 100 MiB is below --min-mib
+        self.assertEqual((rows[2]["kfd_node"], rows[2]["used_mib"]), (1, 0))
+
+    def test_free_and_check(self):
+        self.assertEqual(self.run_main("--free", "2")[1]["free"], "1,2")
+        self.assertEqual(self.run_main("--free", "3")[0], 1)
+        rc, out = self.run_main("--check", "0,2")
+        self.assertEqual((rc, [r["index"] for r in out["busy"]]), (1, [0]))
+        self.assertEqual(self.run_main("--check", "1,2")[0], 0)
+        self.assertEqual(self.run_main("--check", "7")[1]["missing"], [7])
 
 
 class LeakScanTest(unittest.TestCase):

@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""One InferPilot task per machine: a lock in /dev/shm, which every container started with --ipc=host
+"""One InferPilot task per GPU set: a lock in /dev/shm, which every container started with --ipc=host
 shares with the host (scripts/run_docker.sh starts them that way), which no other machine sees, and
 which a reboot clears.
 
-    python3 scripts/run_lock.py acquire --run-dir DIR --mode MODE --task TEXT [--idle-hours 12]
+    python3 scripts/run_lock.py acquire --run-dir DIR --mode MODE --task TEXT [--gpus 0,1] [--idle-hours 12]
     python3 scripts/run_lock.py release --run-dir DIR        # or: release --run-tag TAG, release --force
     python3 scripts/run_lock.py status
 
-acquire exits 1 when another task holds the machine and prints who. A lock is taken over without
-asking when its run has finished (a report newer than the lock), when the runner that took it is gone,
-or when its run has written nothing in its run directory for the holder's --idle-hours. The runner is
+Tasks run at once when they share no GPU and run in different containers (a container's framework
+checkout serves one task); a task without --gpus (a scan) takes the whole machine. acquire exits 1 when
+a holder is in the way and prints who. A holder is dropped without asking when its run has finished (a
+report newer than the lock), when the runner that took it is gone, or when its run has written nothing
+in its run directory for the holder's --idle-hours. The runner is
 the process named by INFERPILOT_RUN_TAG (<pid>-<start time>, set by runtime/run.mjs for every agent);
 it is checked only from the pid namespace it was recorded in. A run directory this container cannot
 see (the run is in another container) is never taken over for silence; a lock left by a run that died
@@ -120,52 +122,87 @@ def stale_reason(holder: dict, now: float) -> str:
     return ""
 
 
+def _holders(data: dict) -> list:
+    """The holders a lock file names; a file from before GPU sets held one, as the whole object."""
+    if isinstance(data.get("holders"), list):
+        return [h for h in data["holders"] if isinstance(h, dict) and h.get("run_dir")]
+    return [data] if data.get("run_dir") else []
+
+
+def clash(holder: dict, gpus: list, container: str) -> bool:
+    """Whether a run on these GPUs (none: the whole machine) in this container must wait for holder."""
+    theirs = holder.get("gpus") or []
+    return not theirs or not gpus or bool(set(theirs) & set(gpus)) or holder.get("container", "") == container
+
+
 def acquire(lock: str, run_dir: str, task: str = "", mode: str = "", idle_hours: float = 12,
-            now: float | None = None) -> dict:
+            now: float | None = None, gpus: list | None = None) -> dict:
     now = time.time() if now is None else now
     run_dir = os.path.abspath(run_dir)
+    gpus = sorted(set(gpus or []))
+    container = os.environ.get("INFERPILOT_CONTAINER", "")
     fd = _open(lock)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
-        holder = _read(fd)
-        if holder.get("run_dir") == run_dir:
-            return {"status": "acquired", "holder": holder}
-        reason = stale_reason(holder, now)
-        if not reason:
-            return {"status": "busy", "holder": holder}
-        new = {"run_dir": run_dir, "mode": mode, "task": task, "idle_hours": idle_hours, "started": now,
+        holders = _holders(_read(fd))
+        mine = [h for h in holders if h["run_dir"] == run_dir]
+        if mine:
+            return {"status": "acquired", "holder": mine[0]}
+        live, gone = [], []
+        for h in holders:
+            reason = stale_reason(h, now)
+            (gone if reason else live).append((h, reason))
+        in_way = [h for h, _ in live if clash(h, gpus, container)]
+        if in_way:
+            return {"status": "busy", "holder": in_way[0]}
+        new = {"run_dir": run_dir, "mode": mode, "task": task, "gpus": gpus, "idle_hours": idle_hours, "started": now,
                "started_at": time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(now)),
-               "host": socket.gethostname(), "container": os.environ.get("INFERPILOT_CONTAINER", ""),
+               "host": socket.gethostname(), "container": container,
                "run_tag": os.environ.get("INFERPILOT_RUN_TAG", ""), "pid_ns": pid_ns()}
-        _write(fd, new)
+        _write(fd, {"holders": [h for h, _ in live] + [new]})
         out = {"status": "acquired", "holder": new}
-        if reason != "free":
-            out["took_over"] = {"run_dir": holder.get("run_dir", ""), "reason": reason}
+        if gone:
+            out["took_over"] = {"run_dir": gone[0][0].get("run_dir", ""), "reason": gone[0][1]}
         return out
     finally:
         os.close(fd)  # closing the descriptor releases the flock
 
 
 def release(lock: str, run_dir: str = "", force: bool = False, run_tag: str = "") -> dict:
+    """Frees the holder named by run_dir or run_tag; force alone frees every holder."""
     try:
         fd = os.open(lock, os.O_RDWR)
     except FileNotFoundError:
         return {"status": "free"}
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
-        holder = _read(fd)
-        if not holder.get("run_dir"):
+        holders = _holders(_read(fd))
+        if not holders:
             return {"status": "free"}
-        if force or (run_dir and holder["run_dir"] == os.path.abspath(run_dir)) \
-                or (run_tag and holder.get("run_tag") == run_tag):
-            _write(fd, {})
-            return {"status": "released", "holder": holder}
-        return {"status": "held", "holder": holder}
+        named = run_dir or run_tag
+        gone = [h for h in holders if (force and not named) or (run_dir and h["run_dir"] == os.path.abspath(run_dir))
+                or (run_tag and h.get("run_tag") == run_tag)]
+        if not gone:
+            return {"status": "held", "holder": holders[0]}
+        left = [h for h in holders if h not in gone]
+        _write(fd, {"holders": left} if left else {})
+        return {"status": "released", "holder": gone[0]}
     finally:
         os.close(fd)
 
 
+def describe(holder: dict, now: float) -> dict:
+    out = {"holder": holder, "idle_hours_so_far": round((now - last_activity(holder)) / 3600, 1)}
+    if holder.get("run_tag") and holder.get("pid_ns") == pid_ns():
+        out["runner"] = "running" if runner_alive(holder["run_tag"]) else "gone"
+    reason = stale_reason(holder, now)
+    if reason:
+        out["reason"] = reason
+    return out
+
+
 def status(lock: str, now: float | None = None) -> dict:
+    """free, or held (stale when every holder is), with each holder; the first one's fields at the top too."""
     now = time.time() if now is None else now
     try:
         fd = os.open(lock, os.O_RDONLY)
@@ -173,28 +210,24 @@ def status(lock: str, now: float | None = None) -> dict:
         return {"status": "free"}
     try:
         fcntl.flock(fd, fcntl.LOCK_SH)
-        holder = _read(fd)
+        holders = _holders(_read(fd))
     finally:
         os.close(fd)
-    if not holder.get("run_dir"):
+    if not holders:
         return {"status": "free"}
-    out = {"status": "held", "holder": holder, "idle_hours_so_far": round((now - last_activity(holder)) / 3600, 1)}
-    if holder.get("run_tag") and holder.get("pid_ns") == pid_ns():
-        out["runner"] = "running" if runner_alive(holder["run_tag"]) else "gone"
-    reason = stale_reason(holder, now)
-    if reason:
-        out.update(status="stale", reason=reason)
-    return out
+    each = [describe(h, now) for h in holders]
+    return {"status": "stale" if all("reason" in d for d in each) else "held", **each[0], "holders": each}
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="One InferPilot task per machine.")
+    ap = argparse.ArgumentParser(description="One InferPilot task per GPU set.")
     ap.add_argument("--lock", default=LOCK_FILE, help="lock file (default %(default)s; INFERPILOT_LOCK_FILE)")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    acq = sub.add_parser("acquire", help="take the machine for a run; exit 1 when another task holds it")
+    acq = sub.add_parser("acquire", help="take GPUs (or the machine) for a run; exit 1 when a holder is in the way")
     acq.add_argument("--run-dir", required=True)
     acq.add_argument("--mode", default="")
     acq.add_argument("--task", default="")
+    acq.add_argument("--gpus", default="", help="HIP numbers, e.g. 0,1 (default: the whole machine)")
     acq.add_argument("--idle-hours", type=float, default=12,
                      help="hours without a write in the run directory after which the lock counts as stale")
     rel = sub.add_parser("release", help="free the machine")
@@ -204,7 +237,8 @@ def main(argv=None) -> int:
     sub.add_parser("status", help="who holds the machine")
     a = ap.parse_args(argv)
     if a.cmd == "acquire":
-        out = acquire(a.lock, a.run_dir, a.task, a.mode, a.idle_hours)
+        out = acquire(a.lock, a.run_dir, a.task, a.mode, a.idle_hours,
+                      gpus=[int(g) for g in a.gpus.split(",") if g.strip()])
     elif a.cmd == "release":
         out = release(a.lock, a.run_dir, a.force, a.run_tag)
     else:
