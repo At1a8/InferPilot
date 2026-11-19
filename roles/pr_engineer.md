@@ -19,7 +19,27 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
    instrumentation left on, no generated files (hipified `*.hip`, core dumps); the change is HIP-only or
    switch-gated, the CUDA path untouched; new tests registered where CI discovers them; user-visible
    switches documented. Each gap becomes a work package whose `test` shows it closed (`lint_pass`
-   false while lint fails).
+   false while lint fails). Then what a reviewer upstream asks first (`pr_playbook.md` §Before opening):
+   - **Nothing private:** `python3 <inferpilot_dir>/scripts/leak_scan.py --repo <worktree> --base <base>`
+     finds no local path, host name or internal site in the added lines or commit messages, and no
+     `root` identity (step 2 resets those); each finding in the code is a work package, and what the
+     last scan (step 5) still finds goes in `leaks`.
+   - **Tests the PR carries:** only tests the repository's CI runs, the fewest that cover the change: a
+     change to outputs carries one end-to-end accuracy test at the feature's defaults (sglang:
+     `test/registered/amd/accuracy/...` with `register_amd_ci`, 5-shot GSM8K). The oracles and
+     harnesses of InferPilot's gates (G1, G3–G5) stay in `RUN_DIR/tests`: a work package takes them off
+     the branch.
+   - **The smallest diff:** every hunk is needed by the change. Code CUDA also runs changes only by
+     addition: a new branch behind the switch or a module-level platform constant (sglang:
+     `_is_hip = is_hip()` at import, never a call such as `get_platform().is_hip` per use), no
+     refactor, rename, reformatting or moved code, no check repeated where an earlier one already holds
+     (a startup rejection is not checked again per request), no helper or option nothing uses yet. Docs
+     only as far as the switch and CI need (sglang: the row in `server_arguments.mdx` that
+     `test_server_args_docs_coverage` checks). Each hunk that fails this is a work package; `diff_stat`
+     says how big the diff is (`20 files, +1304/-26`).
+   - **The repository's own CPU tests** for what changed pass (sglang: the unit tests under
+     `test/registered/unit/` for the changed modules, `test_server_args_docs_coverage` for a new
+     argument); one that fails the same way on the base is said in the body, not fixed.
 2. **Commits** tell the story: one per work package, follow-up fixes squashed into the commit they fix.
    Rewriting history must not change the tree: `git diff <reviewed HEAD> <new HEAD>` is empty, else
    `content_unchanged` is false.
@@ -32,16 +52,21 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
    - **Trailers:** a `Co-Authored-By` or "Generated with" line the agent's tool added stays only if the
      target repository's convention allows it; otherwise drop it here. Either way, disclose AI assistance
      in the PR body where the repository asks for it (`guardrails.md`).
-3. **Upstream:** trial-merge main in a throwaway worktree and record the conflicts. Do not update the
-   branch: a merged tree is not the tree that was verified. `merges_cleanly` false puts the conflicts
-   in the PR body for the human, who merges and re-runs the gates (`pr_playbook.md`).
-4. **Feature off on the final commit** (G0 smoke).
+3. **Upstream:** `git fetch origin`, then trial-merge the latest main in a throwaway worktree and record
+   the conflicts. Do not update the branch: a merged tree is not the tree that was verified.
+   `merges_cleanly` false puts the conflicts in the PR body for the human, who merges and re-runs the
+   gates (`pr_playbook.md`).
+4. **Feature off on the final commit** (G0 smoke), and **the launch command the description gives**,
+   run once as written on the final commit: the server starts, answers one request and its log shows the
+   feature on (`launch_checked`; false, with the error, is a work package).
 5. **Description:** write `RUN_DIR/pr_body.md` from `templates/pr_body.md` and the validation report,
    following `pr_playbook.md` §Description (the template kept as it is, Motivation in at most 100 words,
    one sentence per changed file, HIP-only checked and said, 5-shot GSM8K 1319 at the defaults, one speed
    scenario against the baseline, the way a person writes); title in the repository's convention
    (sglang: `[Type] [Hardware] scope: title`). When the task was to push an existing PR, write the
-   verification comment for that PR instead, at the same path.
+   verification comment for that PR instead, at the same path. Run the leak scan again with
+   `--body RUN_DIR/pr_body.md`, and write the body so that it finds nothing there: model ids, not
+   local paths.
 6. **Push command:** the exact `git push` the human should run from the worktree, in the container. Do
    not run it. Also write the branch's commits to `RUN_DIR/patches` (`git -C <worktree> format-patch
    <base>..inferpilot/<slug> -o RUN_DIR/patches`), so the change leaves the container with the run directory:
@@ -55,6 +80,7 @@ Return:
 ```json
 {"branch": "inferpilot/<slug>", "title": "[Fix] [AMD] scope: Description", "commits": ["<sha> <subject>"],
  "lint_pass": true, "feature_off_final": true, "content_unchanged": true, "merges_cleanly": true,
+ "leaks": [], "diff_stat": "20 files, +1304/-26", "launch_checked": true,
  "work_packages": [],
  "pr_body_path": "/abs/RUN_DIR/pr_body.md", "push_command": "git -C /sgl-workspace/sglang push <remote> inferpilot/<slug>"}
 ```

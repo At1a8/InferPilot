@@ -24,6 +24,7 @@ import audit_platform_gates  # noqa: E402
 import check_framework_skills  # noqa: E402
 import latest_image  # noqa: E402
 import daily_report  # noqa: E402
+import leak_scan  # noqa: E402
 import few_shot_gsm8k  # noqa: E402
 import find_skill  # noqa: E402
 import propose_knowledge  # noqa: E402
@@ -604,6 +605,48 @@ class RunLockTest(unittest.TestCase):
             self.assertEqual(run_lock.main(["--lock", self.lock, "acquire", "--run-dir", self.b]), 1)
             self.assertEqual(run_lock.main(["--lock", self.lock, "status"]), 0)
         self.assertIn('"status": "busy"', out.getvalue())
+
+
+class LeakScanTest(unittest.TestCase):
+    """scripts/leak_scan.py on a throwaway repository."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = Path(tmp.name)
+        git("init", "-q", "-b", "main", cwd=self.repo)
+        (self.repo / "a.py").write_text("x = 1\n")
+        git("add", "-A", cwd=self.repo)
+        git("commit", "-q", "-m", "base", cwd=self.repo)
+        self.base = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True,
+                                   text=True, check=True).stdout.strip()
+
+    def commit(self, text, message="change", author="Jane Doe <jane@users.noreply.github.com>"):
+        (self.repo / "a.py").write_text("x = 1\n" + text)
+        name, email = author[:-1].split(" <")
+        subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=%s" % name, "-c", "user.email=%s" % email,
+                        "commit", "-q", "-am", message], check=True, capture_output=True)
+
+    def scan(self, *extra):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = leak_scan.main(["--repo", str(self.repo), "--base", self.base, "--host", "gpu-node-17", *extra])
+        return rc, json.loads(out.getvalue())
+
+    def test_a_clean_branch_passes_and_rocm_paths_are_public(self):
+        self.commit('LIB = "/opt/rocm/lib"\n')
+        self.assertEqual(self.scan(), (0, {"leaks": [], "identities": []}))
+
+    def test_local_paths_host_names_and_root_are_found(self):
+        self.commit('MODEL = "/data/models/Qwen3-8B"\n', message="measured on gpu-node-17", author="root <root@gpu-node-17>")
+        body = self.repo / "pr_body.md"
+        body.write_text("Results\n\nlogs in /home/alice/run\n")
+        rc, out = self.scan("--body", str(body))
+        self.assertEqual(rc, 1)
+        self.assertEqual([f["where"] for f in out["leaks"]][0], "a.py:2")
+        self.assertTrue(any(f["where"].startswith("commit ") for f in out["leaks"]), out)
+        self.assertIn("%s:3" % body, [f["where"] for f in out["leaks"]])
+        self.assertEqual(out["identities"], ["root <root@gpu-node-17>"])
 
 
 class ScanCiTest(unittest.TestCase):

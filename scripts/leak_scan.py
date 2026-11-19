@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""What a branch would make public about this machine, before a human pushes it.
+
+    python3 scripts/leak_scan.py --repo <worktree> --base <base commit> [--body RUN_DIR/pr_body.md]
+
+Scans the lines the branch adds (git diff <base>...HEAD), its commit messages, the author and committer of
+each commit, and the PR description when given, for local paths (/home, /mnt, /data, ...), this
+machine's host name, internal sites, and identities such as root or an address with the host name in it
+(daily_report.leaks holds the patterns). Paths that public code needs (/opt/rocm) are allowed; --allow adds
+a pattern. Prints one JSON object, {"leaks": [{"where", "text"}], "identities": [...]}, and exits 1 when
+anything was found. Standard library only.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from daily_report import leaks  # noqa: E402
+
+ALLOW = [r"/opt/rocm\b"]
+
+
+def git(repo: str, *args: str) -> str:
+    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, check=True).stdout
+
+
+def added_lines(diff: str):
+    """(path, line number, text) of every line a unified diff adds."""
+    path, n = "", 0
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            path = line[6:] if line.startswith("+++ b/") else line[4:]
+        elif line.startswith("@@"):
+            m = re.search(r"\+(\d+)", line)
+            n = int(m.group(1)) if m else 0
+        elif line.startswith("+"):
+            yield path, n, line[1:]
+            n += 1
+        elif not line.startswith("-"):
+            n += 1
+
+
+def scan(text: str, host: str, allow: list) -> bool:
+    for pattern in allow:
+        text = re.sub(pattern, "", text)
+    return bool(leaks(text, host))
+
+
+def bad_identity(ident: str, host: str) -> bool:
+    name, _, email = ident.partition(" <")
+    email = email.rstrip(">").lower()
+    return name.strip().lower() == "root" or email.startswith("root@") or (bool(host) and host.lower() in email)
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="Local paths, host names and identities a branch would publish.")
+    ap.add_argument("--repo", required=True)
+    ap.add_argument("--base", required=True, help="the commit the branch starts from")
+    ap.add_argument("--body", default="", help="the PR description, when written")
+    ap.add_argument("--host", default=socket.gethostname(), help="this machine's name (default: the host name)")
+    ap.add_argument("--allow", action="append", default=[], help="a regex for text that may stay (repeatable)")
+    a = ap.parse_args(argv)
+    allow = ALLOW + a.allow
+    found = []
+    for path, n, text in added_lines(git(a.repo, "diff", "--no-color", "--unified=0", "%s...HEAD" % a.base)):
+        if scan(text, a.host, allow):
+            found.append({"where": "%s:%d" % (path, n), "text": text.strip()[:200]})
+    for sha in git(a.repo, "rev-list", "%s..HEAD" % a.base).split():
+        for n, line in enumerate(git(a.repo, "log", "-1", "--format=%B", sha).splitlines(), 1):
+            if scan(line, a.host, allow):
+                found.append({"where": "commit %s message line %d" % (sha[:10], n), "text": line.strip()[:200]})
+    if a.body:
+        with open(a.body, encoding="utf-8") as f:
+            for n, line in enumerate(f.read().splitlines(), 1):
+                if scan(line, a.host, allow):
+                    found.append({"where": "%s:%d" % (a.body, n), "text": line.strip()[:200]})
+    idents = sorted({i for i in git(a.repo, "log", "--format=%an <%ae>%n%cn <%ce>", "%s..HEAD" % a.base).splitlines()
+                     if i and bad_identity(i, a.host)})
+    print(json.dumps({"leaks": found, "identities": idents}, indent=1))
+    return 1 if found or idents else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

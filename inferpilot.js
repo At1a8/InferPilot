@@ -662,6 +662,9 @@ const PR = S({
   feature_off_final: bool,
   content_unchanged: bool, // the branch's tree is the one Verify and Review passed
   merges_cleanly: bool,
+  leaks: strs, // what scripts/leak_scan.py still finds in the diff, the commits or the body; empty when clean
+  diff_stat: str, // files changed, lines added and removed
+  launch_checked: bool, // the launch command the description gives ran once as written on the final commit
   pr_body_path: str,
   push_command: str,
   work_packages: WPS, // what the branch still lacks; implemented, verified and reviewed like a finding
@@ -1089,8 +1092,9 @@ async function reviewLoop(extraGates, perfClaim, runPerf) {
 async function preparePR(round) {
   enter('PR');
   const pr = await call('pr_engineer', 'pr', inputs({ round }), PR, `pr_engineer#${round}`);
+  const leaks = (pr && pr.leaks) || [];
   const ok = !!pr && pr.lint_pass === true && pr.feature_off_final === true && pr.content_unchanged === true
-    && !!pr.pr_body_path;
+    && !!pr.pr_body_path && leaks.length === 0 && pr.launch_checked !== false;
   if (pr) {
     if (pr.branch) C.branch = pr.branch;
     C.pr_body_path = pr.pr_body_path || '';
@@ -1098,8 +1102,11 @@ async function preparePR(round) {
       merges_cleanly: pr.merges_cleanly !== false };
   }
   note('PR', ok ? 'pass' : 'fail', !pr ? 'the PR engineer returned nothing'
-    : `${pr.title || pr.branch}${pr.content_unchanged !== true ? '; the branch no longer matches what was verified' : ''}`
-      + `${pr.merges_cleanly === false ? '; conflicts with main, reported in the PR body' : ''}`);
+    : `${pr.title || pr.branch}${pr.diff_stat ? ` (${pr.diff_stat})` : ''}`
+      + `${pr.content_unchanged !== true ? '; the branch no longer matches what was verified' : ''}`
+      + `${pr.merges_cleanly === false ? '; conflicts with main, reported in the PR body' : ''}`
+      + `${leaks.length ? `; would publish ${leaks.length} local path(s), host name(s) or identities` : ''}`
+      + `${pr.launch_checked === false ? '; the documented launch command failed' : ''}`);
   return { ok, wps: !pr || ok || pr.content_unchanged !== true ? [] : (pr.work_packages || []) };
 }
 

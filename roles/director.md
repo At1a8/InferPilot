@@ -80,6 +80,10 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
    - Record the image and what the check before step 0 found (an older image the user accepted
      goes in `notes`), the version of the image's own sglang (`pip show sglang`) and the worktree's
      base commit.
+   - The identity the task's commits will carry (`git -C <framework_dir> var GIT_AUTHOR_IDENT`): one
+     that names `root` or this host goes in `notes`, with the fix (`INFERPILOT_GIT_NAME` and
+     `INFERPILOT_GIT_EMAIL` in `~/.inferpilot_env`, then the bootstrap); the PR phase resets the
+     authors once one is set. Never set it yourself.
    - An image too old for the worktree (sgl-kernel or aiter rejected at import or startup) fails the
      baseline; `baseline` names the newer image to start a container from.
 4. **Baseline.**
