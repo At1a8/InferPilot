@@ -27,16 +27,21 @@ they win over anything you infer), `answers` (the user's replies to earlier ques
    - an issue or PR: fetch its title and state (`scripts/scan_issues.py --issue <n>` for issues).
    - `workload` and any target number: only what the request states or the user answers; never invent
      numbers.
-   - `server_script` and `client_script` (`task_definition.md` §1.1): the user's own scripts. Check that
-     each exists and is readable, and that the server script passes `$PORT` and `$EXTRA_ARGS` to the
-     server; say what is missing. Never write them for the user: a script you wrote is not the user's
-     baseline.
+   - `server_script`, `client_script` and `accuracy_script` (`task_definition.md` §1.1), each
+     optional: the user's own scripts, when the request gives them, and then the ones that run. Check
+     that each exists and is readable, and that the server script passes `$PORT` and `$EXTRA_ARGS` to
+     the server; say what is missing. Never write them for the user: without them Setup renders
+     InferPilot's templates (§1.2).
+   - `harness`: the template parameters the request sets, by their names (`scripts/harness.py show`):
+     a context length, the accuracy sets, thinking off. Only what the request states; the feature's
+     source and the templates fill the rest at Setup.
    - feature skills (feature mode): `python3 <inferpilot_dir>/scripts/find_skill.py "<request, task title>"`;
      list each candidate in `assumptions` as `feature skill candidate: <id> (<status>)`. The director
      makes the choice at Spec.
 3. **Defaults** — record each in `provenance` as `default` and list it in `assumptions`:
    `framework=sglang`, `kernel_backend=none`, empty `gpu_ids` (Setup picks free GPUs), empty `container`
-   when InferPilot runs inside the container, the scout's default `sources` and `since` for a scan.
+   when InferPilot runs inside the container, the scout's default `sources` and `since` for a scan, and
+   the harness templates for a script a `feature` or `perf` task does not bring.
 4. **Ask instead of guessing** when the mode is ambiguous; the source of truth (`task`) is missing; a
    field the mode requires is missing; a value would cost something to obtain (downloading weights,
    GPUs or containers nobody gave); what you found contradicts what was given or answered; or a number

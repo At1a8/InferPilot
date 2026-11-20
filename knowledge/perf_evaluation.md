@@ -17,7 +17,10 @@ A feature usually spends a resource to save another. Hold the scarce resource eq
 ## 2. Choose workloads on purpose
 
 The benchmark is the task's: its `client_script` and `workload` (`../templates/task_definition.md` §1.1),
-run unchanged, against servers started from its `server_script`. InferPilot never edits or retunes it.
+or without a client of its own the harness's `perf.sh` on its workload (§1.2), run unchanged, against
+servers started from the run's server script: the task's, or the harness's after the model's sglang
+cookbook recipe. InferPilot never edits or retunes it. A feature's harness takes the parameters its
+source's own tests set (PARD-2: vLLM's `--max-model-len 4096` and no prefix caching).
 The table below is for the workloads a task lists beside it, and for choosing one with the user when a
 task has none. Guard workloads are the ones the task's `goal` names; InferPilot adds its own from the
 table only when the task sets `guards`. When there is none, the report says that none was measured.

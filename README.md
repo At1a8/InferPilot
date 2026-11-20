@@ -531,8 +531,10 @@ described at the top of `runtime/run.mjs`.
 | `model_path` | the model the baseline and the gates run (required for `feature` and `perf`) |
 | `framework`, `platform`, `gpu_ids` | target and environment (`sglang`; empty `gpu_ids` lets Setup pick idle GPUs, which every later role then uses through `HIP_VISIBLE_DEVICES`) |
 | `workload` | the benchmark every measurement uses, e.g. `{"isl":8192,"osl":1024,"conc":64}`; required for `perf`, fixed at Setup |
-| `server_script` | your script that starts the server for `model_path`; InferPilot sets `PORT`, `HIP_VISIBLE_DEVICES`, `PYTHONPATH` and `EXTRA_ARGS` (the feature's flags, empty for the baseline), and the script passes `--port $PORT` and `$EXTRA_ARGS` to the server; required for `feature` and `perf` ([`templates/task_definition.md`](templates/task_definition.md) §1.1) |
-| `client_script` | your script that runs the workload against `PORT` and writes its logs to `OUT_DIR`: the benchmark, run unchanged; required for `perf` and for a feature with a `workload` |
+| `server_script` | your script that starts the server for `model_path`; InferPilot sets `PORT`, `HIP_VISIBLE_DEVICES`, `PYTHONPATH` and `EXTRA_ARGS` (the feature's flags, empty for the baseline), and the script passes `--port $PORT` and `$EXTRA_ARGS` to the server ([`templates/task_definition.md`](templates/task_definition.md) §1.1); without one, the harness's `templates/harness/server.sh`, after the model's recipe in the sglang cookbook |
+| `client_script` | your script that runs the workload against `PORT` and writes its logs to `OUT_DIR`: the benchmark, run unchanged; without one, the harness's `templates/harness/perf.sh` (sglang's serving benchmark) on the `workload` |
+| `accuracy_script` | your script that measures accuracy against `API_URL` and writes its results under `RESULT_ROOT`, run unchanged for every arm; without one, the harness's `templates/harness/accuracy.sh` (`scripts/eval_accuracy.sh`) |
+| `harness` | values for the harness's templates, e.g. `{"CONTEXT_LENGTH": 8192, "ENABLE_THINKING": 0}` (`python3 scripts/harness.py show` lists them): each parameter takes the task's value, else the one the tests of the feature's source use (vLLM's `--max-model-len 4096` for PARD-2), else for the server the model's sglang cookbook recipe, else the template's default ([`templates/task_definition.md`](templates/task_definition.md) §1.2) |
 | `container` | only when InferPilot runs on the host: the framework's container, reached with `docker exec` |
 | `exp_root` | where run directories go (default `<inferpilot_dir>/exp`, which git ignores) |
 | `kernel_backend` | `none` (default) \| `geak` \| `command`: where kernel hand-offs go |
@@ -600,6 +602,7 @@ GitHub allows 60 requests an hour and 10 searches a minute per IP address).
 | `scripts/scan_issues.py` | open AMD issues with linked PRs, replies and the projected 60-day auto-close date |
 | `scripts/scan_ci.py` | the AMD CI on main from its own runs and logs (each failing job: since when, last passed, failed tests, first errors), and the Failure Trackers' clusters |
 | `scripts/eval_accuracy.sh` | accuracy of a running server with evalscope (the bootstrap installs it): GSM8K on all 1319 questions, once, by default (a lossy feature adds gpqa_diamond and simple_qa); other sets by name; keys only from the environment |
+| `scripts/harness.py` | the harness of a task that brings no scripts of its own: `show` lists the parameters of `templates/harness/` (server, performance client, accuracy) with their defaults; `render` writes a run's scripts with the task's values, then those the feature's source tests with, then for the server the model's sglang cookbook recipe (`--cookbook`), then the defaults, and `harness.json`, where each value came from |
 | `scripts/scan_upstream.py` | merged upstream commits: new CUDA gates, CUDA-first features, new models |
 | `scripts/audit_platform_gates.py` | platform gates to re-check on a new architecture (capability checks true on gfx1250, wave32 assumptions) |
 | `scripts/audit_host_syncs.py` | host-device sync and copy candidates on the hot path (leads for a profile) |

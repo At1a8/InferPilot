@@ -41,6 +41,10 @@ Two rules hold across the dimensions:
   `scripts/eval_accuracy.sh`, and at most 1 point below the baseline on each (`validation_doctrine.md`,
   G2). A goal may ask for more, declared before anything is measured: other sets (a long-context set
   for KV compression, for example), more runs or another budget.
+- **Harness:** `scripts/eval_accuracy.sh` runs through the harness's `accuracy.sh`, with the same
+  settings for every arm: the task's, else those the feature's source tests with (thinking off for
+  PARD-2), else the template's (`../templates/task_definition.md` §1.2). A task that brings an
+  `accuracy_script` is measured with it instead, as given, on the sets it measures.
 - **Capability suites**, for what the change touches: long context (needle-in-a-haystack, G3),
   reasoning (GPQA, AIME), tool calls, multimodal input.
 - **Parity with a reference**, for a new model, a new kernel or a refactor: logprobs or the KL

@@ -890,13 +890,27 @@ const scenarios = [
     check(asks(await run({ mode: 'perf', task: 'p', workload: '' }), 'workload'), 'perf without a workload asked');
     check(asks(await run({ mode: 'perf', task: 'p', model_path: '' }), 'model_path'), 'perf without a model asked');
     check(asks(await run({ mode: 'feature', task: 't', model_path: '' }), 'model_path'), 'feature without a model asked');
-    check(asks(await run({ mode: 'feature', task: 't', server_script: '' }), 'server_script'), 'feature without a server script asked');
-    check(asks(await run({ mode: 'perf', task: 'p', client_script: '' }), 'client_script'), 'perf without a client script asked');
-    check(asks(await run({ mode: 'feature', task: 't', workload: '{"isl":8000}' }), 'client_script'), 'a feature with a workload but no client script asked');
     const plain = await run({ mode: 'feature', task: 't' });
-    check(!asks(plain, 'client_script'), 'a feature without a workload needs no client script');
     const setupIns = plain.calls.find((c) => c.key === 'director:setup');
     check(setupIns && setupIns.ins.server_script === '/s/server.sh', 'the server script reaches the roles');
+  }],
+  ['perf: without scripts of the task, the harness Setup renders is what every later role runs', async () => {
+    const rendered = { server_script: `${RUN}/scripts/server.sh`, client_script: `${RUN}/scripts/perf.sh`,
+      accuracy_script: `${RUN}/scripts/accuracy.sh` };
+    const setup = { 'director:setup': () => ({ lock: 'acquired', run_dir: RUN, baseline_status: 'pass', branch: 'inferpilot/task',
+      worktree: `${RUN}/wt`, gpu_ids: '0,1', ...rendered }) };
+    const bare = await run({ mode: 'perf', task: 'p', server_script: '', client_script: '', harness: { CONTEXT_LENGTH: 8192 } }, setup);
+    check(!asks(bare, 'server_script') && !asks(bare, 'client_script'), 'no question for a script the templates stand in for');
+    const setupIns = bare.calls.find((c) => c.key === 'director:setup');
+    check(setupIns && !setupIns.ins.server_script && (setupIns.ins.harness || {}).CONTEXT_LENGTH === 8192,
+      `Setup gets no script and the task's harness values: ${JSON.stringify(setupIns && setupIns.ins.harness)}`);
+    const later = bare.calls.filter((c) => c.key === 'perf_engineer:perf_eval');
+    check(later.length && later.every((c) => c.ins.server_script === rendered.server_script && c.ins.client_script === rendered.client_script
+      && c.ins.accuracy_script === rendered.accuracy_script), 'the rendered scripts reach the performance engineer');
+    const own = await run({ mode: 'perf', task: 'p', accuracy_script: '/s/accuracy.sh' }, setup);
+    const ownIns = own.calls.find((c) => c.key === 'perf_engineer:perf_eval');
+    check(ownIns && ownIns.ins.server_script === '/s/server.sh' && ownIns.ins.client_script === '/s/client.sh'
+      && ownIns.ins.accuracy_script === '/s/accuracy.sh', 'the task\'s own scripts win over rendered ones');
   }],
   ['perf: a profile of the wrong path stops before any plan', async () => {
     const r = await run({ mode: 'perf', task: 'p' }, {
