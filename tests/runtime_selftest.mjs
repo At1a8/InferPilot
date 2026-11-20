@@ -279,6 +279,23 @@ return { status: r.ok ? 'done' : 'no', n: args.n };`);
       'a runner that exited and is not reaped yet is gone');
     zombie.kill('SIGKILL');
   }],
+  ['run.mjs: the control file next to --args-file is read when the script asks; one there before the run counts once it changes; the pid stays on the log\'s first line', async () => {
+    const script = path.join(TMP, 'control.js');
+    writeFileSync(script, `const before = control();\nawait agent('go', { label: 'writes' });\nreturn { before, after: control() };`);
+    const argsFile = path.join(TMP, 'ctl.json');
+    writeFileSync(argsFile, '{}');
+    const controlFile = path.join(TMP, 'ctl.control.json');
+    writeFileSync(controlFile, '{"stop_after": "now"}');
+    const run = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
+      '--args-file', argsFile], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('ctl.sh',
+      `echo '{"stop_after": "Verify"}' > ${controlFile}; echo done`) }, encoding: 'utf8' });
+    const r = JSON.parse(run.stdout);
+    check(JSON.stringify(r.before) === '{}', `an earlier run's file is ignored: ${JSON.stringify(r.before)}`);
+    check(r.after.stop_after === 'Verify', `one written during the run is read: ${JSON.stringify(r.after)}`);
+    check(new RegExp(`^\\[[\\d:]+\\] runner pid ${run.pid}: kill ${run.pid} stops`).test(run.stderr)
+      && run.stderr.includes(`control file: ${controlFile} (read at every phase boundary)`),
+    `the log starts with the runner's pid, the control file after it: ${run.stderr.slice(0, 160)}`);
+  }],
   ['run.mjs: SIGTERM stops the agents and what they started with setsid, frees the lock, writes an interrupted result', async () => {
     if (!existsSync('/proc/self/environ')) return;
     const script = path.join(TMP, 'stop.js');
