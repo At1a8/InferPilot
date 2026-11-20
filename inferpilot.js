@@ -677,13 +677,16 @@ const DISPATCH = S({
 // Shared stages
 // ---------------------------------------------------------------------------
 // A lead counts as confirmed only when its base run imported the framework from a base worktree of this run.
+// A path with '..' could start with a base worktree and still leave it.
 function checkedOnBase(s) {
   if (s.source !== 'lead' || !s.known_issue) return s;
   const imp = String(s.base_import || '');
-  if ([`${C.run_dir}/base/`, `${C.run_dir}/spinoff/base/`].some((t) => imp.startsWith(t))) return s;
+  const inBase = [`${C.run_dir}/base/`, `${C.run_dir}/spinoff/base/`].some((t) => imp.startsWith(t));
+  if (inBase && !/(^|\/)\.\.(\/|$)/.test(imp)) return s;
   const { known_issue, draft_path, ...rest } = s;
-  return { ...rest, status: 'unconfirmed', note: `${s.note ? `${s.note} ` : ''}Not counted as confirmed: its base run `
-    + `imported the framework from ${imp || 'a path it did not record'}, not from a base worktree of this run.` };
+  return { ...rest, status: 'unconfirmed', ...(draft_path ? { withdrawn_draft: draft_path } : {}),
+    note: `${s.note ? `${s.note} ` : ''}Not counted as confirmed: its base run imported the framework from `
+      + `${imp || 'a path it did not record'}, not from a base worktree of this run.` };
 }
 
 async function finish(status, at) {
@@ -695,7 +698,7 @@ async function finish(status, at) {
     if (R.known_issues.length || R.leads.length) {
       enter('Spinoff');
       // A base run that fails for another reason would pass for a confirmed lead: a timed-out agent may still
-      // hold the GPUs, and a run stopped at Setup may have a broken environment.
+      // hold the GPUs, and a run that ended at Setup never showed the environment works.
       const skipped = !C.confirm_leads ? [] : [...TIMED_OUT_CALLS].map((c) => `${c} timed out`)
         .concat(at === 'Setup' ? ['the run stopped at Setup'] : []);
       const sp = await call('issue_triager', 'spinoff', inputs({ status, stopped_at: at || '', phases: R.phases,

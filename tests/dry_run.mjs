@@ -233,6 +233,14 @@ const scenarios = [
     const ssp = atSetup.calls.find((c) => c.key === 'issue_triager:spinoff');
     check(ssp && ssp.ins.confirm_leads === false && (ssp.ins.confirm_skipped || []).some((x) => x.includes('Setup')),
       'a run that stopped at Setup confirms nothing on the base commit');
+    const badBase = await run({ mode: 'feature', task: 't', confirm_leads: true }, {
+      'director:setup': () => ({ lock: 'acquired', run_dir: RUN, baseline_status: 'fail', baseline: 'sgl_kernel import error',
+        branch: 'inferpilot/task', worktree: `${RUN}/wt`, gpu_ids: '0,1', leads: [lead] }),
+    });
+    const bsp = badBase.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(badBase.result.status === 'blocked' && badBase.result.stopped_at === 'Setup' && bsp && bsp.ins.confirm_leads === false
+      && (bsp.ins.confirm_skipped || []).some((x) => x.includes('Setup')),
+      'a run blocked at Setup by a failing baseline confirms nothing: every base run there would fail');
     check(!(r.result.next.user || []).some((u) => u.includes('issue draft')), 'an unconfirmed lead asks the human for nothing');
     const confirmed = await run({ mode: 'feature', task: 't' }, {
       'reviewer:review': () => ({ verdict: 'approve', findings: [], review_path: `${RUN}/review.md`, leads: [lead] }),
@@ -251,6 +259,16 @@ const scenarios = [
     check(!wrongTree.result.known_issues.some((k) => k.id === 'KI-009') && w.status === 'unconfirmed' && !w.draft_path
       && String(w.note).includes(`${RUN}/wt/python`) && !(wrongTree.result.next.user || []).some((u) => u.includes('issue draft')),
       'a confirmation whose base run imported the task tree is not counted: unconfirmed, no draft to file');
+    const wrep = wrongTree.calls.find((c) => c.key === 'director:report');
+    check(w.withdrawn_draft === `${RUN}/spinoff/KI-009.md` && wrep && wrep.ins.spinoffs.some((x) => x.withdrawn_draft === w.withdrawn_draft),
+      'the draft written for it is handed to the report as withdrawn');
+    const dotdot = await run({ mode: 'feature', task: 't' }, {
+      'reviewer:review': () => ({ verdict: 'approve', findings: [], review_path: `${RUN}/review.md`, leads: [lead] }),
+      'issue_triager:spinoff': () => ({ spinoffs: [{ id: 'KI-009', source: 'lead', status: 'drafted', draft_path: `${RUN}/spinoff/KI-009.md`,
+        known_issue: { id: 'KI-009', title: lead.title }, base_import: `${RUN}/base/../wt/python/sglang/__init__.py` }] }),
+    });
+    check(!dotdot.result.known_issues.some((k) => k.id === 'KI-009') && (dotdot.result.spinoffs[0] || {}).status === 'unconfirmed',
+      'a base_import that leaves the base worktree through .. is not counted');
     const work = r.calls.find((c) => c.key === 'verify_engineer:verify');
     const report = r.calls.find((c) => c.key === 'director:report');
     check(work.prompt.includes('do not chase it') && !report.prompt.includes('do not chase it') && !sp.prompt.includes('do not chase it'),

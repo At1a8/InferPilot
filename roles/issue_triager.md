@@ -78,7 +78,7 @@ and each is someone's: give a human what it takes to hand it on. Also read `know
      up as in step 2; one tracked upstream is `tracked`, the rest `unconfirmed`, with `note` giving the
      command that would show it on the base commit. No draft for them. `confirm_skipped` lists why
      confirmation is off although the task asked for it (a call that timed out may still hold the
-     GPUs; a run that stopped at Setup may have a broken environment): give that reason in each
+     GPUs; a run that ended at Setup never showed the environment works): give that reason in each
      `note`. When it is empty, confirmation was not asked for; say nothing about it.
    - With `confirm_leads`, check each on the base commit the ledger records, without this task's
      change, on the GPUs in `gpu_ids`, at most a few runs each, one log per run under `RUN_DIR/logs/`:
