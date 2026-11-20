@@ -11,9 +11,11 @@ acquire exits 1 when another task holds the machine and prints who. A lock is ta
 asking when its run has finished (a report newer than the lock), when the runner that took it is gone,
 or when its run has written nothing in its run directory for the holder's --idle-hours. The runner is
 the process named by INFERPILOT_RUN_TAG (<pid>-<start time>-<pid namespace>, set by runtime/run.mjs for
-every agent); it is checked only from the pid namespace it was recorded in. A run directory this
-container cannot see (the run is in another container) is never taken over for silence; a lock left by
-a run that died is freed at once with `release --force`. Standard library only.
+every agent); it is checked only from the pid namespace it was recorded in. The same run directory again
+(a retry, a resume) gets its lock back, in the name of the runner asking from then on, unless the runner
+that took it still runs: then it is busy. A run directory this container cannot see (the run is in
+another container) is never taken over for silence; a lock left by a run that died is freed at once
+with `release --force`. Standard library only.
 """
 from __future__ import annotations
 
@@ -130,22 +132,29 @@ def acquire(lock: str, run_dir: str, task: str = "", mode: str = "", idle_hours:
             now: float | None = None) -> dict:
     now = time.time() if now is None else now
     run_dir = os.path.abspath(run_dir)
+    tag = os.environ.get("INFERPILOT_RUN_TAG", "")
     fd = _open(lock)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         holder = _read(fd)
         if holder.get("run_dir") == run_dir:
-            return {"status": "acquired", "holder": holder}
-        reason = stale_reason(holder, now)
-        if not reason:
-            return {"status": "busy", "holder": holder}
+            old = holder.get("run_tag", "")
+            if old == tag:
+                return {"status": "acquired", "holder": holder}
+            if old and holder.get("pid_ns") == pid_ns() and runner_alive(old):
+                return {"status": "busy", "holder": holder}
+            reason = "resumed"  # the run goes on under another runner, which holds its lock from now on
+        else:
+            reason = stale_reason(holder, now)
+            if not reason:
+                return {"status": "busy", "holder": holder}
         new = {"run_dir": run_dir, "mode": mode, "task": task, "idle_hours": idle_hours, "started": now,
                "started_at": time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(now)),
                "host": socket.gethostname(), "container": os.environ.get("INFERPILOT_CONTAINER", ""),
-               "run_tag": os.environ.get("INFERPILOT_RUN_TAG", ""), "pid_ns": pid_ns()}
+               "run_tag": tag, "pid_ns": pid_ns()}
         _write(fd, new)
         out = {"status": "acquired", "holder": new}
-        if reason != "free":
+        if reason not in ("free", "resumed"):
             out["took_over"] = {"run_dir": holder.get("run_dir", ""), "reason": reason}
         return out
     finally:

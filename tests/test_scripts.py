@@ -499,6 +499,21 @@ class RunLockTest(unittest.TestCase):
         self.assertEqual((took["status"], took["took_over"]["reason"]), ("acquired", "its runner is gone"))
 
     @unittest.skipUnless(os.path.exists("/proc/self/stat"), "needs /proc")
+    def test_a_run_resumed_by_another_runner_is_that_runners(self):
+        with open("/proc/self/stat") as f:
+            stat = f.read()
+        me = "%d-%s" % (os.getpid(), stat[stat.rindex(")") + 2:].split(" ")[19])
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "%d-1" % os.getpid()}):  # a runner that is gone
+            run_lock.acquire(self.lock, self.a, now=1000.0)
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": me}):
+            self.assertEqual(run_lock.acquire(self.lock, self.a, now=1100.0)["holder"]["run_tag"], me)
+        os.utime(self.a, (1100.0, 1100.0))
+        self.assertEqual(run_lock.acquire(self.lock, self.b, now=1200.0)["status"], "busy")
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "1-1"}):  # a second runner for the same run
+            self.assertEqual(run_lock.acquire(self.lock, self.a, now=1200.0)["status"], "busy")
+        self.assertEqual(run_lock.release(self.lock, run_tag=me)["status"], "released")
+
+    @unittest.skipUnless(os.path.exists("/proc/self/stat"), "needs /proc")
     def test_a_zombie_runner_is_gone(self):
         pid = os.fork()
         if pid == 0:
