@@ -2,6 +2,7 @@
 
     python3 -m unittest discover -s tests -p 'test_*.py'
 """
+import argparse
 import io
 import json
 import os
@@ -22,6 +23,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 import audit_host_syncs  # noqa: E402
 import audit_platform_gates  # noqa: E402
+import baseline_cache  # noqa: E402
 import check_framework_skills  # noqa: E402
 import latest_image  # noqa: E402
 import daily_report  # noqa: E402
@@ -535,6 +537,69 @@ class RunLockTest(unittest.TestCase):
             self.assertEqual(run_lock.main(["--lock", self.lock, "acquire", "--run-dir", self.b]), 1)
             self.assertEqual(run_lock.main(["--lock", self.lock, "status"]), 0)
         self.assertIn('"status": "busy"', out.getvalue())
+
+
+class BaselineCacheTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.server = self.root / "server.sh"
+        self.server.write_text("python -m sglang.launch_server --tp 1\n")
+        self.harness = self.root / "eval_accuracy.sh"
+        self.harness.write_text("evalscope eval --datasets gsm8k\n")
+        self.run_dir = self.root / "run"
+        (self.run_dir / "accuracy").mkdir(parents=True)
+        (self.run_dir / "accuracy" / "summary.txt").write_text("baseline gsm8k: aggregate={'score': 0.91}\n")
+        self.cache = str(self.root / "cache")
+
+    def key(self, **over):
+        a = {"commit": "a" * 40, "model": "Qwen/Qwen3-8B", "server_script": str(self.server), "client_script": "",
+             "workload": "vllm-49406 c1", "sets": "gsm8k", "harness": str(self.harness), "gpu": "gfx950", "image": "",
+             "extra": "tp=1", **over}
+        return baseline_cache.key_of(argparse.Namespace(**a))
+
+    def test_a_baseline_is_found_for_the_same_key_only(self):
+        baseline_cache.store(self.cache, self.key(), str(self.run_dir), [str(self.run_dir / "accuracy")], now=1000.0)
+        hit = baseline_cache.lookup(self.cache, self.key(), 7, now=2000.0)
+        self.assertTrue(hit["hit"])
+        self.assertIn("0.91", (Path(hit["dir"]) / "accuracy" / "summary.txt").read_text())
+        self.assertEqual(hit["run_dir"], str(self.run_dir))
+        self.assertFalse(baseline_cache.lookup(self.cache, self.key(gpu="gfx942"), 7, now=2000.0)["hit"])
+        lossy = self.key(sets="gsm8k gpqa_diamond simple_qa")
+        self.assertFalse(baseline_cache.lookup(self.cache, lossy, 7, now=2000.0)["hit"], "a gsm8k-only baseline")
+        self.assertEqual(lossy, self.key(sets="simple_qa gsm8k gpqa_diamond"), "the order of the sets does not matter")
+        self.server.write_text("python -m sglang.launch_server --tp 2\n")  # an edited script is another key
+        self.assertFalse(baseline_cache.lookup(self.cache, self.key(), 7, now=2000.0)["hit"])
+
+    def test_a_baseline_from_another_accuracy_harness_is_not_used(self):
+        baseline_cache.store(self.cache, self.key(), str(self.run_dir), [str(self.run_dir / "accuracy")], now=1000.0)
+        self.assertTrue(baseline_cache.lookup(self.cache, self.key(), 7, now=2000.0)["hit"])
+        self.harness.write_text("sgl-eval gsm8k\n")
+        self.assertFalse(baseline_cache.lookup(self.cache, self.key(), 7, now=2000.0)["hit"])
+
+    def test_two_stores_in_the_same_second_keep_their_own_files(self):
+        first = baseline_cache.store(self.cache, self.key(), str(self.run_dir), [str(self.run_dir / "accuracy")], now=1000.0)
+        (self.run_dir / "accuracy" / "summary.txt").write_text("baseline gsm8k: aggregate={'score': 0.92}\n")
+        second = baseline_cache.store(self.cache, self.key(), str(self.run_dir), [str(self.run_dir / "accuracy")], now=1000.0)
+        self.assertNotEqual(first["dir"], second["dir"])
+        self.assertIn("0.91", (Path(first["dir"]) / "accuracy" / "summary.txt").read_text())
+        self.assertIn("0.92", (Path(second["dir"]) / "accuracy" / "summary.txt").read_text())
+        self.assertFalse(list(Path(self.cache).rglob("meta.json.part")))
+
+    def test_an_old_entry_is_not_used(self):
+        baseline_cache.store(self.cache, self.key(), str(self.run_dir), [str(self.run_dir / "accuracy")], now=1000.0)
+        self.assertFalse(baseline_cache.lookup(self.cache, self.key(), 7, now=1000.0 + 8 * 86400)["hit"])
+
+    def test_the_command_line(self):
+        common = ["--cache", self.cache, "--commit", "b" * 40, "--model", "m", "--server-script", str(self.server),
+                  "--gpu", "gfx950"]
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(baseline_cache.main(["lookup", *common]), 1)
+            self.assertEqual(baseline_cache.main(["store", *common, "--run-dir", str(self.run_dir), "--files",
+                                                  str(self.run_dir / "accuracy")]), 0)
+            self.assertEqual(baseline_cache.main(["lookup", *common]), 0)
 
 
 class LeakScanTest(unittest.TestCase):
