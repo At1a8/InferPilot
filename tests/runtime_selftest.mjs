@@ -303,10 +303,11 @@ sleep 42.25 & wait`);
     check(!running('sleep 41.25'), 'the setsid child of the agent was stopped');
     check(!running('sleep 42.25'), 'the agent was stopped');
     const result = JSON.parse(readFileSync(resultFile, 'utf8'));
-    check(result.status === 'interrupted' && result.signal === 'SIGTERM' && result.at === 'Long', `result ${JSON.stringify(result)}`);
+    check(result.status === 'interrupted' && result.signal === 'SIGTERM' && result.stopped_at === 'Long', `result ${JSON.stringify(result)}`);
     const st = JSON.parse(execFileSync('python3', [path.join(INFERPILOT, 'scripts', 'run_lock.py'), '--lock', lock, 'status'], { encoding: 'utf8' }));
     check(st.status === 'free', `the lock is ${st.status}`);
     check(/=== END \(interrupted by SIGTERM in Long\)/.test(log), 'the log ends with the interruption');
+    check(new RegExp(`^\\[[\\d:]+\\] runner pid ${runner.pid}: kill ${runner.pid} stops`).test(log), `the log starts with the runner's pid: ${log.slice(0, 120)}`);
   }],
   ['run.mjs: a second SIGTERM kills at once an agent that ignores the first; the lock is freed and the result written all the same', async () => {
     if (!existsSync('/proc/self/environ')) return;
@@ -411,6 +412,29 @@ sleep 46.25 & wait`);
     check(/stopped 1 process\(es\) left by runs that are gone/.test(killed.stderr) && !running('sleep 44.25'), 'and stopped on request');
     check(running('sleep 45.25'), 'a process of a runner in another pid namespace is not judged an orphan');
     process.kill(foreign.pid, 'SIGKILL');
+  }],
+  ['run.mjs: a signal after the run\'s end hurries what it stops; the result is still the run\'s', async () => {
+    if (!existsSync('/proc/self/environ')) return;
+    const script = path.join(TMP, 'late.js');
+    writeFileSync(script, `phase('Only');\nawait agent('go', { label: 'only' });\nreturn { status: 'done' };`);
+    const resultFile = path.join(TMP, 'late.result.json');
+    // The agent leaves a server that ignores SIGTERM: the run's end would wait out its 10 s of grace.
+    const runner = spawn(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
+      '--args', '{}', '--result-file', resultFile], { env: { ...process.env, INFERPILOT_LOCK_FILE: path.join(TMP, 'late.lock'),
+      INFERPILOT_CURSOR_BIN: fakeCli('late.sh', `setsid bash -c 'trap "" TERM; exec sleep 55.25' > /dev/null 2>&1 < /dev/null &\necho done`) },
+      stdio: ['ignore', 'ignore', 'pipe'] });
+    let log = '';
+    runner.stderr.on('data', (d) => { log += d; });
+    const exited = new Promise((r) => runner.on('exit', (c) => r(c)));
+    for (let i = 0; i < 200 && !/<- \[Only\] only\s+done/.test(log); i++) await sleep(25);
+    await sleep(300);
+    const sent = Date.now();
+    runner.kill('SIGTERM');
+    const code = await exited;
+    check(code === 0 && Date.now() - sent < 3000, `exit ${code} ${Date.now() - sent} ms after the signal`);
+    check(JSON.parse(readFileSync(resultFile, 'utf8')).status === 'done', 'the result is the run\'s, not interrupted');
+    check(spawnSync('pgrep', ['-f', 'sleep 55.25']).status !== 0, 'what the agent left, deaf to SIGTERM, was killed');
+    check(/=== SIGTERM after the run's end: killing what its agents left running at once/.test(log), 'the log says so');
   }],
   ['run.mjs: a second signal cuts short the wait in the task\'s container and kills there at once; a third exits at once', async () => {
     if (!existsSync('/proc/self/environ')) return;

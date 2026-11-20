@@ -22,8 +22,8 @@
 // container, those started there with docker exec -e INFERPILOT_RUN_TAG), frees the machine lock
 // (scripts/run_lock.py) and writes a result with status "interrupted" (exit 130 or 143). A second signal
 // kills them at once instead of waiting for them, and the lock and the result still follow; a third exits
-// at once. At its end it stops what its agents left running. At the start it lists what runs that are gone
-// left running, those in the task's container too.
+// at once. At its end it stops what its agents left running; a signal then only hurries that. Its first log
+// line gives its pid; then it lists what runs that are gone left running, those in the task's container too.
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -111,6 +111,7 @@ function nextLines(next) {
 
 const tag = runTag();
 process.env[TAG] = tag;
+rt.log(`runner pid ${process.pid}: kill ${process.pid} stops this run and what it started`);
 const mine = () => tagged().filter((p) => p.tag === tag);
 const listed = (ps) => ps.slice(0, 20).map((p) => `\n     ${p.pid} ${p.cmd.slice(0, 160)}`).join('');
 const releaseLock = () => spawnSync('python3', [join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'run_lock.py'),
@@ -159,12 +160,16 @@ if (container()) await lookIn(container());
 
 let stopping = false;
 let hurried = false;
+let ended = false; // the script is done: a signal only hurries what the run's end stops
 let hurry = () => {}; // cuts short a sweep of the task's container that waits out its grace
 async function interrupted(sig, code) {
   if (hurried) process.exit(code);
-  if (stopping) {
+  if (stopping || ended) {
     hurried = true;
-    rt.log(`=== ${sig} again: killing them at once, then freeing the lock; once more to exit without that ===`);
+    rt.log(stopping
+      ? `=== ${sig} again: killing them at once, then freeing the lock; once more to exit without that ===`
+      : `=== ${sig} after the run's end: killing what its agents left running at once, then freeing the lock; `
+        + 'once more to exit without that ===');
     backend.stopAll('SIGKILL');
     signal(mine().map((p) => p.pid), 'SIGKILL');
     hurry();
@@ -182,7 +187,7 @@ async function interrupted(sig, code) {
   await Promise.all([groups, stopPids(mine)]);
   await inContainer();
   releaseLock();
-  const result = { status: 'interrupted', signal: sig, at, summary: rt.summary(),
+  const result = { status: 'interrupted', signal: sig, stopped_at: at, summary: rt.summary(),
     next: { say: `Interrupted by ${sig}${at ? ` in ${at}` : ''}; its agents and what they started were stopped and the `
       + 'machine lock freed. Run again with the same arguments to start over.' } };
   if (typeof opts['result-file'] === 'string') writeFileSync(opts['result-file'], `${JSON.stringify(result, null, 2)}\n`);
@@ -216,6 +221,7 @@ async function inContainer() {
 
 try {
   const result = await rt.runScript(resolve(script), args);
+  ended = true;
   if (stopping) await new Promise(() => {});
   await tidyUp();
   rt.log(`=== END: ${rt.summary()} ===`);
@@ -224,6 +230,7 @@ try {
   process.stdout.write(`${text}\n`);
   if (result && result.next && result.next.say) nextLines(result.next).forEach((line) => rt.log(line));
 } catch (e) {
+  ended = true;
   if (stopping) await new Promise(() => {});
   await tidyUp();
   rt.log(`=== END (failed): ${rt.summary()} ===`);

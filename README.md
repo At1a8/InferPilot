@@ -401,12 +401,14 @@ nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.j
 tail -f exp/scan.log    # Ctrl-C leaves the log; the run goes on
 ```
 
-**Stopping a run.** `kill <runner pid>` (SIGTERM), or Ctrl-C on a runner started in the foreground,
-stops its agents and everything they started, servers started with `setsid` or `nohup` included (each
-inherits `INFERPILOT_RUN_TAG`, which names the runner), frees the machine lock and writes
-`"status": "interrupted"` to `--result-file`. A run that died otherwise (`kill -9`, a restarted
-container) leaves its processes behind: the next run lists them, those in the task's container too, and
-`--kill-orphans` stops them first.
+**Stopping a run.** `kill <runner pid>` (SIGTERM; the log's first line gives the pid), or Ctrl-C on a
+runner started in the foreground, stops its agents and everything they started, servers started with
+`setsid` or `nohup` included (each inherits `INFERPILOT_RUN_TAG`, which names the runner), frees the
+machine lock and writes `"status": "interrupted"` to `--result-file`. A run that died otherwise
+(`kill -9`, the OOM killer) leaves its processes behind: the next run lists them, those in the task's
+container too, and `--kill-orphans` stops them first. A restarted container takes its processes with
+it but leaves the machine lock, whose runner a new container cannot judge:
+`python3 scripts/run_lock.py release --force` frees it.
 
 The file holds, as JSON, the arguments the sentences above give Claude Code. The issue that stops after
 the reproduction is `{"mode": "issue", "task": "https://github.com/sgl-project/sglang/issues/41299",

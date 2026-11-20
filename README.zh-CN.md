@@ -235,7 +235,7 @@ nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.j
 tail -f exp/scan.log    # Ctrl-C 只是退出查看，运行会继续
 ```
 
-**停止一个运行。** `kill <runner 的 pid>`（SIGTERM），或者对前台启动的 runner 按 Ctrl-C，会停掉它的所有 agent 以及它们启动的一切，包括用 `setsid` 或 `nohup` 启动的 server（它们都继承了标明这个 runner 的 `INFERPILOT_RUN_TAG`），释放机器锁，并在 `--result-file` 里写下 `"status": "interrupted"`。以其他方式死掉的运行（`kill -9`、容器重启）会留下它的进程：下一个运行会把它们列出来（任务容器里的也包括在内），`--kill-orphans` 会先停掉它们。
+**停止一个运行。** `kill <runner 的 pid>`（SIGTERM；日志第一行给出这个 pid），或者对前台启动的 runner 按 Ctrl-C，会停掉它的所有 agent 以及它们启动的一切，包括用 `setsid` 或 `nohup` 启动的 server（它们都继承了标明这个 runner 的 `INFERPILOT_RUN_TAG`），释放机器锁，并在 `--result-file` 里写下 `"status": "interrupted"`。以其他方式死掉的运行（`kill -9`、被 OOM killer 杀掉）会留下它的进程：下一个运行会把它们列出来（任务容器里的也包括在内），`--kill-orphans` 会先停掉它们。容器重启会带走其中的进程，但会留下机器锁，而新容器判断不了锁的 runner 是否还在：用 `python3 scripts/run_lock.py release --force` 释放它。
 
 文件里写的就是上面交给 Claude Code 的那些参数，格式为 JSON。在复现之后停下的那个 issue 任务写成 `{"mode": "issue", "task": "https://github.com/sgl-project/sglang/issues/41299", "inferpilot_dir": "/workspace/inferpilot", "model_path": "<weights>", "gpu_ids": "0", "stop_after": "Reproduce"}`；用一句话描述的写成 `{"inferpilot_dir": "/workspace/inferpilot", "request": "..."}`。`exp/scan.log` 按这个模式的路线给每个阶段编号，并附上到目前为止的用量（`=== PHASE 2/3 [##-]: Dispatch ===  so far: 1 agent call, 410k tokens, 4 min`）；写出每次 agent 调用，调用里的每个工具调用开始时各写一行（执行的命令、读写的文件）；安静五分钟后写一行"仍在运行"；每次调用结束时写出用时和 token（按 CLI 的计数，含缓存），整个运行结束时写一行总结；`exp/scan.result.json` 是最终结果：其中有 `status`，以及 `next`，即运行结束后接下来做什么。日志末尾列出同样的步骤（`=== NEXT: ...`）：只有你能回答的问题；接下来可以发起的每次运行，参数写在你那个文件旁边（`exp/scan.start-1.json` 是 scan 排名第一的任务，`exp/<name>.again.json` 是同一个任务再跑一次、待你填好回答），并附上启动它的命令；以及只有你能做的事。
 

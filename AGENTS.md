@@ -50,8 +50,9 @@ user's login as their name). Ask which one when there are several, or none.
 
 Only when the user asks:
 
-- to stop at once, `kill <runner pid>` (SIGTERM, never `kill -9`): the runner stops its agents and what
-  they started, frees the machine lock and writes `"status": "interrupted"` to the result file.
+- to stop at once, `kill <runner pid>`, the pid on the first line of `exp/<name>.log` (SIGTERM, never
+  `kill -9`): the runner stops its agents and what they started, frees the machine lock and writes
+  `"status": "interrupted"` to the result file.
 
 ## After a run
 
