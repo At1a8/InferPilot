@@ -44,6 +44,15 @@ Notes per gate:
 - **G3/G4 must be sized so the feature engages.** For a memory-tier feature that means total context
   well above the device pool (force eviction/demotion), and concurrency high enough that several engaged
   requests decode in the same batch. Log the engagement (e.g. demotion counters) and attach it.
+- **G0 for a config-construction change: compare the built config, not only a server smoke.** Diff
+  `get_config(...).to_dict()` from the fix and the parent tree for every config shape the changed code
+  branches on (with and without the field it touches), not only the task's checkpoint. For a YaRN config
+  fix on sglang #41299 the task's checkpoint built the same config with and without the fix, while a text
+  config without `rope_parameters`, built by the same code, had `{'rope_theta': 10000.0, ...}` filled in
+  on the parent and `{}` with the fix, so its effective rope_theta went from a wrongly filled-in 10000 to
+  the text config's own 5e6: a correction, but a behaviour change G0 should have reported, and only the
+  review found it. A short greedy smoke is a weak G0 here: one of three default-rope runs with identical
+  built configs gave a different 16-token text.
 - **Run G3/G4 at more than one concurrency.** Concurrency 1 often passes when concurrency 8–32 fails;
   the batch-level interactions are where bugs live.
 
