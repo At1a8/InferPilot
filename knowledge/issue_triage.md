@@ -79,6 +79,22 @@ human decision.
   and its length up front.
 - "Not reproduced" is a result: state the environment, the duration and the counts.
 - A reproduction becomes an extra verification gate for the fix (`issue_repro`).
+- **Match the load before concluding.** A crash the reporter saw on one request can need queued load
+  elsewhere: sglang #41299, reported on an MI350X VF for a single 32k prompt, on the reporter's commit
+  and bare metal passed 6 sequential 32k prompts and crashed 3 of 3 times with 32 of them at concurrency
+  16. Run the reporter's pattern and a queued one before writing "not reproduced".
+- **When the reporter's image cannot run here,** run the reporter's commit from a worktree on the
+  current image: one runtime for both trees isolates the framework change. An old commit may not import
+  on a new image (sglang v0.5.18 on transformers 5.19: `ValueError: 'qwen3_asr' is already used by a
+  Transformers config`); then only main is tested, and the report says so.
+- **A GPU fault can leave the server up with a hung scheduler.** The gate needs a per-request timeout
+  and a scan of the server log for fault lines, not only a liveness check.
+- **The same gfx architecture is not the same kernel.** aiter keys its tuned MoE kernels on the gfx name
+  and the CU count (the first two fields of the key in the `[fused_moe] using ...` log line): MI300X logs
+  `('gfx942', 304, ...)`, while an MI308X, also gfx942, has 80 CUs, so it looks up other rows of the
+  tuned table and may run another kernel. Compare the selected kernel name with the reporter's log
+  before calling a reproduction faithful. Record bare metal or VF too: sglang #41299 and #38849 both
+  came from VFs.
 
 ## 6. Auto-close
 
