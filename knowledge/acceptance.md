@@ -32,15 +32,17 @@ Two rules hold across the dimensions:
 
 ### 1.1 Accuracy
 
-- **Lossless changes** (a kernel swap, scheduling, parallelism, memory layout): greedy outputs match
-  the baseline on a fixed prompt set, and every divergence is checked (a near-tie between the top
-  logits is acceptable, a systematic difference is not); GSM8K on all 1319 questions, one run per arm
-  (`scripts/eval_accuracy.sh`), at most 1 point below the baseline.
-- **Lossy changes** (relaxed draft verification, quantization, sparse attention, KV compression): gsm8k
-  (1319), gpqa_diamond (198) and simple_qa (4326, LLM-judged), each once per arm with
-  `scripts/eval_accuracy.sh`, and at most 1 point below the baseline on each (`validation_doctrine.md`,
-  G2). A goal may ask for more, declared before anything is measured: other sets (a long-context set
-  for KV compression, for example), more runs or another budget.
+- **The rule:** every set at most 1 point below the baseline, one run per arm on the same server
+  settings (`validation_doctrine.md`, G2). Outputs need not match the baseline token for token.
+- **The sets:** gsm8k, all 1319 questions (`scripts/eval_accuracy.sh`, its default set), for every
+  change. More only when the user's request or `goal` asks for them, before anything runs: a change the
+  user says may lose accuracy (relaxed draft verification such as FLy, quantization, sparse attention,
+  KV compression) adds gpqa_diamond (198) and simple_qa (4326, LLM-judged), since GSM8K alone can hide
+  the loss (`eval_accuracy.sh gsm8k gpqa_diamond simple_qa`); other sets (a long-context set for KV
+  compression), more runs or another budget by name; a determinism task, token equality (§1.4). No role
+  decides it on its own: the Intake keeps what the user said in `goal`, and every role reads it there.
+- **Harness:** evalscope for every set, through `scripts/eval_accuracy.sh`, every run sampled afresh
+  (never evalscope's cache).
 - **Capability suites**, for what the change touches: long context (needle-in-a-haystack, G3),
   reasoning (GPQA, AIME), tool calls, multimodal input.
 - **Parity with a reference**, for a new model, a new kernel or a refactor: logprobs or the KL
@@ -85,13 +87,13 @@ items of every class it belongs to.
 | Class | Examples | Extra items |
 |---|---|---|
 | KV movement and memory tiers | HiCache, KV offload, prefix cache, lossless KV compression | KV read back through the reload path byte-identical with what was written (or with a recompute); hit counters per tier; a reuse workload whose working set exceeds HBM; equal HBM; a full pool evicting under load; an unavailable storage backend falling back to recompute |
-| Distributed and multi-instance serving | PD disaggregation, multi-node TP / PP / EP, DP attention, routers, elastic scaling | outputs identical to serving on one instance, also with different TP sizes on the two sides; equal GPU count; an arrival-rate sweep with the SLA throughput; the transfer's share of TTFT; scaling efficiency over node counts; injected faults (a timeout, a peer down, a cancellation mid-transfer); the topology and transfer-backend matrix |
+| Distributed and multi-instance serving | PD disaggregation, multi-node TP / PP / EP, DP attention, routers, elastic scaling | accuracy (G2) within 1 point of serving on one instance, also with different TP sizes on the two sides; equal GPU count; an arrival-rate sweep with the SLA throughput; the transfer's share of TTFT; scaling efficiency over node counts; injected faults (a timeout, a peer down, a cancellation mid-transfer); the topology and transfer-backend matrix |
 | Model support | a new architecture, a multimodal model | parity with the reference implementation; the official benchmark scores; the tokenizer, chat template, tool-call and reasoning parsers; every parallelism and checkpoint precision the model card lists |
-| Sampling and speculative decoding | samplers, draft verification, draft models | a distribution test at a temperature above 0 for a lossless claim (a lossy one declares a budget, §1.1); the accept length reported; a concurrency sweep, since the gain can turn into a loss at high concurrency; the greedy and the sampled paths both |
+| Sampling and speculative decoding | samplers, draft verification, draft models | the accept length reported; a distribution test at a temperature above 0 when the goal claims the target distribution is kept exactly (§4); a concurrency sweep, since the gain can turn into a loss at high concurrency; the greedy and the sampled paths both |
 | Determinism | deterministic inference, batch-invariant kernels | bitwise-identical outputs over repeated runs, batch compositions, concurrency and, where claimed, TP sizes; the cost in throughput |
 | API and protocol | OpenAI-compatible API, structured output, function calling, streaming, logprobs, multi-LoRA | contract tests of the API; structured outputs valid against their schema; streaming equal to non-streaming; the official client SDK working; the overhead of constrained decoding; adapters switched under load |
-| Scheduling | priority, preemption, chunked-prefill policy, overlap scheduling | P99 under mixed and bursty traffic; fairness between long and short requests; no request starving; results unchanged after a preemption or retraction |
-| Online updates and operations | weight updates for RL, graceful shutdown, metrics | outputs after an update equal to a fresh load of the same weights; no request lost while updating or draining; metrics correct and cheap |
+| Scheduling | priority, preemption, chunked-prefill policy, overlap scheduling | P99 under mixed and bursty traffic; fairness between long and short requests; no request starving; accuracy (G2) within 1 point with preemption or retraction forced |
+| Online updates and operations | weight updates for RL, graceful shutdown, metrics | the weights after an update equal to a fresh load of the same weights, tensor by tensor; no request lost while updating or draining; metrics correct and cheap |
 | Platform bring-up | a new GPU architecture | the pass rate over the model × feature matrix; performance against the previous generation; the known issues listed |
 | Kernels | attention, MoE, GEMM, communication | the shapes the models use, small batches, unaligned sizes and padding included; tolerances per data type; an op-level gain shown end to end, or why it cannot show (`reward_hacks.md` P11) |
 | Long context | context parallelism, sparse attention, long-context KV layouts | a length sweep up to the longest supported; multi-task long-context suites (RULER-style), not one needle test alone; memory over length |
@@ -105,7 +107,7 @@ extra items of its feature classes (§1.4).
 | Dimension | Upstream feature | Issue fix | CI fix | Performance | Requirement |
 |---|---|---|---|---|---|
 | Correctness | required | required; the reproduction becomes a regression test | required; the failing test passes on every lane it failed on | required | required |
-| Accuracy | required: GSM8K; for a lossy change gsm8k, gpqa_diamond and simple_qa (§1.1) | when the issue is an accuracy loss | no regression | required, as lossless | on the requester's data set |
+| Accuracy | required: gsm8k, and gpqa_diamond and simple_qa when the user says the change may lose accuracy; each at most 1 point below the baseline (§1.1) | when the issue is an accuracy loss | no regression | required, as for a feature (§1.1) | on the requester's data set |
 | Performance | when the feature claims a gain | when the issue is a performance problem: the reported number comes back | — | required: the gain; a guard and a held-out point when the task asks (`guards`, `held_out`) | the requester's SLA |
 | Stability | required (G4) | when the issue is a crash or hang | a flaky test passes repeatedly (§4) | when the change touches memory or scheduling | required, with a soak |
 | Compatibility | required | required | required | required | the requester's platforms |
@@ -152,9 +154,10 @@ this form after the fact:
   no performance gain) is reproduced at most twice, so three results at most, and the verdict is their
   median. Failure rates at least 4 per configuration (`validation_doctrine.md`); a flaky test passes
   in every one of at least 10 runs.
-- **Distribution tests** (a sampler or a lossless verification change): per tested prompt, compare the
-  sampled tokens with the target distribution using a stated test, sample size and significance level,
-  e.g. a chi-square test on at least 10,000 samples at p = 0.01.
+- **Distribution tests** (a goal that claims a sampler or a verification change keeps the target
+  distribution exactly): per tested prompt, compare the sampled tokens with the target distribution
+  using a stated test, sample size and significance level, e.g. a chi-square test on at least 10,000
+  samples at p = 0.01.
 - **Determinism:** identical outputs over at least 3 runs and at least 3 batch compositions; one
   differing token fails the item.
 - **Two lanes at once** (two servers on one node): swap the arms between the lanes every round, and

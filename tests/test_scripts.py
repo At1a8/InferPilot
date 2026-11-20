@@ -258,10 +258,12 @@ class EvalAccuracyTest(unittest.TestCase):
             #!/bin/bash
             echo "$*" >> "$CALLS"
             printf '%s\\n' "$@" > "$CALLS.argv"
+            [ -n "${FAKE_NO_REPORT:-}" ] && exit 1
             while [ $# -gt 0 ]; do
               case "$1" in --work-dir) wd=$2; shift ;; --datasets) ds=$2; shift ;; esac
               shift
             done
+            echo "work dir $wd"
             mkdir -p "$wd/run/reports/fake-model"
             echo '{"metrics": [{"name": "mean_acc", "score": 0.97, "num": 1319}]}' > "$wd/run/reports/fake-model/$ds.json"
             """))
@@ -292,19 +294,52 @@ class EvalAccuracyTest(unittest.TestCase):
         self.assertIn("eval gsm8k: accept_length=[4.0]", summary)
         self.assertIn("'num': 1319", summary)
 
+    def test_thinking_is_switched_with_both_template_keys(self):
+        def gen(**env):
+            self.assertEqual(self.run_script("gsm8k", **env).returncode, 0)
+            argv = Path(str(self.calls) + ".argv").read_text().splitlines()
+            return json.loads(argv[argv.index("--generation-config") + 1])["extra_body"]
+        on = gen()
+        self.assertEqual((on["chat_template_kwargs"], on["reasoning_effort"]), ({"thinking": True, "enable_thinking": True}, "max"))
+        off = gen(ENABLE_THINKING="0", REASONING_EFFORT="")
+        self.assertEqual(off, {"chat_template_kwargs": {"thinking": False, "enable_thinking": False}},
+                         "Qwen3 thinks unless enable_thinking is false")
+
+    def test_every_run_samples_afresh_and_reads_only_its_own_report(self):
+        r = self.run_script("gsm8k", ENABLE_THINKING="0", REASONING_EFFORT="", CACHE_DIR=str(self.tmp / "old"),
+                            RERUN_REVIEW="1")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        argv = Path(str(self.calls) + ".argv").read_text().splitlines()
+        self.assertNotIn("--use-cache", argv, "no earlier run's answers, whatever the environment says")
+        self.assertNotIn("--rerun-review", argv)
+        self.assertIn("--no-timestamp", argv)
+        run_dir = Path(argv[argv.index("--work-dir") + 1])
+        self.assertEqual(run_dir.parent, self.tmp / "results" / "eval_gsm8k")
+        self.assertIn('chat_template_kwargs={"thinking":false,"enable_thinking":false}',
+                      (run_dir / "sampling_settings.txt").read_text())
+        again = self.run_script("gsm8k", FAKE_NO_REPORT="1")
+        self.assertEqual(again.returncode, 1, "a run without a report of its own took the earlier run's")
+        self.assertIn("no report", again.stderr)
+
+    def test_each_run_keeps_its_own_log_and_the_summary_names_its_directory(self):
+        for _ in range(2):
+            self.assertEqual(self.run_script("gsm8k").returncode, 0)
+        runs = sorted((self.tmp / "results" / "eval_gsm8k").iterdir())
+        self.assertEqual(len(runs), 2)
+        for run in runs:
+            self.assertIn(str(run), (run / "evalscope.log").read_text(), "another run overwrote this run's log")
+        lines = (self.tmp / "results" / "summary.txt").read_text().splitlines()
+        self.assertEqual(sorted(line.rsplit(" dir=", 1)[1] for line in lines), ["eval_gsm8k/" + run.name for run in runs])
+
     def test_options_reach_evalscope_whole(self):
         data = self.tmp / "long bench"
         data.mkdir()
         (data / "default_test.jsonl").write_text('{"q": 1}\n')
-        cache = self.tmp / "my cache"
-        r = self.run_script("longbench_v2", LONGBENCH_LOCAL_PATH=str(data), LIMIT="5", CACHE_DIR=str(cache),
-                            RERUN_REVIEW="1")
+        r = self.run_script("longbench_v2", LONGBENCH_LOCAL_PATH=str(data), LIMIT="5")
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         argv = Path(str(self.calls) + ".argv").read_text().splitlines()
         self.assertEqual(json.loads(argv[argv.index("--dataset-args") + 1])["longbench_v2"]["local_path"], str(data))
         self.assertEqual(argv[argv.index("--limit") + 1], "5")
-        self.assertEqual(argv[argv.index("--use-cache") + 1], str(cache))
-        self.assertIn("--rerun-review", argv)
 
     def test_a_judged_set_without_a_key_is_skipped(self):
         r = self.run_script("simple_qa")

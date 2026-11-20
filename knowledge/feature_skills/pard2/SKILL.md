@@ -144,7 +144,7 @@ Startup logs `PARD2 draft worker: mode=..., target_proj loaded=...`.
 
 - G1 (reference): first-step draft logits against the PARD-2 HF reference (`pard/pard2_infer.py` of
   AMD-AGI/PARD) on 16 prompts, TD and TI: top-1 identical.
-- G2 accuracy: gsm8k, all 1319 questions (`scripts/eval_accuracy.sh`, sgl-eval), within 1 point of the
+- G2 accuracy: gsm8k, all 1319 questions (`scripts/eval_accuracy.sh`, evalscope), within 1 point of the
   target alone. PARD-2 verifies exactly, so it is a lossless change: gpqa_diamond and simple_qa are not
   needed. Measured with the PR's CI test (5-shot, greedy; it also asserts accuracy > 0.88 and accept
   length > 5.0): TD 0.9075 at 6.65, TI 0.9037 at 5.34, the target alone 0.9067.

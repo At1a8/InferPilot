@@ -14,7 +14,7 @@ Which of these gates a task needs, how its acceptance criteria are written and w
 |---|---|---|
 | G0 feature off | the change is inert when disabled | baseline suites on the feature branch with the switch off |
 | G1 unit / oracle | each new kernel or data structure does what it claims | standalone tests vs a reference implementation, each able to fail: on the parent commit when the change alters behaviour, on a copy of the change broken in one way when it keeps behaviour (`reward_hacks.md` T1) |
-| G2 accuracy | quality stays within its budget | GSM8K, all 1319 questions, once per arm (`scripts/eval_accuracy.sh`); a lossy feature adds gpqa_diamond (198) and simple_qa (4326, LLM judge); a set that misses its budget is reproduced at most twice and judged on the median |
+| G2 accuracy | quality stays within its budget | every set at most 1 point below the baseline, once per arm (`scripts/eval_accuracy.sh`, evalscope): gsm8k (1319) by default; gpqa_diamond (198) and simple_qa (4326, LLM judge) as well when the user's request or goal says the change may lose accuracy; a set that misses its budget is reproduced at most twice and judged on the median |
 | G3 long context | the feature's own data path is exercised and correct | needle-in-a-haystack: single and multi-needle |
 | G4 stability | no crash / hang / collapse under capacity pressure | many long prompts at high concurrency |
 | G5 performance | the claimed benefit exists on the task's workload; the guards the task names hold | see `perf_evaluation.md`; a held-out point, more guards and sweeps only when the task asks (`held_out`, `guards`, `sweep`) |
@@ -24,13 +24,23 @@ Notes per gate:
 - **G2 does not prove a long-context feature works.** Short prompts may never engage it (HiSparse V2
   only admits requests longer than its 5120-token reservation; GSM8K prompts are ~1k tokens). G2 is a
   regression check for the non-feature path; G3 must exercise the feature path.
-- **A lossy feature runs three sets in G2: gsm8k, gpqa_diamond and simple_qa.** GSM8K alone may not
-  show the loss: relaxed speculative verification (FLy) left gsm8k within ±0.4pp at every setting while
-  simple_qa lost up to 3pp (`feature_skills/fly-dspark`). Each set runs once per arm, and the feature
-  passes when it is at most 1 point below the baseline on each; record its own engagement number per set
-  (accept length). A set that misses is reproduced at most twice, three results in all, and judged on
-  their median, every run reported: one simple_qa run is good to about ±0.5pp, and a 0.6pp loss took 5
-  runs against 8 baselines to separate from the noise (two runs had called it noise).
+- **G2 compares scores, not tokens.** Outputs need not match the baseline token for token: batch
+  composition, kernel choice and speculative verification all flip near-ties, and chasing those flips
+  costs runs without finding a defect. A token comparison is a diagnosis aid (the failure taxonomy
+  below) or the subject of a determinism task, never the accuracy gate.
+- **gsm8k by default; three sets when the user says the change may lose accuracy.** GSM8K alone
+  may not show a loss: relaxed speculative verification (FLy) left gsm8k within ±0.4pp at every
+  setting while simple_qa lost up to 3pp (`feature_skills/fly-dspark`). Whether a change may lose
+  accuracy is the user's to say, in the request or `goal`, before anything runs (relaxed draft
+  verification, quantization, sparse attention and KV compression are the usual cases): then gsm8k,
+  gpqa_diamond and simple_qa run, and without it gsm8k alone; no role infers it. Each set runs once per arm,
+  at most 1 point below the baseline, with the feature's engagement number per set (accept length). A
+  set that misses is reproduced at most twice, three results in all, and judged on their median, every
+  run reported: one simple_qa run is good to about ±0.5pp, and a 0.6pp loss took 5 runs against 8
+  baselines to separate from the noise (two runs had called it noise).
+- **Harness:** evalscope for every set, through `scripts/eval_accuracy.sh`, which samples every run
+  afresh (never evalscope's cache), flushes the prefix cache before each set and reads the accept length
+  after it; both arms use the same settings.
 - **G3/G4 must be sized so the feature engages.** For a memory-tier feature that means total context
   well above the device pool (force eviction/demotion), and concurrency high enough that several engaged
   requests decode in the same batch. Log the engagement (e.g. demotion counters) and attach it.
@@ -53,9 +63,10 @@ How to tell them apart quickly:
 - Record **per-token logprobs** (`return_logprob`) for every long-context request. Collapse is a sudden,
   persistent drop shared by the whole batch; mild deviation is one low-logprob token followed by a
   recovery.
-- Compare output token ids with a **reference output per prompt** (fixed seeds, greedy). The first
-  divergent index, mapped onto the per-step trace, tells you which forward step went wrong and which
-  requests were in that batch.
+- To locate a collapse, compare output token ids with a **reference output per prompt** (fixed seeds,
+  greedy). The first divergent index, mapped onto the per-step trace, tells you which forward step went
+  wrong and which requests were in that batch. This is a diagnosis, not a gate: a divergence alone
+  fails nothing.
 - The task metric can lie: a request that printed every key and then failed to stop (missed EOS, ran to
   `max_new_tokens`) is "correct" by key recall. Track output lengths too.
 
@@ -98,8 +109,7 @@ A debugging check that reports a false positive costs as much as a missed bug.
 
 The `hisparse-v2` skill records concrete settings and expected numbers; in short:
 
-- **G2:** GSM8K, all 1319 questions, once, with `scripts/eval_accuracy.sh` (the `hisparse-v2` runs used 5-shot
-  greedy).
+- **G2:** gsm8k, all 1319 questions, once, with `scripts/eval_accuracy.sh` (its default set).
 - **G3:** NIAH single-needle and 8-needle prompts of ~30–37k tokens at concurrency 1, 8 and 16.
 - **G4:** 32 prompts × ~37k tokens, 8 needles, concurrency 32, `max_new_tokens` 120, fixed seed, on a
   device pool small enough to force the feature's memory path, plus the same-pattern baseline control.

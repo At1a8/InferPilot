@@ -150,7 +150,7 @@ agent status                    # Logged in as ...
 | git 身份 | root 以 key 文件（或环境变量）里的 `INFERPILOT_GIT_NAME <INFERPILOT_GIT_EMAIL>` 提交，所以不会出现作者为 `root@<本机主机名>` 的提交；两者都没有时，它会提示，不会自己编一个 |
 | shell | 在 root 的 `~/.bashrc` 里设置 `PYTHONDONTWRITEBYTECODE=1`（宿主机挂载目录里的 checkout 不会出现 root 所有的 `__pycache__`）和 `DISABLE_AUTOUPDATER=1`，并加载 key 文件，之后才放进去的也会加载；设置了 `LLM_GATEWAY_KEY` 且没有 `ANTHROPIC_BASE_URL` 时，让 Claude Code 走 AMD LLM 网关 |
 | 框架 | 镜像里的 `/sgl-workspace/sglang`，原样保留：用每日镜像新建的容器里，run_docker.sh 已经把它切到当前的 main（第 2 步）；用指定的 `IMAGE` 新建的容器、以及再次进入的容器，代码保持原样。这里有未提交的改动时会提示，因为任务的 Setup 会因此停下，直到你自己处理（用指定 `IMAGE` 新建的容器里，就是镜像构建对打包文件的改动）；用 `--framework-dir` 可以改用宿主机上的 checkout（已有的原样使用，缺失时带完整历史克隆） |
-| evalscope | 供 `scripts/eval_accuracy.sh` 使用：装在单独的 venv `/opt/evalscope` 里（约一分钟、1.2 GB），并链接为 `/usr/local/bin/evalscope`。不装进镜像的 Python，否则会把 `datasets` 和 `fsspec` 降到比 sglang 自带的更低的版本；`PATH` 上已经有 `evalscope` 时保留原样 |
+| evalscope | 供 `scripts/eval_accuracy.sh` 跑所有精度测试集：装在单独的 venv `/opt/evalscope` 里（约一分钟、1.2 GB），并链接为 `/usr/local/bin/evalscope`。不装进镜像的 Python，否则会把 `datasets` 和 `fsspec` 降到比 sglang 自带的更低的版本；`PATH` 上已经有 `evalscope` 时保留原样 |
 | node、cursor | node 在加 `--runner` 或 `--cursor` 时运行，供 `runtime/run.mjs` 使用：安装 Node.js（默认最新的 LTS，可用 `INFERPILOT_NODE_VERSION` 指定），按 nodejs.org 的校验和核对后解压到 `/opt/node/<版本>`，并链接到 `/usr/local/bin`。cursor 只在加 `--cursor` 时运行，供 `--backend cursor` 使用：用官方安装脚本装 Cursor CLI（`agent`）。已有的 Node.js 20+ 或 `agent` 保留原样。CLI 需要你自己登录，每个容器一次：`NO_OPEN_BROWSER=1 agent login`，在浏览器里打开打印出的链接；或者在宿主机上你的 key 文件里设置 `CURSOR_API_KEY` |
 | 检查 | GPU、sglang、evalscope、API 访问、`GITHUB_TOKEN`，key 文件里设置的也算；加 `--cursor` 时还检查 Cursor CLI（只检测） |
 
@@ -361,7 +361,7 @@ python3 scripts/run_lock.py release --force   # 那个运行已经中断时，�
 |---|---|
 | `scripts/scan_issues.py` | 开放的 AMD issue，附关联 PR、回复情况和预计的 60 天自动关闭日期 |
 | `scripts/scan_ci.py` | 从 main 上 AMD CI 自己的运行和日志读出现状（每个失败 job：从何时开始失败、上次通过的时间、失败的测试、第一条错误），以及 Failure Tracker 的失败簇 |
-| `scripts/eval_accuracy.sh` | 用 evalscope（bootstrap 会安装）测一个正在运行的 server 的精度：默认 GSM8K 全部 1319 题跑一遍（有损特性再加 gpqa_diamond 和 simple_qa），其他测试集按名字指定；key 只从环境变量读取 |
+| `scripts/eval_accuracy.sh` | 用 evalscope（bootstrap 会安装）测一个正在运行的 server 的精度，即 G2 门禁（每个测试集比基线低不超过 1 个点）：默认跑 gsm8k 全部 1319 题；任务说明改动可能有损时，再加跑 gpqa_diamond 和 simple_qa（LLM judge 打分）；其他测试集按名字指定；每次都重新采样，从不用 evalscope 的缓存；key 只从环境变量读取 |
 | `scripts/scan_upstream.py` | 已合入的上游提交：新增的 CUDA 门控、CUDA 优先的特性、新模型 |
 | `scripts/audit_platform_gates.py` | 换到新架构时需要重新检查的平台门控（在 gfx1250 上为真的能力判断、wave32 假设） |
 | `scripts/audit_host_syncs.py` | 热路径上的 host-device 同步和拷贝候选点（供 profile 参考的线索） |

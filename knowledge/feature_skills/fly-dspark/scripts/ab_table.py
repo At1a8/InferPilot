@@ -24,7 +24,7 @@ KEYS = {
     "accept_length": "accept length",
 }
 TAG = re.compile(r"r(\d+)_(baseline|fly_w\d+_t[\d.]+)(?:_[ab])?")
-SUMMARY_LINE = re.compile(r"^\S+ (\S+): accept_length=\[([\d.]+)\] aggregate=(.*)$")
+SUMMARY_LINE = re.compile(r"^\S+ (\S+): accept_length=\[([\d.]+)\] aggregate=(\{.*\})(?: dir=\S+)?$")
 
 
 def launched_tags():
