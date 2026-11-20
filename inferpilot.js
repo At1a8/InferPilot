@@ -673,10 +673,13 @@ const PR = S({
   feature_off_final: bool,
   content_unchanged: bool, // the branch's tree is the one Verify and Review passed
   merges_cleanly: bool,
+  leak_scan_findings: strs, // what scripts/leak_scan.py still finds in the diff, the commits or the body; empty when clean
+  diff_stat: str, // files changed, lines added and removed
+  launch_checked: bool, // the description's launch command ran once on the final commit, the local weights for its model id
   pr_body_path: str,
   push_command: str,
   work_packages: WPS, // what the branch still lacks; implemented, verified and reviewed like a finding
-}, ['branch', 'lint_pass', 'feature_off_final', 'content_unchanged', 'pr_body_path']);
+}, ['branch', 'lint_pass', 'feature_off_final', 'content_unchanged', 'pr_body_path', 'leak_scan_findings', 'launch_checked']);
 const K_PACKAGE = S({
   task_dir: str,
   mode: { type: 'string', enum: ['optimize', 'author'] },
@@ -1123,8 +1126,9 @@ async function repaired(extraGates, perfClaim, runPerf) {
 async function preparePR(round) {
   enter('PR');
   const pr = await call('pr_engineer', 'pr', inputs({ round }), PR, `pr_engineer#${round}`);
+  const leaks = (pr && pr.leak_scan_findings) || [];
   const ok = !!pr && pr.lint_pass === true && pr.feature_off_final === true && pr.content_unchanged === true
-    && !!pr.pr_body_path;
+    && !!pr.pr_body_path && Array.isArray(pr.leak_scan_findings) && leaks.length === 0 && pr.launch_checked === true;
   if (pr) {
     if (pr.branch) C.branch = pr.branch;
     C.pr_body_path = pr.pr_body_path || '';
@@ -1132,8 +1136,11 @@ async function preparePR(round) {
       merges_cleanly: pr.merges_cleanly !== false };
   }
   note('PR', ok ? 'pass' : 'fail', !pr ? 'the PR engineer returned nothing'
-    : `${pr.title || pr.branch}${pr.content_unchanged !== true ? '; the branch no longer matches what was verified' : ''}`
-      + `${pr.merges_cleanly === false ? '; conflicts with main, reported in the PR body' : ''}`);
+    : `${pr.title || pr.branch}${pr.diff_stat ? ` (${pr.diff_stat})` : ''}`
+      + `${pr.content_unchanged !== true ? '; the branch no longer matches what was verified' : ''}`
+      + `${pr.merges_cleanly === false ? '; conflicts with main, reported in the PR body' : ''}`
+      + `${leaks.length ? `; would publish ${leaks.length} local path(s), host name(s) or identities` : ''}`
+      + `${pr.launch_checked === false ? '; the documented launch command failed' : ''}`);
   return { ok, wps: !pr || ok || pr.content_unchanged !== true ? [] : (pr.work_packages || []) };
 }
 
