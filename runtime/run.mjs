@@ -15,7 +15,16 @@
 //                                 next to it): {"stop_after": "<phase>"} moves the stop, "now" stops
 //                                 after the phase that is ending, "" runs to the end; a file already
 //                                 there when the run starts counts only once it changes
+//   --agent-log-dir <dir>         each agent run's prompt, whole output stream and stderr (default with
+//                                 --result-file: <name>.agents/ next to it); a run the log's NEXT names
+//                                 keeps its own, next to its result file
+//   --show-text                   the log also shows what the agents write, not only their tool calls
 //   --help                        this usage
+//
+// With --result-file, <name>.status.json next to it is rewritten every 30 s while the runner lives: its
+// state, phase, the agent calls under way (each with its last tool call or text, --show-text or not, and
+// when that came: last_at) and when it was updated. An update more than two minutes old means the runner
+// is gone.
 //
 // The log ends with what the result's next says comes after the run (=== NEXT); with --args-file, the
 // arguments of each run it names are written next to that file (<name>.again.json, <name>.start-<rank>.json).
@@ -29,7 +38,7 @@
 // at once. At its end it stops what its agents left running; a signal then only hurries that. Its first log
 // line gives its pid; then it lists what runs that are gone left running, those in the task's container too.
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BACKENDS, cliBackend } from './backends.mjs';
@@ -48,11 +57,12 @@ function parse(argv) {
   return out;
 }
 
-const FLAGS = ['backend', 'model', 'args', 'args-file', 'result-file', 'concurrency', 'agent-timeout-ms', 'schema-retries', 'kill-orphans', 'control-file', 'help'];
+const FLAGS = ['backend', 'model', 'args', 'args-file', 'result-file', 'concurrency', 'agent-timeout-ms', 'schema-retries', 'kill-orphans', 'control-file', 'agent-log-dir', 'show-text', 'help'];
 const usage = (code = 2) => {
   (code ? process.stderr : process.stdout).write('usage: node runtime/run.mjs <script.js> --backend claude|cursor [--model <id>] '
     + '(--args <json> | --args-file <path>) [--result-file <path>] [--concurrency <n>] '
-    + '[--agent-timeout-ms <ms>] [--schema-retries <n>] [--kill-orphans] [--control-file <path>] [--help]\n');
+    + '[--agent-timeout-ms <ms>] [--schema-retries <n>] [--kill-orphans] [--control-file <path>] '
+    + '[--agent-log-dir <dir>] [--show-text] [--help]\n');
   process.exit(code);
 };
 
@@ -71,9 +81,13 @@ try {
   process.exit(2);
 }
 const int = (v, d) => (v !== undefined && v !== true && Number.isFinite(Number(v)) ? Number(v) : d);
-const backend = cliBackend(opts.backend, { model: typeof opts.model === 'string' ? opts.model : '' });
+const resultStem = typeof opts['result-file'] === 'string' ? opts['result-file'].replace(/(\.result)?\.json$/, '') : '';
+const agentLogDir = typeof opts['agent-log-dir'] === 'string' ? opts['agent-log-dir'] : resultStem ? `${resultStem}.agents` : '';
+const backend = cliBackend(opts.backend, { model: typeof opts.model === 'string' ? opts.model : '', logDir: agentLogDir });
+const showText = opts['show-text'] === true || opts['show-text'] === 'true';
 const controlFile = typeof opts['control-file'] === 'string' ? opts['control-file']
   : typeof opts['args-file'] === 'string' ? `${opts['args-file'].replace(/\.json$/, '')}.control.json` : '';
+const startedMs = Date.now();
 // A file this run found at its start was written for an earlier one, which a "now" in it already
 // stopped: it counts once it changes. Its state, not the clock, tells: file times lag the clock a little.
 const fileState = (f) => {
@@ -109,6 +123,7 @@ const rt = createRuntime({
   agentTimeoutMs: int(opts['agent-timeout-ms'], 0),
   onContainer: (box) => lookIn(box),
   control,
+  showText,
 });
 const shq = (s) => (/^[\w./:=@,+-]+$/.test(String(s)) ? String(s) : `'${String(s).replace(/'/g, "'\\''")}'`);
 
@@ -126,8 +141,9 @@ function nextLines(next) {
     lines.push('  run again: the same command');
   }
   for (const s of next.start || []) runs.push([`start-${s.rank}`, `start #${s.rank} (${s.task})`, s.args]);
-  const carried = FLAGS.filter((k) => !['args', 'args-file', 'result-file', 'help'].includes(k) && typeof opts[k] === 'string')
-    .map((k) => ` --${k} ${shq(opts[k])}`).join('');
+  // Each run named gets its own result file and agent logs: this run's are not carried.
+  const carried = FLAGS.filter((k) => !['args', 'args-file', 'result-file', 'agent-log-dir', 'show-text', 'help'].includes(k)
+    && typeof opts[k] === 'string').map((k) => ` --${k} ${shq(opts[k])}`).join('') + (showText ? ' --show-text' : '');
   const here = relative(process.cwd(), process.argv[1]);
   const runner = `node ${here && !here.startsWith('..') ? here : process.argv[1]} ${script}${carried}`;
   for (const [tag, what, a] of runs) {
@@ -148,10 +164,27 @@ const tag = runTag();
 process.env[TAG] = tag;
 rt.log(`runner pid ${process.pid}: kill ${process.pid} stops this run and what it started`);
 if (controlFile) rt.log(`control file: ${controlFile} (read at every phase boundary)`);
+if (backend.logDir) rt.log(`agent streams: ${backend.logDir}/`);
 const mine = () => tagged().filter((p) => p.tag === tag);
 const listed = (ps) => ps.slice(0, 20).map((p) => `\n     ${p.pid} ${p.cmd.slice(0, 160)}`).join('');
 const releaseLock = () => spawnSync('python3', [join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'run_lock.py'),
   'release', '--run-tag', tag], { stdio: 'ignore', timeout: 30000 });
+
+const statusFile = resultStem ? `${resultStem}.status.json` : '';
+let statusBeat = null;
+// Written beside it and renamed over it: who reads it never gets half of it. Once the run's end is in it,
+// the 30 s rewrite stops, and cannot say running again.
+const writeStatus = (state) => {
+  if (!statusFile) return;
+  if (state !== 'running') clearInterval(statusBeat);
+  try {
+    writeFileSync(`${statusFile}.tmp`, `${JSON.stringify({ state, pid: process.pid, run_tag: tag, started: new Date(startedMs).toISOString(),
+      updated: new Date().toISOString(), phase: rt.current(), agents: rt.live(), summary: rt.summary() }, null, 2)}\n`);
+    renameSync(`${statusFile}.tmp`, statusFile);
+  } catch { /* a full disk does not stop the run */ }
+};
+writeStatus('running');
+if (statusFile) statusBeat = setInterval(() => writeStatus('running'), 30000).unref();
 
 // The container the task's servers run in (InferPilot on the host), however the script resolved it.
 const container = () => (rt.state.container || (typeof args.container === 'string' ? args.container : '')).trim();
@@ -227,6 +260,7 @@ async function interrupted(sig, code) {
     next: { say: `Interrupted by ${sig}${at ? ` in ${at}` : ''}; its agents and what they started were stopped and the `
       + 'machine lock freed. Run again with the same arguments to start over.' } };
   if (typeof opts['result-file'] === 'string') writeFileSync(opts['result-file'], `${JSON.stringify(result, null, 2)}\n`);
+  writeStatus('interrupted');
   rt.log(`=== END (interrupted by ${sig}${at ? ` in ${at}` : ''}): ${rt.summary()} ===`);
   process.exit(code);
 }
@@ -265,10 +299,13 @@ try {
   if (typeof opts['result-file'] === 'string') writeFileSync(opts['result-file'], `${text}\n`);
   process.stdout.write(`${text}\n`);
   if (result && result.next && result.next.say) nextLines(result.next).forEach((line) => rt.log(line));
+  // Last: who sees the run ended finds its result and the arguments of the runs it names.
+  writeStatus('ended');
 } catch (e) {
   ended = true;
   if (stopping) await new Promise(() => {});
   await tidyUp();
+  writeStatus('failed');
   rt.log(`=== END (failed): ${rt.summary()} ===`);
   process.stderr.write(`run failed: ${e && e.stack ? e.stack : e}\n`);
   process.exit(1);
