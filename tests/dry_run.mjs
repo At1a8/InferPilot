@@ -7,7 +7,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { createRuntime } from '../runtime/engine.mjs';
+import { createRuntime, scriptBody } from '../runtime/engine.mjs';
 import { CMD, DEFAULTS, MODE_DEFAULTS, ROLE_RE, RUN, WP, parseInputs, withKernelHandoff } from './fixtures/answers.mjs';
 
 const INFERPILOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -51,7 +51,13 @@ function makeBackend(overrides) {
   return { backend: b, calls };
 }
 
-async function run(args, overrides, { control } = {}) {
+// The script as Claude Code's Workflow tool runs it: the Workflow tool's eight globals, which have no control.
+const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
+const asWorkflowTool = (rt, args) => new AsyncFunction('agent', 'parallel', 'pipeline', 'phase', 'log', 'workflow', 'args', 'budget',
+  scriptBody(readFileSync(SCRIPT, 'utf8')))(rt.agent, rt.parallel, rt.pipeline, rt.phase, rt.log,
+  async () => { throw new Error('workflow(): not used'); }, args, { total: null, spent: () => 0, remaining: () => Infinity });
+
+async function run(args, overrides, { control, workflowTool } = {}) {
   const phases = [];
   const heads = [];
   const lines = [];
@@ -76,7 +82,8 @@ async function run(args, overrides, { control } = {}) {
     },
   });
   const modeDefaults = MODE_DEFAULTS[args.mode] || {};
-  const result = await rt.runScript(SCRIPT, { inferpilot_dir: INFERPILOT, framework_dir: '/tmp/sglang', agent_retries: 1, ...modeDefaults, ...args }, 0);
+  const runArgs = { inferpilot_dir: INFERPILOT, framework_dir: '/tmp/sglang', agent_retries: 1, ...modeDefaults, ...args };
+  const result = workflowTool ? await asWorkflowTool(rt, runArgs) : await rt.runScript(SCRIPT, runArgs, 0);
   const prefix = SCENARIO.split(':')[0];
   if (result && result.mode) MODES_RUN.set(prefix, (MODES_RUN.get(prefix) || new Set()).add(result.mode));
   RESULTS.push({ scenario: SCENARIO, result });
@@ -576,6 +583,21 @@ const scenarios = [
     check(kernel.result.status === 'stopped' && kernel.result.stopped_at === 'Kernel' && !kernel.phases.includes('Verify')
       && statuses(kernel.result.handoffs) === 'not_integrated' && reported && statuses(reported.ins.handoffs) === 'not_integrated',
     `now while the kernel back end runs leaves its gain not_integrated, as the report hears: ${statuses(kernel.result.handoffs)}`);
+  }],
+  ['stop_after: under the Workflow tool, which has no control global, a run goes as its arguments say', async () => {
+    const lead = { title: 'tokenizer test fails on main', observed: '3/3 KeyError', reproduce: 'pytest test_tokenizer.py' };
+    const whole = await run({ mode: 'feature', task: 't', confirm_leads: true }, {
+      'implementer:implement': (ins) => ({ wp: ins.work_package.id, status: 'done', commit: `c_${ins.work_package.id}`,
+        unit_test_cmd: 'pytest -q t.py', leads: [lead] }),
+    }, { workflowTool: true });
+    const sp = whole.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(whole.result.status === 'ready_for_review' && sp && sp.ins.confirm_leads === true,
+      `a whole run, its lead confirmed in Spinoff: ${whole.result.status}, ${JSON.stringify(sp && sp.ins.confirm_leads)}`);
+    const stopped = await run({ mode: 'feature', task: 't', stop_after: 'Verify' }, undefined, { workflowTool: true });
+    check(stopped.result.status === 'stopped' && stopped.result.stopped_at === 'Verify'
+      && stopped.result.next.say.startsWith('Stopped after Verify, as stop_after asked.'),
+    `stop_after: ${stopped.result.status} at ${stopped.result.stopped_at}`);
+    check(![...whole.lines, ...stopped.lines].some((l) => l.startsWith('[inferpilot] control:')), 'no control file, no control line');
   }],
   ['feature: a work package that never passes is rolled back', async () => {
     const r = await run({ mode: 'feature', task: 't', max_fix_rounds: 1 }, {
