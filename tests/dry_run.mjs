@@ -464,9 +464,9 @@ const scenarios = [
     const r = await run({ mode: 'ci', task: 'c' }, {
       'pr_engineer:pr': (ins, n) => (n === 1
         ? { branch: 'inferpilot/task', lint_pass: false, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md`,
-          leaks: [], launch_checked: true, work_packages: [WP('H1', { goal: 'register the new test in test/registered' })] }
+          leak_scan_findings: [], launch_checked: true, work_packages: [WP('H1', { goal: 'register the new test in test/registered' })] }
         : { branch: 'inferpilot/task', lint_pass: true, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md`,
-          leaks: [], launch_checked: true }),
+          leak_scan_findings: [], launch_checked: true }),
     });
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
     const afterPr = r.phases.slice(r.phases.indexOf('PR'));
@@ -474,16 +474,16 @@ const scenarios = [
     check(r.result.done.some((d) => d.wp === 'H1'), 'the hygiene package was verified');
     const changed = await run({ mode: 'ci', task: 'c' }, {
       'pr_engineer:pr': () => ({ branch: 'inferpilot/task', lint_pass: true, feature_off_final: true, content_unchanged: false,
-        pr_body_path: `${RUN}/pr_body.md`, leaks: [], launch_checked: true, work_packages: [WP('H2')] }),
+        pr_body_path: `${RUN}/pr_body.md`, leak_scan_findings: [], launch_checked: true, work_packages: [WP('H2')] }),
     });
     check(changed.result.status === 'blocked' && changed.result.stopped_at === 'PR', `a branch that changed after review: ${changed.result.status}`);
     check(changed.keys.filter((k) => k === 'implementer:implement').length === 1, 'no loop on a branch that changed after review');
     const clean = { branch: 'inferpilot/task', lint_pass: true, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md`,
-      leaks: [], launch_checked: true };
+      leak_scan_findings: [], launch_checked: true };
     const leaky = await run({ mode: 'ci', task: 'c' }, {
       'pr_engineer:pr': (ins, n) => (n === 1
-        ? { ...clean, leaks: ['test/x.py:12 /home/alice/model'], work_packages: [WP('H3', { goal: 'take the local path out of the test' })] }
-        : { ...clean, leaks: [], diff_stat: '3 files, +40/-2' }),
+        ? { ...clean, leak_scan_findings: ['test/x.py:12 /home/alice/model'], work_packages: [WP('H3', { goal: 'take the local path out of the test' })] }
+        : { ...clean, leak_scan_findings: [], diff_stat: '3 files, +40/-2' }),
     });
     check(leaky.result.status === 'ready_for_review' && leaky.result.done.some((d) => d.wp === 'H3'),
       `a leak goes back as a work package: ${leaky.result.status}`);

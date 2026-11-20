@@ -25,10 +25,10 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
      messages, and no `root` identity (step 2 resets those); each finding in the code is a work
      package; one in a commit whose line a later commit removed is still published by the push, so
      step 2's rewrite drops it (the tree stays the one reviewed). What the last scan (step 5) still
-     finds goes in `leaks`. A path the base already carries (an upstream convention, such as the
-     `HF_HOME` of AMD CI's tests) and one under `/tmp` or `/opt` are no findings. One that is public all
-     the same passes with `--allow '<regex>'`, each with its reason in the ledger; never a path of this
-     machine.
+     finds goes in `leak_scan_findings`, never in `leads`, which are problems of the framework. A path
+     the base already carries (an upstream convention, such as the `HF_HOME` of AMD CI's tests) and one
+     under `/tmp` or `/opt` are no findings. One that is public all the same passes with
+     `--allow '<regex>'`, each with its reason in the ledger; never a path of this machine.
    - **Tests the PR carries:** only tests the repository's CI runs, the fewest that cover the change: a
      change to outputs carries one end-to-end accuracy test at the feature's defaults (sglang: GSM8K
      under `test/registered/amd/accuracy/...` with `register_amd_ci`, as its `write-sglang-test` skill
@@ -87,7 +87,7 @@ Return:
 ```json
 {"branch": "inferpilot/<slug>", "title": "[Fix] [AMD] scope: Description", "commits": ["<sha> <subject>"],
  "lint_pass": true, "feature_off_final": true, "content_unchanged": true, "merges_cleanly": true,
- "leaks": [], "diff_stat": "20 files, +1304/-26", "launch_checked": true,
+ "leak_scan_findings": [], "diff_stat": "20 files, +1304/-26", "launch_checked": true,
  "work_packages": [],
  "pr_body_path": "/abs/RUN_DIR/pr_body.md", "push_command": "git -C /sgl-workspace/sglang push <remote> inferpilot/<slug>"}
 ```
