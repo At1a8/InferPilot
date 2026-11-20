@@ -402,9 +402,10 @@ tail -f exp/scan.log    # Ctrl-C leaves the log; the run goes on
 ```
 
 **Watching a run.** `exp/scan.status.json` is rewritten every 30 s while the runner lives (state, phase,
-the agent calls under way with the last line of each); an `updated` more than two minutes old means the
-runner is gone. `exp/scan.agents/` keeps each agent call's prompt, whole output stream and stderr
-(`--agent-log-dir` puts them elsewhere), and `--show-text` adds what the agents write to the log.
+the agent calls under way with the last line of each and when it came, `last_at`); an `updated` more than
+two minutes old means the runner is gone. `exp/scan.agents/` keeps each agent call's prompt, whole output
+stream and stderr (`--agent-log-dir` puts them elsewhere), and `--show-text` adds what the agents write to
+the log.
 
 **Moving a run's stop.** The runner reads `exp/scan.control.json` (the arguments file's name with
 `.control.json`; `--control-file` names another) at every phase boundary: `{"stop_after": "<phase>"}`

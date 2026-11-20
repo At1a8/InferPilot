@@ -32,30 +32,31 @@ function usageOf(u) {
 
 const resultOf = (e) => ({ result: String(e.result ?? ''), error: Boolean(e.is_error), usage: usageOf(e.usage) });
 
-// The text items of an assistant message, which both CLIs stream as {type: 'assistant', message: {content}}.
-const textsOf = (e) => ((e.message && e.message.content) || []).filter((c) => c && c.type === 'text' && c.text)
-  .map((c) => String(c.text));
+// The tool calls ({tool}) and texts ({text}) of an assistant message in its order, which both CLIs stream
+// as {type: 'assistant', message: {content}}.
+const stepsOf = (e) => ((e.message && e.message.content) || [])
+  .map((c) => (c && c.type === 'tool_use' ? { tool: toolLine(c.name, c.input) }
+    : c && c.type === 'text' && c.text ? { text: String(c.text) } : null))
+  .filter(Boolean);
 
-// What one event of `claude -p --output-format stream-json --verbose` tells: the tool calls and text of an
-// assistant message, or the final answer.
+// What one event of `claude -p --output-format stream-json --verbose` tells: the steps of an assistant
+// message, or the final answer.
 function claudeEvent(e) {
-  if (e.type === 'assistant') {
-    const content = (e.message && e.message.content) || [];
-    return { tools: content.filter((c) => c && c.type === 'tool_use').map((c) => toolLine(c.name, c.input)), texts: textsOf(e) };
-  }
+  if (e.type === 'assistant') return { steps: stepsOf(e) };
   if (e.type === 'result') return resultOf(e);
   return null;
 }
 
 // The same for the Cursor CLI's stream-json, where a tool call starts as a tool_call event holding one
-// <kind>ToolCall (shellToolCall, readToolCall, editToolCall, grepToolCall, ...).
+// <kind>ToolCall (shellToolCall, readToolCall, editToolCall, grepToolCall, ...) and an assistant event
+// holds texts.
 function cursorEvent(e) {
   if (e.type === 'tool_call' && e.subtype === 'started') {
     const call = e.tool_call || {};
     const kind = Object.keys(call).find((k) => k.endsWith('ToolCall'));
-    return kind ? { tools: [toolLine(kind.slice(0, -'ToolCall'.length), (call[kind] || {}).args, (call[kind] || {}).description)] } : null;
+    return kind ? { steps: [{ tool: toolLine(kind.slice(0, -'ToolCall'.length), (call[kind] || {}).args, (call[kind] || {}).description) }] } : null;
   }
-  if (e.type === 'assistant') return { texts: textsOf(e) };
+  if (e.type === 'assistant') return { steps: stepsOf(e).filter((s) => s.text) };
   if (e.type === 'result') return resultOf(e);
   return null;
 }
@@ -109,6 +110,7 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
   return {
     name,
     bin,
+    logDir: dir, // where the logs go: '' when there are none
     // Signals the process group of every agent run still going; returns how many there were.
     stopAll(signal = 'SIGTERM') {
       for (const stop of live) stop(signal);
@@ -194,17 +196,16 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
           } catch {
             return;
           }
-          const said = e && typeof e === 'object' ? preset.events(e) : null;
+          let said = null;
+          try {
+            said = e && typeof e === 'object' ? preset.events(e) : null;
+          } catch { /* an event of a shape the parser does not know is skipped, as a line that is not JSON is */ }
           if (!said) return;
-          for (const t of said.tools || []) {
+          for (const s of said.steps || []) {
             try {
-              onProgress(t);
+              if (s.tool) onProgress(s.tool);
+              else if (onText) onText(s.text);
             } catch { /* a listener's mistake is not the agent's */ }
-          }
-          for (const t of (onText && said.texts) || []) {
-            try {
-              onText(t);
-            } catch { /* as above */ }
           }
           if (said.result !== undefined) {
             answer = said.result;

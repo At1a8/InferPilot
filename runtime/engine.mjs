@@ -69,7 +69,7 @@ export function createRuntime({
   if (!backend || typeof backend.runAgent !== 'function') throw new Error('createRuntime: backend.runAgent is required');
   const slots = new Slots(concurrency);
   const state = { agents: 0, schemaFailures: 0, done: 0, tokens: 0, tokensKnown: false };
-  const live = new Map(); // the agent calls under way: id -> {label, phase, started, last: its last tool call or text}
+  const live = new Map(); // the agent calls under way: id -> {label, phase, started, last: its last tool call or text, last_at}
   const runStarted = Date.now();
   let current = '';
   // The phases the script says the run passes ("Route: A → B → C" in a log line), for x/y in each phase line.
@@ -123,12 +123,16 @@ export function createRuntime({
     await slots.take();
     const started = Date.now();
     const minutes = () => Math.round((Date.now() - started) / 60000);
-    const call = { label, phase: where, started: new Date(started).toISOString(), last: '' };
+    const call = { label, phase: where, started: new Date(started).toISOString(), last: '', last_at: '' };
     live.set(id, call);
     let shown = started;
+    const did = (msg) => {
+      call.last = msg.slice(0, 200);
+      call.last_at = new Date().toISOString();
+    };
     const show = (msg) => {
       shown = Date.now();
-      call.last = msg.slice(0, 200);
+      did(msg);
       log(`     · [${where}] ${label}  ${msg}`);
     };
     // Without showText a text goes to live() only, and a still-working line goes to the log only: the
@@ -138,7 +142,7 @@ export function createRuntime({
       if (!line) return;
       const msg = `> ${line.length > 300 ? `${line.slice(0, 300)}...` : line}`;
       if (showText) show(msg);
-      else call.last = msg.slice(0, 200);
+      else did(msg);
     };
     const beat = quietMs > 0 ? setInterval(() => {
       if (Date.now() - shown < quietMs) return;

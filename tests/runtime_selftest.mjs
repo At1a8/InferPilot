@@ -4,7 +4,7 @@
 //   node tests/runtime_selftest.mjs
 import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { extractJson, validate } from '../runtime/schema.mjs';
@@ -313,7 +313,24 @@ return { status: r.ok ? 'done' : 'no', n: args.n };`);
     zombie.kill('SIGKILL');
     const said = BACKENDS.claude.events({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' },
       { type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] } });
-    check(said.texts[0] === 'hi' && said.tools.length === 1, `claude: ${JSON.stringify(said)}`);
+    check(JSON.stringify(said.steps) === JSON.stringify([{ text: 'hi' }, { tool: 'Bash: ls' }]), `claude, in the message's order: ${JSON.stringify(said)}`);
+  }],
+  ['backends: the texts and tool calls of an assistant message are heard in its order; an event of a shape the parser does not know is skipped', async () => {
+    const cli = fakeCli('ordered.sh', `cat >/dev/null
+cat <<'EOF'
+{"type":"assistant","message":{"content":"a string, not a list"}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Let me run it."},{"type":"tool_use","name":"Bash","input":{"command":"python3 bench.py"}}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"done"}
+EOF`);
+    const heard = {};
+    for (const which of ['claude', 'cursor']) {
+      heard[which] = [];
+      const r = await cliBackend('fake', { preset: preset(cli, 'stdin', { events: BACKENDS[which].events }) }).runAgent({ prompt: 'p',
+        label: 'x', onProgress: (t) => heard[which].push(`tool ${t}`), onText: (t) => heard[which].push(`text ${t}`) });
+      check(r.text === 'done', `${which}: the run goes on past the event it cannot read: ${r.text}`);
+    }
+    check(JSON.stringify(heard.claude) === JSON.stringify(['text Let me run it.', 'tool Bash: python3 bench.py']), `claude: ${JSON.stringify(heard.claude)}`);
+    check(JSON.stringify(heard.cursor) === JSON.stringify(['text Let me run it.']), `cursor, whose tool calls come as tool_call events: ${JSON.stringify(heard.cursor)}`);
   }],
   ['backends: a log that falls too far behind its agent stops; the agent run goes on', async () => {
     // One libuv thread, which a pbkdf2 holds: no write of the log gets through, as on a file system that stalls.
@@ -345,6 +362,7 @@ process.kill(process.pid, 'SIGKILL'); // an exit would wait for the thread the p
           onText('  thinking\n about it  ');
           seen.push(rt.live().map((c) => ({ ...c })));
           onProgress('Bash: python3 bench.py');
+          seen.push(rt.live().map((c) => ({ ...c })));
           await sleep(4 * opts.quietMs);
           seen.push(rt.live().map((c) => ({ ...c })));
           return { text: 'ok', usage: null };
@@ -363,21 +381,48 @@ process.kill(process.pid, 'SIGKILL'); // an exit would wait for the thread the p
     check(loud.rt.live().length === 0, 'no call once it is done');
     const mute = await watch({ quietMs: 0 });
     check(!mute.lines.some((l) => l.includes('> thinking')), 'no text in the log without showText');
-    check(mute.seen[0][0].last === '> thinking about it', `but live() has it: ${JSON.stringify(mute.seen[0])}`);
+    check(mute.seen[0][0].last === '> thinking about it' && mute.seen[0][0].last_at >= mute.seen[0][0].started,
+      `but live() has it, and when: ${JSON.stringify(mute.seen[0])}`);
     const slow = await watch({ quietMs: 50 });
     check(slow.lines.some((l) => l.endsWith('[P] speaker  still working, 0 min')), `still working: ${JSON.stringify(slow.lines)}`);
-    check(slow.seen[1][0].last === 'Bash: python3 bench.py', `the still-working lines leave the tool call in live(): ${JSON.stringify(slow.seen[1])}`);
+    check(slow.seen[2][0].last === 'Bash: python3 bench.py' && slow.seen[2][0].last_at === slow.seen[1][0].last_at,
+      `the still-working lines leave the tool call, and its time, in live(): ${JSON.stringify(slow.seen.slice(1))}`);
   }],
   ['run.mjs: with --result-file, a status file and the agent streams next to it', async () => {
     const script = path.join(TMP, 'status.js');
-    writeFileSync(script, `phase('Only');\nawait agent('go', { label: 'only' });\nreturn { status: 'done' };`);
+    // Its result takes 50 ms to write out (file times are coarser than the gap between two writes): a status
+    // written before it would be the older file.
+    writeFileSync(script, `phase('Only');\nawait agent('go', { label: 'only' });\n`
+      + `return { status: 'done', slow: { toJSON() { const t = Date.now() + 50; while (Date.now() < t); return 'slow'; } } };`);
     execFileSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor', '--args', '{}',
       '--result-file', path.join(TMP, 'st.result.json')], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('st.sh', 'echo done') },
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     const st = JSON.parse(readFileSync(path.join(TMP, 'st.status.json'), 'utf8'));
     check(st.state === 'ended' && st.agents.length === 0 && /^\d+-\d+-\d*$/.test(st.run_tag) && st.updated >= st.started, `status ${JSON.stringify(st)}`);
     check(!existsSync(path.join(TMP, 'st.status.json.tmp')), 'the status file is renamed into place, nothing left beside it');
+    check(statSync(path.join(TMP, 'st.status.json')).mtimeMs >= statSync(path.join(TMP, 'st.result.json')).mtimeMs,
+      'the status says ended once the result is written');
     check(existsSync(path.join(TMP, 'st.agents', '001-only.jsonl')), 'the agent stream is kept');
+    const notDir = path.join(TMP, 'st-not-a-dir');
+    writeFileSync(notDir, '');
+    const r2 = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor', '--args', '{}',
+      '--agent-log-dir', path.join(notDir, 'logs')], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('st.sh', 'echo done') }, encoding: 'utf8' });
+    check(r2.status === 0 && r2.stderr.includes('no agent logs in') && !r2.stderr.includes('agent streams:'),
+      `a log dir that cannot be made is not named as the streams' place: ${r2.stderr.slice(-400)}`);
+  }],
+  ['run.mjs: the runs the log\'s NEXT names keep --show-text and get agent logs of their own', async () => {
+    const dir = path.join(TMP, 'next-runs');
+    mkdirSync(dir, { recursive: true });
+    const script = path.join(dir, 'next.js');
+    writeFileSync(script, `phase('Only');\nawait agent('go', { label: 'only' });\nreturn { status: 'done', next: { say: 'two to start', `
+      + `start: [{ rank: 1, task: 'a', args: {} }, { rank: 2, task: 'b', args: {} }] } };`);
+    writeFileSync(path.join(dir, 'scan.json'), '{}');
+    const r = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
+      '--args-file', path.join(dir, 'scan.json'), '--result-file', path.join(dir, 'scan.result.json'), '--agent-log-dir', path.join(dir, 'logs'),
+      '--show-text'], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('next.sh', 'echo done') }, encoding: 'utf8' });
+    const starts = r.stderr.split('\n').filter((l) => l.includes('nohup') && l.includes('.start-'));
+    check(r.status === 0 && starts.length === 2 && starts.every((l) => l.includes(' --show-text') && !l.includes('--agent-log-dir')),
+      `the start commands: ${JSON.stringify(starts)}`);
   }],
   ['run.mjs: the control file next to --args-file is read when the script asks; one there before the run counts once it changes; the pid stays on the log\'s first line', async () => {
     const script = path.join(TMP, 'control.js');
