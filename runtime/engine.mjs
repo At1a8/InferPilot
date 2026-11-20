@@ -1,8 +1,9 @@
 // InferPilot's workflow runner: runs inferpilot.js outside Claude Code, with the globals Claude Code's
 // Workflow tool gives a script (agent, parallel, pipeline, phase, log, workflow, args, budget), and
 // control, which the Workflow tool lacks. Every agent() call goes to a backend: { name, async
-// runAgent({prompt, label, cwd, env, model, timeoutMs, onProgress}) -> {text, usage} }, where onProgress(line)
-// hears each tool call and usage, when known, is {total, ...} tokens.
+// runAgent({prompt, label, cwd, env, model, timeoutMs, onProgress, onText}) -> {text, usage} }, where
+// onProgress(line) hears each tool call, onText(text) each text the agent writes, and usage, when known, is
+// {total, ...} tokens.
 import { readFile } from 'node:fs/promises';
 import { extractJson, outputContract, validate } from './schema.mjs';
 
@@ -53,7 +54,7 @@ export const fmtMinutes = (ms) => {
 // onContainer(name): called when the script names the container its servers run in; agent calls wait for
 // what it returns (the runner looks there for what runs that are gone left running) before they start.
 // control: a function the script may call for the run's live settings (runtime/run.mjs: the control file).
-// showText: each text an agent writes gets a line too, besides its tool calls.
+// showText: each text an agent writes gets a line too, besides its tool calls; live() has the texts either way.
 export function createRuntime({
   backend,
   concurrency = 4,
@@ -68,7 +69,7 @@ export function createRuntime({
   if (!backend || typeof backend.runAgent !== 'function') throw new Error('createRuntime: backend.runAgent is required');
   const slots = new Slots(concurrency);
   const state = { agents: 0, schemaFailures: 0, done: 0, tokens: 0, tokensKnown: false };
-  const live = new Map(); // the agent calls under way: id -> {label, phase, started, last}
+  const live = new Map(); // the agent calls under way: id -> {label, phase, started, last: its last tool call or text}
   const runStarted = Date.now();
   let current = '';
   // The phases the script says the run passes ("Route: A → B → C" in a log line), for x/y in each phase line.
@@ -130,12 +131,19 @@ export function createRuntime({
       call.last = msg.slice(0, 200);
       log(`     · [${where}] ${label}  ${msg}`);
     };
+    // Without showText a text goes to live() only, and a still-working line goes to the log only: the
+    // still-working clock counts what the log shows, and live() keeps what the agent last did.
     const say = (text) => {
       const line = text.replace(/\s+/g, ' ').trim();
-      if (line) show(`> ${line.length > 300 ? `${line.slice(0, 300)}...` : line}`);
+      if (!line) return;
+      const msg = `> ${line.length > 300 ? `${line.slice(0, 300)}...` : line}`;
+      if (showText) show(msg);
+      else call.last = msg.slice(0, 200);
     };
     const beat = quietMs > 0 ? setInterval(() => {
-      if (Date.now() - shown >= quietMs) show(`still working, ${minutes()} min`);
+      if (Date.now() - shown < quietMs) return;
+      shown = Date.now();
+      log(`     · [${where}] ${label}  still working, ${minutes()} min`);
     }, Math.min(quietMs, 60000)) : null;
     let tokens = null;
     const done = () => {
@@ -149,7 +157,7 @@ export function createRuntime({
       for (let attempt = 1; attempt <= (opts.schema ? schemaRetries + 1 : 1); attempt++) {
         const { text, usage } = await backend.runAgent({
           prompt: full, label, cwd: opts.cwd, env: opts.env, model: opts.model, timeoutMs: agentTimeoutMs, onProgress: show,
-          ...(showText ? { onText: say } : {}),
+          onText: say,
         });
         if (usage && Number.isFinite(usage.total)) {
           tokens = (tokens || 0) + usage.total;

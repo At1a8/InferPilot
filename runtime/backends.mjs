@@ -10,6 +10,8 @@ const ARG_PROMPT_MAX = 100 * 1024;
 const KILL_GRACE_MS = 10000;
 // A stream's answer comes in its result event; of the rest, a tail is kept for a CLI that printed plain text.
 const STREAM_TAIL = 4 * 1024 * 1024;
+// A log further behind its agent than this (a file system that stalls) stops, as one that cannot be written does.
+const LOG_BACKLOG = 64 * 1024 * 1024;
 
 // A tool call in a few words: the tool, and the command, file or pattern it was given.
 function toolLine(tool, args, description) {
@@ -85,8 +87,9 @@ function promptArg(prompt, label) {
 }
 
 // logDir: each agent run's prompt, whole stdout stream and stderr go there as <n>-<label>.prompt.md,
-// .jsonl and .stderr.log, numbered in the order the runs start.
-export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[name], logDir = '' } = {}) {
+// .jsonl and .stderr.log, numbered in the order the runs start. logBacklog: the bytes a log may fall
+// behind its agent.
+export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[name], logDir = '', logBacklog = LOG_BACKLOG } = {}) {
   if (!preset) throw new Error(`unknown backend ${name}; one of ${Object.keys(BACKENDS).join(', ')}`);
   const bin = (preset.binEnv && process.env[preset.binEnv]) || preset.bin;
   const live = new Set(); // the stop function of every agent run still going
@@ -124,12 +127,18 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
     // (usage: {input, output, cache, total}, or null).
     runAgent({ prompt, label = 'agent', cwd, env, model, timeoutMs = 0, onProgress = () => {}, onText = null }) {
       if (closed) return Promise.reject(new Error(`${name} [${label}] not started: the runner is stopping`));
-      let base = dir ? join(dir, `${String(++runs).padStart(3, '0')}-${String(label).replace(/[^\w.-]+/g, '_')}`) : '';
-      try {
-        if (base) writeFileSync(`${base}.prompt.md`, prompt, { flag: 'wx' });
-      } catch (e) {
-        process.stderr.write(`${name} [${label}]: no agent log (${e.message})\n`);
-        base = '';
+      // A number another runner on the same directory took since this one counted is skipped.
+      let base = '';
+      while (dir && !base) {
+        const next = join(dir, `${String(++runs).padStart(3, '0')}-${String(label).replace(/[^\w.-]+/g, '_')}`);
+        try {
+          writeFileSync(`${next}.prompt.md`, prompt, { flag: 'wx' });
+          base = next;
+        } catch (e) {
+          if (e.code === 'EEXIST') continue;
+          process.stderr.write(`${name} [${label}]: no agent log (${e.message})\n`);
+          break;
+        }
       }
       // A log that cannot be written (a full disk) stops; the agent run goes on.
       const logTo = (file) => {
@@ -144,7 +153,11 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
       const stream = logTo(`${base}.jsonl`);
       const errStream = logTo(`${base}.stderr.log`);
       const put = (s, d) => {
-        if (s && !s.destroyed) s.write(d);
+        if (!s || s.destroyed) return;
+        if (s.writableLength > logBacklog) {
+          process.stderr.write(`${name} [${label}]: ${s.path} stops here (${Math.round(logBacklog / 1048576)} MB not written yet)\n`);
+          s.destroy();
+        } else s.write(d);
       };
       const argv = [...preset.args];
       const m = model || defaultModel;

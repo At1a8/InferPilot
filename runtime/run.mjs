@@ -21,8 +21,8 @@
 //   --help                        this usage
 //
 // With --result-file, <name>.status.json next to it is rewritten every 30 s while the runner lives: its
-// state, phase, the agent calls under way (each with its last line) and when it was updated. An update
-// older than a minute or two means the runner is gone.
+// state, phase, the agent calls under way (each with its last tool call or text, --show-text or not) and
+// when it was updated. An update older than a minute or two means the runner is gone.
 //
 // The log ends with what the result's next says comes after the run (=== NEXT); with --args-file, the
 // arguments of each run it names are written next to that file (<name>.again.json, <name>.start-<rank>.json).
@@ -36,7 +36,7 @@
 // at once. At its end it stops what its agents left running; a signal then only hurries that. Its first log
 // line gives its pid; then it lists what runs that are gone left running, those in the task's container too.
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BACKENDS, cliBackend } from './backends.mjs';
@@ -167,15 +167,20 @@ const releaseLock = () => spawnSync('python3', [join(dirname(fileURLToPath(impor
   'release', '--run-tag', tag], { stdio: 'ignore', timeout: 30000 });
 
 const statusFile = resultStem ? `${resultStem}.status.json` : '';
+let statusBeat = null;
+// Written beside it and renamed over it: who reads it never gets half of it. Once the run's end is in it,
+// the 30 s rewrite stops, and cannot say running again.
 const writeStatus = (state) => {
   if (!statusFile) return;
+  if (state !== 'running') clearInterval(statusBeat);
   try {
-    writeFileSync(statusFile, `${JSON.stringify({ state, pid: process.pid, run_tag: tag, started: new Date(startedMs).toISOString(),
+    writeFileSync(`${statusFile}.tmp`, `${JSON.stringify({ state, pid: process.pid, run_tag: tag, started: new Date(startedMs).toISOString(),
       updated: new Date().toISOString(), phase: rt.current(), agents: rt.live(), summary: rt.summary() }, null, 2)}\n`);
+    renameSync(`${statusFile}.tmp`, statusFile);
   } catch { /* a full disk does not stop the run */ }
 };
 writeStatus('running');
-if (statusFile) setInterval(() => writeStatus('running'), 30000).unref();
+if (statusFile) statusBeat = setInterval(() => writeStatus('running'), 30000).unref();
 
 // The container the task's servers run in (InferPilot on the host), however the script resolved it.
 const container = () => (rt.state.container || (typeof args.container === 'string' ? args.container : '')).trim();
