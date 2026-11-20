@@ -8,9 +8,14 @@ import getpass
 import re
 import socket
 import subprocess
+import sys
 import unittest
 
 from test_readme import ROOT
+
+sys.path.insert(0, str(ROOT / "scripts"))
+# The scripts that check what InferPilot publishes (daily_report, leak_scan) use the same patterns.
+from daily_report import AMD_HOST, INTERNAL_SITE, PRIVATE_IP, PUBLIC_AMD  # noqa: E402
 
 SECRET = re.compile(r"ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[ousr]_[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9_-]{16,}"
                     r"|\bsk-[A-Za-z0-9_-]{32,}|AKIA[0-9A-Z]{16}|\bhf_[A-Za-z0-9]{30,}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
@@ -20,11 +25,6 @@ SECRET = re.compile(r"ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[ousr]
                     # a variable that holds a key, given a value rather than <your key> or $ANOTHER
                     r"|\b(?:LLM_GATEWAY_KEY|JUDGE_KEY|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|CURSOR_API_KEY"
                     r"|OPENAI_API_KEY|HF_TOKEN|GH_TOKEN|GITHUB_TOKEN|INFERPILOT_REPO_TOKEN)[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9_\-./+]{16,}")
-AMD_HOST = re.compile(r"\b[a-z0-9][a-z0-9.-]*\.amd\.com\b", re.I)
-# Public, or named on purpose: the LLM gateway Claude Code runs on.
-PUBLIC_AMD = {"www.amd.com", "rocm.docs.amd.com", "rocm.blogs.amd.com", "instinct.docs.amd.com", "llm-api.amd.com"}
-INTERNAL_SITE = re.compile(r"\b(?:confluence|jira)\.[a-z0-9-]+\.[a-z]|\b[a-z0-9-]+\.(?:atlassian\.net|sharepoint\.com)\b", re.I)
-PRIVATE_IP = re.compile(r"(?<![\d.])(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}(?!\d|\.\d)")
 HOME = re.compile(r"/home/(?![<${*])([A-Za-z0-9._-]+)")
 # Names that stand for anyone.
 PLACEHOLDER_USERS = {"user", "you", "me", "alice", "bob", "username"}

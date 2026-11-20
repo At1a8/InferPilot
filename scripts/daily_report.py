@@ -5,7 +5,7 @@ InferPilot posts nothing; the human uploads the report (e.g. as an issue in Infe
     python3 scripts/daily_report.py check RUN_DIR/daily_report.md   # public-safe and short enough?
     python3 scripts/daily_report.py latest                          # the newest shared report: date, URL, age, body
 
-check: exit 3 when a line names a local path, this machine or an internal site (the lines are listed),
+check: exit 3 when a line names a local path, this machine or the company's network (the lines are listed),
 exit 4 when the body is longer than a GitHub issue allows. latest: the newest issue in InferPilot's repository
 (the origin of this checkout) that carries the report's marker, `{}` when there is none; it reads a
 public repository, with GITHUB_TOKEN when set. Standard library only.
@@ -28,6 +28,14 @@ MARKER = "<!-- inferpilot:daily-report -->"
 ISSUE_LIMIT = 65536  # characters GitHub accepts in an issue body
 LOCAL = re.compile(r"(?<![\w.-])/(?:data\d*|mnt|home|root|workspace|sgl-workspace|apps|shared|nfs_shared1|kmd2|opt|tmp)/"
                    r"|confluence|jira\.", re.I)
+# The company's network, which tests/test_hygiene.py keeps out of this repository with the same patterns: a
+# host of amd.com that is not public, an internal site, a private network address.
+AMD_HOST = re.compile(r"\b[a-z0-9][a-z0-9.-]*\.amd\.com\b", re.I)
+# Public, or named on purpose: the LLM gateway Claude Code runs on.
+PUBLIC_AMD = {"www.amd.com", "rocm.docs.amd.com", "rocm.blogs.amd.com", "instinct.docs.amd.com", "llm-api.amd.com"}
+INTERNAL_SITE = re.compile(r"\b(?:confluence|jira)\.[a-z0-9-]+\.[a-z]|\b[a-z0-9-]+\.(?:atlassian\.net|sharepoint\.com)\b"
+                           r"|(?://|@)[a-z0-9.-]+\.internal\b", re.I)
+PRIVATE_IP = re.compile(r"(?<![\d.])(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}(?!\d|\.\d)")
 
 
 def title(date: str) -> str:
@@ -51,10 +59,12 @@ def default_repo() -> str:
 
 
 def leaks(body: str, host: str = "") -> list:
-    """Lines that would make something private public: local paths, this machine, internal sites."""
+    """Lines that would make something private public: local paths, this machine, the company's network."""
     out = []
     for n, line in enumerate(body.splitlines(), 1):
-        if LOCAL.search(line) or (host and host.lower() in line.lower()):
+        if (LOCAL.search(line) or INTERNAL_SITE.search(line) or PRIVATE_IP.search(line)
+                or any(m.group(0).lower() not in PUBLIC_AMD for m in AMD_HOST.finditer(line))
+                or (host and host.lower() in line.lower())):
             out.append("%d: %s" % (n, line.strip()[:160]))
     return out
 

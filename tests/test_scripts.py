@@ -610,14 +610,64 @@ class LeakScanTest(unittest.TestCase):
         self.assertEqual(self.scan("--allow", "/data2/models/Qwen3-8B", "--allow", "gpu-node-17")[0], 0)
 
     def test_an_internal_site_in_a_url_and_every_entry_of_a_path_list_are_found(self):
-        self.commit('BUG = "https://jira.internal/browse/ABC-1"\nENV = "PYTHONPATH=/opt/a:/home/alice/x"\n'
+        self.commit('BUG = "https://jira.example/browse/ABC-1"\nENV = "PYTHONPATH=/opt/a:/home/alice/x"\n'
                     'LIBS = "/opt/rocm/lib:/home/alice/aiter/build"\nPR = "https://github.com/sgl-project/sglang/pull/1"\n',
-                    message="as in https://confluence.internal/pages/123")
+                    message="as in https://confluence.example/pages/123")
         rc, out = self.scan()
         self.assertEqual((rc, [f["text"] for f in out["leaks"]]),
-                         (1, ['BUG = "https://jira.internal/browse/ABC-1"', 'ENV = "PYTHONPATH=/opt/a:/home/alice/x"',
-                              'LIBS = "/opt/rocm/lib:/home/alice/aiter/build"', "as in https://confluence.internal/pages/123"]),
+                         (1, ['BUG = "https://jira.example/browse/ABC-1"', 'ENV = "PYTHONPATH=/opt/a:/home/alice/x"',
+                              'LIBS = "/opt/rocm/lib:/home/alice/aiter/build"', "as in https://confluence.example/pages/123"]),
                          "a public URL is no finding")
+
+    def test_the_company_network_is_found_and_public_amd_sites_are_not(self):
+        # In pieces: tests/test_hygiene.py keeps each of these out of this repository's own files.
+        lines = ["https://ci" + ".internal/build/42", "https://acme." + "atlassian.net/browse/ABC-1",
+                 "https://corp." + "sharepoint.com/sites/private", "https://wiki." + "amd.com/x",
+                 "curl http://10." + "1.2.3:8000/v1/models", "jane@ci" + ".internal"]
+        self.commit("".join("# %s\n" % line for line in lines + ["https://rocm.docs.amd.com/en/latest/"]))
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]), (1, ["# %s" % line for line in lines]))
+
+    def test_a_path_after_an_option_or_in_a_shell_default_is_found(self):
+        self.commit('CFLAGS = "-I/home/alice/include"\nMODEL = "${MODEL_DIR:-/data/models/m}"\nLOG = "/data/opt/rocm"\n'
+                    'LIBS = "-L/opt/rocm/lib"\nREL = "sgl-I/home/alice"\n')
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]),
+                         (1, ['CFLAGS = "-I/home/alice/include"', 'MODEL = "${MODEL_DIR:-/data/models/m}"', 'LOG = "/data/opt/rocm"']),
+                         "/opt is public wherever it is, and a relative path is no path")
+
+    def test_root_in_a_commit_message_is_found(self):
+        self.commit("y = 2\n", message="change\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n"
+                                       "Signed-off-by: root <root@a1b2c3d4e5f6>")
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]), (1, ["Signed-off-by: root <root@a1b2c3d4e5f6>"]))
+
+    def test_a_file_git_does_not_diff_and_a_byte_that_is_not_utf8_are_read(self):
+        (self.repo / ".gitattributes").write_text("*.cfg -diff\n")
+        (self.repo / "run.cfg").write_text("model=/home/alice/secret\n")
+        (self.repo / "b.py").write_bytes(b"# caf\xe9\nM = '/home/alice/m'\n")
+        git("add", "-A", cwd=self.repo)
+        self.commit("")
+        rc, out = self.scan()
+        self.assertEqual((rc, sorted(f["text"] for f in out["leaks"])), (1, ["M = '/home/alice/m'", "model=/home/alice/secret"]))
+
+    def test_the_name_of_an_added_or_renamed_file_is_found(self):
+        (self.repo / "logs").mkdir()
+        (self.repo / "logs" / "gpu-node-17.txt").write_text("")
+        (self.repo / "trace.json").write_text("{}\n")
+        git("add", "-A", cwd=self.repo)
+        self.commit("", message="an empty log")
+        git("mv", "trace.json", "trace_gpu-node-17_1.json", cwd=self.repo)
+        self.commit("", message="the trace renamed")
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]), (1, ["logs/gpu-node-17.txt", "trace_gpu-node-17_1.json"]))
+
+    def test_an_identity_with_the_host_name_or_an_internal_site_is_found(self):
+        site = "jane@ci" + ".internal"
+        self.commit("y = 2\n", author="gpu-node-17 <jane@users.noreply.github.com>")
+        self.commit("y = 3\n", author="Jane <%s>" % site)
+        rc, out = self.scan()
+        self.assertEqual((rc, out["identities"]), (1, ["Jane <%s>" % site, "gpu-node-17 <jane@users.noreply.github.com>"]))
 
     def test_an_added_line_that_reads_like_a_file_header_is_content(self):
         self.commit("++ /home/alice/private\n")

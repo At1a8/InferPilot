@@ -479,6 +479,14 @@ const scenarios = [
     });
     check(lacking.result.status === 'ready_for_review' && lacking.result.done.some((d) => d.wp === 'H5'),
       `a work package with every check true is made too: ${lacking.result.status}`);
+    const finding = 'a1b2c3d4e5 docs/x.md:3 /home/alice/run';
+    const kept = await run({ mode: 'ci', task: 'c' }, {
+      'pr_engineer:pr': () => ({ ...clean, leak_scan_findings: [finding] }),
+    });
+    const reported = kept.calls.find((c) => c.key === 'director:report');
+    check(kept.result.status === 'blocked' && (kept.result.pr.leak_scan_findings || [])[0] === finding
+      && !!reported && (reported.ins.leak_scan_findings || [])[0] === finding,
+      `a leak the PR stopped on stays in the result and reaches the report: ${kept.result.status}`);
   }],
   ['stop_after: every mode stops after Setup; a phase the mode lacks is asked about', async () => {
     for (const mode of ['issue', 'ci', 'perf']) {
