@@ -474,6 +474,11 @@ const scenarios = [
     });
     check(launch.result.status === 'ready_for_review' && launch.result.done.some((d) => d.wp === 'H4'),
       `a launch command that fails goes back as a work package: ${launch.result.status}`);
+    const lacking = await run({ mode: 'ci', task: 'c' }, {
+      'pr_engineer:pr': (ins, n) => (n === 1 ? { ...clean, work_packages: [WP('H5', { goal: 'drop the refactor of shared code' })] } : clean),
+    });
+    check(lacking.result.status === 'ready_for_review' && lacking.result.done.some((d) => d.wp === 'H5'),
+      `a work package with every check true is made too: ${lacking.result.status}`);
   }],
   ['stop_after: every mode stops after Setup; a phase the mode lacks is asked about', async () => {
     for (const mode of ['issue', 'ci', 'perf']) {

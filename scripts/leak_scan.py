@@ -26,8 +26,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from daily_report import LOCAL, leaks  # noqa: E402
 
 ALLOW = [r"/opt/rocm\b"]
-# A path as a line holds it: from a / that starts a word to a space, a quote or a bracket.
-PATH = re.compile(r"(?<![\w.-])/[^\s'\"`<>(){}\[\],;]+")
+# A path as a line holds it: from a / that starts a word to a space, a quote, a bracket or a colon, so each
+# entry of PYTHONPATH=/a:/b is one. None starts in the // of a URL: leaks() reads its host.
+PATH = re.compile(r"(?<![\w./-])/(?!/)[^\s'\"`<>(){}\[\],;:]+")
 GENERIC = ("/tmp/", "/opt/")
 
 

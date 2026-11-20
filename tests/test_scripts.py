@@ -609,6 +609,16 @@ class LeakScanTest(unittest.TestCase):
                          "a path new to the repository, and the host name even under /tmp")
         self.assertEqual(self.scan("--allow", "/data2/models/Qwen3-8B", "--allow", "gpu-node-17")[0], 0)
 
+    def test_an_internal_site_in_a_url_and_every_entry_of_a_path_list_are_found(self):
+        self.commit('BUG = "https://jira.internal/browse/ABC-1"\nENV = "PYTHONPATH=/opt/a:/home/alice/x"\n'
+                    'LIBS = "/opt/rocm/lib:/home/alice/aiter/build"\nPR = "https://github.com/sgl-project/sglang/pull/1"\n',
+                    message="as in https://confluence.internal/pages/123")
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]),
+                         (1, ['BUG = "https://jira.internal/browse/ABC-1"', 'ENV = "PYTHONPATH=/opt/a:/home/alice/x"',
+                              'LIBS = "/opt/rocm/lib:/home/alice/aiter/build"', "as in https://confluence.internal/pages/123"]),
+                         "a public URL is no finding")
+
     def test_an_added_line_that_reads_like_a_file_header_is_content(self):
         self.commit("++ /home/alice/private\n")
         rc, out = self.scan()

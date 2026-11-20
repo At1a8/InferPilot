@@ -23,8 +23,9 @@ send what is missing back as work packages, so the branch that is pushed is the 
       `--allow` passes what else is, with its reason in the ledger).
 - [ ] The repository's own CPU tests for the changed modules pass (sglang: `test/registered/unit/`,
       `test_server_args_docs_coverage` for a new argument).
-- [ ] The launch command the description gives was run once on the final commit, as written but with
-      the local copy of the model in place of its id.
+- [ ] The command the description gives to show the change works (the launch command; for a CI fix
+      the failing test, for an issue fix the reproduction) was run once on the final commit, as written
+      but with the local copy of the model in place of its id.
 - [ ] Docs updated for the user-visible switch, and no more than the switch and CI need.
 - [ ] Commits tell the story: one per work package, follow-up fixes squashed into the commit they fix.
 - [ ] Description written from `validation_report.md`, citing artifacts.

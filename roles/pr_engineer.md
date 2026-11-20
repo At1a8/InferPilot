@@ -70,10 +70,13 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
    (sglang: `[Type] [Hardware] scope: title`). When the task was to push an existing PR, write the
    verification comment for that PR instead, at the same path. Run the leak scan again with
    `--body RUN_DIR/pr_body.md`, and write the body so that it finds nothing there: model ids, not
-   local paths. Then run **the launch command the body gives** once on the final commit, as written
-   except that the model id points at this machine's copy of that model (the local weights the run used;
-   never a download): the server starts, answers one request and its log shows the feature on
-   (`launch_checked`; false, with the error, is a work package).
+   local paths. The body gives **the command that shows the change works**: for a feature or a
+   performance change the launch command, for a CI fix `failing_test_cmd`, for an issue fix the
+   reproduction (the steps of `repro_cmd`, with no run-directory path). Run it once on the final commit,
+   as written except that a model id points at this machine's copy of that model (the local weights the
+   run used; never a download): the server starts, answers one request and its log shows the feature
+   on; the failing test passes; the reproduction no longer fails (`launch_checked`; false, with the
+   error, is a work package).
 6. **Push command:** the exact `git push` the human should run from the worktree, in the container. Do
    not run it. Also write the branch's commits to `RUN_DIR/patches` (`git -C <worktree> format-patch
    <base>..inferpilot/<slug> -o RUN_DIR/patches`), so the change leaves the container with the run directory:
