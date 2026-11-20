@@ -244,6 +244,24 @@ def status(lock: str, now: float | None = None) -> dict:
     return {"status": "stale" if all("reason" in d for d in each) else "held", **each[0], "holders": each}
 
 
+def others(lock: str, now: float | None = None) -> list:
+    """The live holders of other runs than this runner's (its run tag, container and pid namespace): the
+    GPUs they hold are not free, however idle they look (gpu_status.py --free)."""
+    now = time.time() if now is None else now
+    try:
+        fd = os.open(lock, os.O_RDONLY)
+    except FileNotFoundError:
+        return []
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH)
+        holders = _holders(_read(fd))
+    finally:
+        os.close(fd)
+    me = (os.environ.get("INFERPILOT_RUN_TAG", ""), os.environ.get("INFERPILOT_CONTAINER", ""), pid_ns())
+    return [h for h in holders if (h.get("run_tag", ""), h.get("container", ""), h.get("pid_ns", "")) != me
+            and not stale_reason(h, now)]
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="One InferPilot task per GPU set.")
     ap.add_argument("--lock", default=LOCK_FILE, help="lock file (default %(default)s; INFERPILOT_LOCK_FILE)")

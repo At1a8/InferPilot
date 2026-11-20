@@ -59,9 +59,7 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
    the conflicts. Do not update the branch: a merged tree is not the tree that was verified.
    `merges_cleanly` false puts the conflicts in the PR body for the human, who merges and re-runs the
    gates (`pr_playbook.md`).
-4. **Feature off on the final commit** (G0 smoke), and **the launch command the description gives**,
-   run once as written on the final commit: the server starts, answers one request and its log shows the
-   feature on (`launch_checked`; false, with the error, is a work package).
+4. **Feature off on the final commit** (G0 smoke).
 5. **Description:** write `RUN_DIR/pr_body.md` from `templates/pr_body.md` and the validation report,
    following `pr_playbook.md` §Description (the template kept as it is, Motivation in at most 100 words,
    one sentence per changed file, HIP-only checked and said, GSM8K 1319 at the defaults, one speed
@@ -69,7 +67,10 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
    (sglang: `[Type] [Hardware] scope: title`). When the task was to push an existing PR, write the
    verification comment for that PR instead, at the same path. Run the leak scan again with
    `--body RUN_DIR/pr_body.md`, and write the body so that it finds nothing there: model ids, not
-   local paths.
+   local paths. Then run **the launch command the body gives** once on the final commit, as written
+   except that the model id points at this machine's copy of that model (the local weights the run used;
+   never a download): the server starts, answers one request and its log shows the feature on
+   (`launch_checked`; false, with the error, is a work package).
 6. **Push command:** the exact `git push` the human should run from the worktree, in the container. Do
    not run it. Also write the branch's commits to `RUN_DIR/patches` (`git -C <worktree> format-patch
    <base>..inferpilot/<slug> -o RUN_DIR/patches`), so the change leaves the container with the run directory:

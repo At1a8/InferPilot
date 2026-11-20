@@ -2,7 +2,8 @@
 """The GPUs as HIP numbers them, the numbers HIP_VISIBLE_DEVICES takes, and what holds memory on each.
 
     python3 scripts/gpu_status.py                # every GPU: HIP number, model, arch, PCI bus, memory held and by whom
-    python3 scripts/gpu_status.py --free 2       # the first 2 GPUs nothing holds memory on: {"free": "0,2", ...}
+    python3 scripts/gpu_status.py --free 2       # the first 2 GPUs nothing holds memory on and no other
+                                                 # InferPilot task holds (scripts/run_lock.py): {"free": "0,2", ...}
     python3 scripts/gpu_status.py --check 0,2    # exit 1 when a process holds memory on one of them
     python3 scripts/gpu_status.py --check all    # the same for every GPU: before a performance measurement
 
@@ -13,8 +14,10 @@ comes from /sys/class/kfd/kfd/proc/<pid>/vram_<gpu id>, which lists the processe
 host (by host pid) and creates no context on any GPU. A process holding less than --min-mib (default 256)
 does not count. A GPU that matches no KFD node is never free, and without torch, whose device properties
 give the PCI bus, or with a torch that finds no GPU where KFD lists some, the script stops (exit 2) rather
-than guess HIP's order. Prints one JSON object; --free exits 1 when fewer GPUs are free, --check when one is
-held or unknown, or when KFD's process accounting cannot be read.
+than guess HIP's order. A GPU another InferPilot task holds in the run lock is not free either, though it
+may hold no memory yet (a run in its Spec or Design phase), and none is while one holds the whole machine;
+"locked" lists those tasks. Prints one JSON object; --free exits 1 when fewer GPUs are free, --check when
+one is held or unknown, or when KFD's process accounting cannot be read.
 """
 from __future__ import annotations
 
@@ -22,6 +25,9 @@ import argparse
 import json
 import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import run_lock  # noqa: E402
 
 KFD = "/sys/class/kfd/kfd"
 
@@ -122,6 +128,7 @@ def main(argv=None) -> int:
     ap.add_argument("--min-mib", type=int, default=256)
     ap.add_argument("--kfd", default=KFD, help=argparse.SUPPRESS)
     ap.add_argument("--devices", default="", help=argparse.SUPPRESS)  # the HIP devices as JSON, for tests
+    ap.add_argument("--lock", default=run_lock.LOCK_FILE, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     nodes, (held, unknown) = kfd_nodes(a.kfd), holders(a.kfd)  # read before torch makes this process a holder
     if a.devices:
@@ -141,8 +148,14 @@ def main(argv=None) -> int:
     out, rc = {"gpus": rows}, 0
     if unknown is None:
         out["error"] = "KFD's process accounting (%s/proc) is unreadable: no GPU is known to be free" % a.kfd
+    taken = run_lock.others(a.lock)
+    if taken:
+        out["locked"] = [{"run_dir": h["run_dir"], "task": h.get("task", ""), "container": h.get("container", ""),
+                          "gpus": h.get("gpus") or "all"} for h in taken]
     if a.free:
-        free = [str(r["index"]) for r in rows if r["used_mib"] == 0][:a.free]
+        locked = {g for h in taken for g in h.get("gpus") or []}
+        whole = any(not h.get("gpus") for h in taken)
+        free = [] if whole else [str(r["index"]) for r in rows if r["used_mib"] == 0 and r["index"] not in locked][:a.free]
         out["free"] = ",".join(free)
         rc = 0 if len(free) == a.free else 1
     if a.check:

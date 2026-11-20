@@ -95,7 +95,8 @@ belongs to a host user, and the rules below are about those.
   card numbers can differ. A performance measurement (throughput, TTFT, TPOT) checks every GPU of the
   machine, `--check all`: work on another GPU moves speed numbers too. Its run holds the whole machine
   meanwhile, so that no other task starts on the other GPUs (`run_lock.py acquire --whole`,
-  `perf_evaluation.md`).
+  `perf_evaluation.md`). A task with `measure_alone` false checks its own GPUs only and records the
+  others' use with each number.
 - Running a test that needs a GPU the server occupies: stop the server first.
 
 ## Disk and tools

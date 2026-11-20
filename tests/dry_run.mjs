@@ -308,6 +308,16 @@ const scenarios = [
     const inv = mixed.calls.find((c) => c.key === 'investigator:investigate');
     check(inv && eqList(inv.ins.failures.map((f) => f.gate), ['G2']), 'the investigator gets the blocking failures only');
   }],
+  ['feature: the verify call knows its time limit; a suite that cannot finish within it stops the run, uninvestigated', async () => {
+    const r = await run({ mode: 'feature', task: 't' }, {
+      'verify_engineer:verify': () => ({ all_pass: false, failures: [{ gate: 'ACC-3 simple_qa', failure_class: 'time' }] }),
+    });
+    const ver = r.calls.find((c) => c.key === 'verify_engineer:verify');
+    check(ver && ver.ins.time_limit_min === 360, `the default limit of a long role, in minutes: ${ver && ver.ins.time_limit_min}`);
+    check(!r.keys.includes('investigator:investigate'), 'no investigation for a suite out of time');
+    check(r.result.status === 'blocked' && r.result.stopped_at === 'Verify', `status ${r.result.status} at ${r.result.stopped_at}`);
+    check(r.result.phases.some((p) => p.phase === 'Verify' && /larger agent_timeout_ms/.test(p.summary)), 'the note says what to raise');
+  }],
   ['feature: with auto_approve_design false, L3 waits for a human-approved design', async () => {
     const r = await run({ mode: 'feature', task: 't', auto_approve_design: false }, {
       'analyst:recon': () => ({ design_path: `${RUN}/design.md`, unmapped: [], level: 'L3', gap_type: 'framework-only' }),
@@ -756,6 +766,18 @@ const scenarios = [
     check(sp && sp.ins.held_out === true && sp.ins.guards === true && sp.ins.sweep === true, 'on for the spec when the task sets them');
     const ar = asked.calls.find((c) => c.key === 'architect:design');
     check(ar && ar.ins.tune === true, 'tune reaches the architect, which adds a tuning package only then');
+  }],
+  ['perf: speed is measured alone by default; a task on a shared machine turns that off, and every role sees it', async () => {
+    const alone = await run({ mode: 'perf', task: 'p' });
+    const pe = alone.calls.find((c) => c.key === 'perf_engineer:perf_eval');
+    check(pe && pe.ins.measure_alone === true, `on by default for the perf engineer: ${pe && pe.ins.measure_alone}`);
+    for (const off of [false, 'false']) {
+      const shared = await run({ mode: 'feature', task: 't', measure_alone: off });
+      const setup = shared.calls.find((c) => c.key === 'director:setup');
+      const perf = shared.calls.find((c) => c.key === 'perf_engineer:perf_eval');
+      check(setup && setup.ins.measure_alone === false && perf && perf.ins.measure_alone === false,
+        `off for Setup and the perf engineer with ${JSON.stringify(off)}`);
+    }
   }],
   ['perf: measured win to a PR', async () => {
     const r = await run({ mode: 'perf', task: 'p', apply_prs: ['#46329'] });

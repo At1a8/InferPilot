@@ -696,11 +696,12 @@ class GpuStatusTest(unittest.TestCase):
         # HIP numbers the GPUs by PCI bus here: 0x05 first, so HIP 0 is KFD node 2
         self.devices = Path(tmp.name) / "devices.json"
         self.devices.write_text(json.dumps([{"index": 0, "bus": 0x05}, {"index": 1, "bus": 0x65}, {"index": 2, "bus": 0x75}]))
+        self.lock = str(Path(tmp.name) / "inferpilot-run.lock")
 
     def run_main(self, *args):
         out = io.StringIO()
         with redirect_stdout(out):
-            rc = gpu_status.main(["--kfd", str(self.kfd), "--devices", str(self.devices), *args])
+            rc = gpu_status.main(["--kfd", str(self.kfd), "--devices", str(self.devices), "--lock", self.lock, *args])
         return rc, json.loads(out.getvalue())
 
     def test_memory_is_matched_to_the_hip_number_by_pci_bus(self):
@@ -728,6 +729,29 @@ class GpuStatusTest(unittest.TestCase):
         self.assertEqual((rc, out["unknown"]), (1, [1]))
         with mock.patch.object(gpu_status, "hip_devices", return_value=None), redirect_stdout(io.StringIO()):
             self.assertEqual(gpu_status.main(["--kfd", str(self.kfd), "--free", "1"]), 2)
+
+    def test_a_gpu_another_task_holds_is_not_free_though_it_holds_no_memory_yet(self):
+        runs = Path(self.lock).parent
+        def take(run, container, gpus):
+            (runs / run).mkdir(exist_ok=True)
+            with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": container}):
+                return run_lock.acquire(self.lock, str(runs / run), task=run, gpus=gpus)["status"]
+        def free(n):
+            with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": "box_me"}):
+                return self.run_main("--free", str(n))
+        self.assertEqual(take("mine", "box_me", [1]), "acquired")
+        self.assertEqual(free(2)[1]["free"], "1,2", "this runner's own hold does not count against it")
+        run_lock.release(self.lock, force=True)
+        self.assertEqual(take("in_spec", "box_other", [1]), "acquired")
+        rc, out = free(2)
+        self.assertEqual((rc, out["free"]), (1, "2"), "GPU 1 holds no memory, but another task holds it")
+        self.assertEqual([(h["task"], h["gpus"]) for h in out["locked"]], [("in_spec", [1])])
+        rc, out = free(1)
+        self.assertEqual((rc, out["free"]), (0, "2"))
+        run_lock.release(self.lock, force=True)
+        self.assertEqual(take("perf", "box_other", []), "acquired")
+        rc, out = free(1)
+        self.assertEqual((rc, out["free"], out["locked"][0]["gpus"]), (1, "", "all"), "nothing is free under a whole-machine hold")
 
     def test_a_torch_that_finds_no_gpu_where_kfd_lists_some_checks_nothing(self):
         self.devices.write_text("[]")

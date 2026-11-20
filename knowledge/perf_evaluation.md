@@ -16,6 +16,12 @@ and the run keeps its own). Then, before each measurement, with this run's serve
 every 5 minutes, up to 30), then report the measurement as not run. Accuracy and accept length do not
 depend on speed and may run next to other work.
 
+A task on a machine others share can set `measure_alone` to false. Its run then keeps only its own GPUs
+(no `--whole`), checks those before each measurement (`gpu_status.py --check <gpu_ids>`), and records
+what `gpu_status.py` shows on the other GPUs right before and right after each measurement, next to its
+numbers in the ledger. Both arms of a comparison are interleaved (§3), so that they share the load, and
+the report says the numbers come from a shared machine.
+
 ## 1. Compare at an equal budget
 
 A feature usually spends a resource to save another. Hold the scarce resource equal:
