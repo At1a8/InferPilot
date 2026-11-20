@@ -174,10 +174,12 @@ produced so far.
   passes, name the fix (`fixed_by`) when Bisect found one, and otherwise give the `bisect_fixed` run
   that would.
 - Always list hand-offs with their status (`recorded`, `integrated`, `no_gain`, `failed`,
-  `integration_failed`) and package paths. For kernel hand-offs that were only recorded, give the
-  arguments that would run them later (`kernel_backend=geak` with `kernel_backend_dir`, or
-  `kernel_backend=command` with `kernel_backend_command`; `knowledge/kernel_backends.md`). List reply
-  drafts. State the timezone of every time.
+  `integration_failed`, `rejected`, `not_integrated`) and package paths. A `not_integrated` hand-off's
+  back end found a gain that the run, stopped by the control file, never integrated: give its speedup.
+  For kernel hand-offs that were only recorded, give the arguments that would run them later
+  (`kernel_backend=geak` with `kernel_backend_dir`, or `kernel_backend=command` with
+  `kernel_backend_command`; `knowledge/kernel_backends.md`). List reply drafts. State the timezone of
+  every time.
 - List `spinoffs` with the known issues: for each, the upstream issue that tracks it or the issue draft
   a human is to file, and the definition that starts InferPilot on it; then the unconfirmed leads, each
   with what would confirm it. A spinoff with `withdrawn_draft` was written as a draft and not counted:

@@ -11,6 +11,10 @@
 //   --agent-timeout-ms <ms>       kill an agent run after this long (default 0: inferpilot.js's own timeouts)
 //   --schema-retries <n>          asks again for an answer that does not match its schema (default 2)
 //   --kill-orphans                first stop what runs that are gone left running (agents, servers)
+//   --control-file <path>         read at every phase boundary (default with --args-file: <name>.control.json
+//                                 next to it): {"stop_after": "<phase>"} moves the stop, "now" stops
+//                                 after the phase that is ending, "" runs to the end; a file already
+//                                 there when the run starts counts only once it changes
 //   --help                        this usage
 //
 // The log ends with what the result's next says comes after the run (=== NEXT); with --args-file, the
@@ -25,7 +29,7 @@
 // at once. At its end it stops what its agents left running; a signal then only hurries that. Its first log
 // line gives its pid; then it lists what runs that are gone left running, those in the task's container too.
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BACKENDS, cliBackend } from './backends.mjs';
@@ -44,11 +48,11 @@ function parse(argv) {
   return out;
 }
 
-const FLAGS = ['backend', 'model', 'args', 'args-file', 'result-file', 'concurrency', 'agent-timeout-ms', 'schema-retries', 'kill-orphans', 'help'];
+const FLAGS = ['backend', 'model', 'args', 'args-file', 'result-file', 'concurrency', 'agent-timeout-ms', 'schema-retries', 'kill-orphans', 'control-file', 'help'];
 const usage = (code = 2) => {
   (code ? process.stderr : process.stdout).write('usage: node runtime/run.mjs <script.js> --backend claude|cursor [--model <id>] '
     + '(--args <json> | --args-file <path>) [--result-file <path>] [--concurrency <n>] '
-    + '[--agent-timeout-ms <ms>] [--schema-retries <n>] [--kill-orphans] [--help]\n');
+    + '[--agent-timeout-ms <ms>] [--schema-retries <n>] [--kill-orphans] [--control-file <path>] [--help]\n');
   process.exit(code);
 };
 
@@ -68,12 +72,43 @@ try {
 }
 const int = (v, d) => (v !== undefined && v !== true && Number.isFinite(Number(v)) ? Number(v) : d);
 const backend = cliBackend(opts.backend, { model: typeof opts.model === 'string' ? opts.model : '' });
+const controlFile = typeof opts['control-file'] === 'string' ? opts['control-file']
+  : typeof opts['args-file'] === 'string' ? `${opts['args-file'].replace(/\.json$/, '')}.control.json` : '';
+// A file this run found at its start was written for an earlier one, which a "now" in it already
+// stopped: it counts once it changes. Its state, not the clock, tells: file times lag the clock a little.
+const fileState = (f) => {
+  try {
+    const s = statSync(f);
+    return `${s.mtimeMs}:${s.size}:${s.ino}`;
+  } catch {
+    return '';
+  }
+};
+const staleControl = controlFile ? fileState(controlFile) : '';
+// A file that holds no JSON object changes nothing; the log names it once for each state it is in.
+let badControl = '';
+const control = () => {
+  try {
+    if (!controlFile || !existsSync(controlFile) || (staleControl && fileState(controlFile) === staleControl)) return {};
+    const c = JSON.parse(readFileSync(controlFile, 'utf8'));
+    if (c && typeof c === 'object' && !Array.isArray(c)) return c;
+    throw new Error('not a JSON object');
+  } catch (e) {
+    const state = fileState(controlFile);
+    if (state && state !== badControl) {
+      badControl = state;
+      rt.log(`!! control file ${controlFile}: ${e.message}; the stop stays as it was`);
+    }
+    return {};
+  }
+};
 const rt = createRuntime({
   backend,
   concurrency: int(opts.concurrency, 4),
   schemaRetries: int(opts['schema-retries'], 2),
   agentTimeoutMs: int(opts['agent-timeout-ms'], 0),
   onContainer: (box) => lookIn(box),
+  control,
 });
 const shq = (s) => (/^[\w./:=@,+-]+$/.test(String(s)) ? String(s) : `'${String(s).replace(/'/g, "'\\''")}'`);
 
@@ -112,6 +147,7 @@ function nextLines(next) {
 const tag = runTag();
 process.env[TAG] = tag;
 rt.log(`runner pid ${process.pid}: kill ${process.pid} stops this run and what it started`);
+if (controlFile) rt.log(`control file: ${controlFile} (read at every phase boundary)`);
 const mine = () => tagged().filter((p) => p.tag === tag);
 const listed = (ps) => ps.slice(0, 20).map((p) => `\n     ${p.pid} ${p.cmd.slice(0, 160)}`).join('');
 const releaseLock = () => spawnSync('python3', [join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'run_lock.py'),
