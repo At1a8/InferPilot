@@ -11,7 +11,7 @@
 #   an arm is "baseline" or "fly_w<W>_t<T>" (FLy window W, entropy threshold T), one pair per round:
 #   bash lockstep_ab.sh baseline:fly_w2_t0.7 fly_w2_t0.7:baseline baseline:fly_w2_t0.7
 # ACC_CMD runs once per server with API_URL, TAG and RESULT_ROOT in its environment and must write
-# RESULT_ROOT/summary.txt, one line per dataset:
+# RESULT_ROOT/summary.txt, one line per dataset (scripts/eval_accuracy.sh adds " dir=<its run dir>"):
 #   <tag> <dataset>: accept_length=[<x>] aggregate={'score': <s>, ...}
 # The bench settings are bench_random.sh's variables (INPUT_LEN, OUTPUT_LEN, CONCURRENCY, ...).
 # Lanes: GPUS_A / GPUS_B and PORT_A / PORT_B. Results, with tag r<round>_<arm> (plus _a / _b when

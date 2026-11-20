@@ -83,12 +83,12 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
 4. **Baseline.**
    - First, one discarded warm-up per GPU set: a launch and a short run of the client, so the first
      launch in a fresh container, which compiles kernels and is slower, is not measured.
-   - `feature`, `perf`: accuracy is GSM8K on all 1319 questions, once
+   - `feature`, `perf`: accuracy is gsm8k on all 1319 questions, once
      (`API_URL=http://127.0.0.1:<port>/v1 TAG=baseline RESULT_ROOT=RUN_DIR/accuracy
-     bash <inferpilot_dir>/scripts/eval_accuracy.sh`), and for a lossy feature (`acceptance.md` §1.1)
-     gpqa_diamond and simple_qa as well (`eval_accuracy.sh gsm8k gpqa_diamond simple_qa`; simple_qa needs
-     the LLM judge, which the script probes before any inference); other suites or more runs only when
-     `goal` asks.
+     bash <inferpilot_dir>/scripts/eval_accuracy.sh`, evalscope), and gpqa_diamond and simple_qa as
+     well when `goal` says the change may lose accuracy (`acceptance.md` §1.1; `eval_accuracy.sh gsm8k
+     gpqa_diamond simple_qa`; simple_qa needs the LLM judge, which the script probes before any
+     inference); other suites or more runs only when `goal` asks. Never decide it yourself.
      Performance is the task's `client_script` with `OUT_DIR=RUN_DIR/bench/<tag>`, at least twice, and
      the spread recorded (`validation_doctrine.md`). The baseline passes when repeat runs agree within
      the recorded spread.
@@ -127,8 +127,9 @@ Return:
    own (`perf_evaluation.md` §2); with `sweep` on, points beyond the workload's own (more concurrencies
    or lengths, `acceptance.md` §1); with `held_out` on, the claim also names its held-out operating
    point (`perf_evaluation.md` §3), fixed here with the workload.
-5. Accuracy: GSM8K 1319 once per arm; a lossy feature (`acceptance.md` §1.1) adds gpqa_diamond and
-   simple_qa, each at most 1 point below the baseline (`validation_doctrine.md`, G2). Performance: one
+5. Accuracy: the sets Setup measured, from `goal` (`acceptance.md` §1.1: gsm8k 1319, and gpqa_diamond
+   and simple_qa when `goal` says the change may lose accuracy), each once per arm, at most 1 point below
+   the baseline, with no token-level comparison (`validation_doctrine.md`, G2). Performance: one
    A/B round on the task's workload (`perf_evaluation.md` §3). A result that misses is reproduced at
    most twice and judged on the median. The feature's knobs take the values of the target PR or design;
    only with `tune` on are they chosen by measurement (`perf_evaluation.md` §3).

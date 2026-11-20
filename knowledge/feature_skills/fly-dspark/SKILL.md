@@ -41,8 +41,9 @@ role: advisory_prior
   table; the pre-pass design below is the part that carries over.
 - Choosing FLy's window and entropy threshold for a model: the sweep tables are in
   `references/results.md`; the recipe in Validation is how they were measured.
-- FLy is **lossy**: it accepts tokens the target distribution would reject. It must stay opt-in, and
-  every run must measure accuracy on a knowledge-recall set, not only on math.
+- FLy is **lossy**: it accepts tokens the target distribution would reject. It must stay opt-in. Its
+  loss shows on a knowledge-recall set (simple_qa), not on math, and G2 runs one only when `goal` says
+  the change may lose accuracy.
 
 ## Source design (vLLM #53987, #66593)
 
@@ -167,7 +168,7 @@ sglang serve --trust-remote-code --model-path <model_dir>/DeepSeek-V4.1-Flash --
 |---|---|---|
 | G0 | DSPARK accept suites with FLy off: `kernels/ops/speculative/test_reject_sampling_split.py`, `test_block_verification.py`, `unit/spec/test_sharded_verify.py`, `test_dspark_greedy_draft_accept.py`, `test_dspark_blockwise_rejection.py`, `test_dspark_accept_tail.py`, `unit/speculative/test_dspark_sampling_accept_graph.py`; baseline servers in every round of the A/B | all pass; baseline accuracy equal to earlier baselines |
 | G1 | `scripts/test_dspark_fly.py` (with the suites above) and `scripts/test_fly_args.py` | 123 passed + 33 subtests together; args tests pass on CPU |
-| G2 | evalscope gsm8k (1319), gpqa_diamond (198), simple_qa (4326, LLM judge), thinking on, `reasoning_effort` max, `max_tokens` 102400, the server's default sampling; `POST /flush_cache` before each dataset and `avg_spec_accept_length` from `/server_info` after it; plus the CI test | baseline (5 runs): gsm8k 0.9713, gpqa_diamond 0.9101, simple_qa 0.4452 (range 0.4434–0.4475), accept length about 3.79 / 3.15 / 3.06. CI: gsm8k >= 0.91 |
+| G2 | evalscope gsm8k (1319); gpqa_diamond (198) and simple_qa (4326, LLM judge) as well when `goal` says the change may lose accuracy (this validation ran all three); thinking on, `reasoning_effort` max, `max_tokens` 102400, the server's default sampling; `POST /flush_cache` before each dataset and `avg_spec_accept_length` from `/server_info` after it; plus the CI test | baseline (5 runs): gsm8k 0.9713, gpqa_diamond 0.9101, simple_qa 0.4452 (range 0.4434–0.4475), accept length about 3.79 / 3.15 / 3.06. CI: gsm8k >= 0.91 |
 | G5 | `scripts/lockstep_ab.sh`: two TP4 lanes benching at the same time, arms swapped between lanes each round, `scripts/bench_random.sh` with 8000 / 1000 tokens at concurrency 32 / 64 / 128 (prompts 4x, warm-up 2x the concurrency, T = 1.0, cache flushed after warm-up); 3 rounds; summary `scripts/ab_table.py` | baseline (6 runs) 34,727 / 45,553 / 54,169 total tok/s; see the parameter table below |
 
 - G3 / G4 were not run: FLy adds no memory or long-context path. A 100k/1k run (single runs, every
@@ -212,7 +213,7 @@ three-round sweep, the mean change over the three accuracy sets. W1 and W4: one 
 | Symptom | Cause | Fix |
 |---|---|---|
 | FLy on, accept length barely moves | vLLM's default window min(6, gamma - 1) = 4 at gamma 5 can defer only the first draft | the port defaults to min(2, gamma - 1); when copying vLLM settings, set W <= 2 explicitly |
-| gsm8k unchanged, simple_qa 2–3pp lower | FLy is lossy and recall shows it first | keep simple_qa (or another recall set) in G2; compare with >= 3 baseline runs |
+| gsm8k unchanged, simple_qa 2–3pp lower | FLy is lossy and recall shows it first | only a recall set such as simple_qa shows it, and G2 runs one when `goal` says the change may lose accuracy; compare with >= 3 baseline runs |
 | a threshold copied from older results behaves differently | before #66593 the entropy was raw nats over the top-k probabilities, not renormalized and not divided by log(k) | use the normalized definition and re-measure |
 | FLy shows nothing at 100k/1k | total tok/s there is ~99% prefill | judge FLy on 8k/1k, TPOT mean and accept length |
 | every FLy arm shows a ~4% lower TPOT median than the first-round baseline at 8k c128, even arms that do not change acceptance | that baseline compiled a Triton kernel while serving (`... took 1.45 s to compile after serving started`) | grep each server log for that line; repeat baselines later in the run (`../../perf_evaluation.md` §3) |
@@ -253,7 +254,7 @@ three-round sweep, the mean change over the three accuracy sets. W1 and W4: one 
 - Graph-captured accept paths: the pre-pass must be graph-safe (no host sync, no data-dependent shapes).
 - The platform gate the PR must keep (here `is_hip()`), and the tests that build verify objects by hand.
 
-Then redo WP 4–5 for the new paths and re-run G0, G1, G2 (with a recall set) and G5.
+Then redo WP 4–5 for the new paths and re-run G0, G1, G2 (the sets `goal` asks for) and G5.
 
 ## Scripts
 

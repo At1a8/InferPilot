@@ -46,9 +46,10 @@ launched and measured the way the user runs the model, not the way an agent gues
 - **`client_script`** runs the fixed workload against `PORT` and writes its logs to `OUT_DIR`. It is the
   benchmark: InferPilot runs it unchanged and never edits it. If it reads `CONCURRENCY` (a
   space-separated list), the held-out point (`held_out`) can be measured at half the concurrency.
-- **Accuracy** needs no client of the user's: InferPilot's `scripts/eval_accuracy.sh` measures GSM8K on
-  all 1319 questions, once, by default, and for a lossy feature gpqa_diamond and simple_qa too; a task
-  that needs other suites or more runs says so in `goal`.
+- **Accuracy** needs no client of the user's: InferPilot's `scripts/eval_accuracy.sh` measures gsm8k
+  through evalscope, once, and the change passes at most 1 point below the baseline. A change the user
+  says may lose accuracy, said in `goal`, runs gpqa_diamond and simple_qa as well; other suites or more
+  runs are named there too.
 
 ```bash
 # server.sh

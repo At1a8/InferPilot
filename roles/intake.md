@@ -44,7 +44,9 @@ they win over anything you infer), `answers` (the user's replies to earlier ques
    the run needs it, and offers `options` or a `default` when one is sensible, so the user can answer in
    one word.
 5. **`goal`:** one line saying what done means — measurable when the mode measures (perf: metric,
-   target, workload).
+   target, workload). What the user says about accuracy goes in it as said: that the change may lose
+   accuracy, or sets to run besides gsm8k (`knowledge/acceptance.md` §1.1). Never infer it from the kind
+   of change.
 6. **Status.** `ready`: every required field is set and nothing open would change the task.
    `needs_input`: questions to answer first. `rejected`: outside what InferPilot does or against
    `guardrails.md` (pushing or posting, a non-AMD target, tuning one kernel on its own — the kernel
