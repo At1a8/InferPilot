@@ -5,7 +5,7 @@ InferPilot posts nothing; the human uploads the report (e.g. as an issue in Infe
     python3 scripts/daily_report.py check RUN_DIR/daily_report.md   # public-safe and short enough?
     python3 scripts/daily_report.py latest                          # the newest shared report: date, URL, age, body
 
-check: exit 3 when a line names a local path, this machine or an internal site (the lines are listed),
+check: exit 3 when a line names a local path, this machine or a sibling, or the company's network (the lines are listed),
 exit 4 when the body is longer than a GitHub issue allows. latest: the newest issue in InferPilot's repository
 (the origin of this checkout) that carries the report's marker, `{}` when there is none; it reads a
 public repository, with GITHUB_TOKEN when set. Standard library only.
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import functools
 import json
 import os
 import re
@@ -26,8 +27,18 @@ import urllib.request
 API = "https://api.github.com"
 MARKER = "<!-- inferpilot:daily-report -->"
 ISSUE_LIMIT = 65536  # characters GitHub accepts in an issue body
-LOCAL = re.compile(r"(?<![\w.-])/(?:data\d*|mnt|home|root|workspace|sgl-workspace|apps|shared|nfs_shared1|kmd2|opt|tmp)/"
-                   r"|confluence|jira\.", re.I)
+LOCAL = re.compile(r"(?<![\w.-])/(?:data\d*|mnt|home|root|workspace|sgl-workspace|apps|shared|nfs\w*|kmd\d*|scratch|raid\w*"
+                   r"|work|export|models|opt|tmp)/|confluence|jira\.", re.I)
+# The company's network, which tests/test_hygiene.py keeps out of this repository with the same patterns: a
+# host of amd.com that is not public, an internal site, a private network address.
+AMD_HOST = re.compile(r"\b[a-z0-9][a-z0-9.-]*\.amd\.com\b", re.I)
+# Public, or named on purpose: the LLM gateway Claude Code runs on.
+PUBLIC_AMD = {"www.amd.com", "rocm.docs.amd.com", "rocm.blogs.amd.com", "instinct.docs.amd.com", "llm-api.amd.com"}
+INTERNAL_SITE = re.compile(r"\b(?:confluence|jira)\.[a-z0-9-]+\.[a-z]|\b[a-z0-9-]+\.(?:atlassian\.net|sharepoint\.com)\b"
+                           # a host under .internal, in lower case; not an import (from google.protobuf.internal import x),
+                           # self.unique_id.internal or grpc.StatusCode.INTERNAL
+                           r"|(?<![\w.])(?<!from )(?<!import )(?-i:(?:[a-z0-9-]+\.)+internal)\b", re.I)
+PRIVATE_IP = re.compile(r"(?<![\d.])(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}(?!\d|\.\d)")
 
 
 def title(date: str) -> str:
@@ -50,11 +61,39 @@ def default_repo() -> str:
     return repo_from_url(url)
 
 
+def this_host() -> str:
+    """This machine's name without its domain: a mention of the full name holds it too."""
+    return socket.gethostname().split(".")[0]
+
+
+@functools.lru_cache(maxsize=None)
+def machine_names(host: str):
+    """This machine's name, and the stem its cluster's siblings share (node-m01-13: node-m01-12 too)."""
+    stem = host
+    while re.search(r"[-_.][a-z]?\d+$", stem, re.I):
+        stem = re.sub(r"[-_.][a-z]?\d+$", "", stem, flags=re.I)
+    if stem != host and len(stem) >= 8:
+        return re.compile(r"(?<![a-z0-9-])%s(?:[-_.][a-z]?\d+)*(?![a-z0-9-])" % re.escape(stem), re.I)
+    return re.compile(r"(?<![a-z0-9-])%s(?![a-z0-9-])" % re.escape(host), re.I)
+
+
+def machine(line: str, host: str) -> bool:
+    """Whether a line names this machine (inside a word too) or a sibling in its cluster."""
+    return bool(host) and (host.lower() in line.lower() or bool(machine_names(host).search(line)))
+
+
+def network(line: str) -> bool:
+    """Whether a line names the company's network: an internal site or host, a private address."""
+    return bool(INTERNAL_SITE.search(line) or PRIVATE_IP.search(line)
+                or any(m.group(0).lower() not in PUBLIC_AMD for m in AMD_HOST.finditer(line)))
+
+
 def leaks(body: str, host: str = "") -> list:
-    """Lines that would make something private public: local paths, this machine, internal sites."""
+    """Lines that would make something private public: local paths, this machine or a sibling, the company's
+    network."""
     out = []
     for n, line in enumerate(body.splitlines(), 1):
-        if LOCAL.search(line) or (host and host.lower() in line.lower()):
+        if LOCAL.search(line) or network(line) or machine(line, host):
             out.append("%d: %s" % (n, line.strip()[:160]))
     return out
 
@@ -99,7 +138,7 @@ def main(argv=None) -> int:
     lt.add_argument("--repo", default="", help="owner/name (default: the origin of this checkout)")
     a = ap.parse_args(argv)
     if a.cmd == "check":
-        r = check(open(a.file, encoding="utf-8").read(), socket.gethostname())
+        r = check(open(a.file, encoding="utf-8").read(), this_host())
         print(json.dumps(r, indent=1))
         if r["leaks"]:
             print("daily_report: not public-safe; it names something local or internal:\n  " + "\n  ".join(r["leaks"]),

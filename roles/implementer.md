@@ -17,8 +17,13 @@ the previous round), `verified_work_packages`.
 1. If `feedback` is set, start from it: reproduce the failure the test engineer saw before changing code.
 2. Implement only this work package, with the smallest diff that satisfies it:
    - feature off ⇒ every new hook is a no-op; unsupported configurations are rejected at startup;
-   - HIP-only or behind an environment switch; the CUDA path does not change;
-   - debug instrumentation behind an environment switch, off by default, no host syncs when off.
+   - HIP-only or behind an environment switch; the CUDA path does not change: code CUDA also runs
+     changes only by addition, behind the switch or a module-level platform constant (sglang:
+     `_is_hip = is_hip()` at import, as the files around it do), with no refactor, rename or
+     reformatting of what is there, and no check repeated where an earlier one already holds;
+   - debug instrumentation behind an environment switch, off by default, no host syncs when off;
+   - tests for InferPilot's own gates (oracles, harnesses) go in `RUN_DIR/tests`; the branch gets only
+     tests the repository's CI runs (`pr_playbook.md`), and no local path in any file.
 3. By kind:
    - `kernel`: a functional implementation plus a standalone unit test against a reference
      implementation, covering every template instantiation the integration uses, plus a self-check mode.

@@ -11,7 +11,22 @@ send what is missing back as work packages, so the branch that is pushed is the 
       includes isort, ruff format and clang-format; CI's `lint` job runs the same).
 - [ ] New tests registered where the repo's CI discovers them (sglang: `test/registered/...` with the
       CI registration helper), not only in a private scratch directory.
-- [ ] Docs updated for the user-visible switch.
+- [ ] Only tests CI runs, the fewest that cover the change: one end-to-end accuracy test at the
+      defaults for a change to outputs (sglang: GSM8K under `test/registered/amd/accuracy/`, as its
+      `write-sglang-test` skill describes).
+      InferPilot's gate oracles and harnesses stay in the run directory.
+- [ ] The smallest diff: code CUDA also runs changes only by addition, behind the switch or a
+      module-level platform constant (sglang: `_is_hip = is_hip()` at import); no refactor, rename,
+      reformatting or moved code; no check repeated where an earlier one holds; no unused helper.
+- [ ] Nothing private: `scripts/leak_scan.py` finds no local path, host name, internal site or `root`
+      identity in the diff, the commits or the description (a path upstream already carries is public;
+      `--allow` passes what else is, with its reason in the ledger).
+- [ ] The repository's own CPU tests for the changed modules pass (sglang: `test/registered/unit/`,
+      `test_server_args_docs_coverage` for a new argument).
+- [ ] The command the description gives to show the change works (the launch command; for a CI fix
+      the failing test, for an issue fix the reproduction) was run once on the final commit, as written
+      but with the local copy of the model in place of its id.
+- [ ] Docs updated for the user-visible switch, and no more than the switch and CI need.
 - [ ] Commits tell the story: one per work package, follow-up fixes squashed into the commit they fix.
 - [ ] Description written from `validation_report.md`, citing artifacts.
 

@@ -446,8 +446,9 @@ const scenarios = [
     const r = await run({ mode: 'ci', task: 'c' }, {
       'pr_engineer:pr': (ins, n) => (n === 1
         ? { branch: 'inferpilot/task', lint_pass: false, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md`,
-          work_packages: [WP('H1', { goal: 'register the new test in test/registered' })] }
-        : { branch: 'inferpilot/task', lint_pass: true, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md` }),
+          leak_scan_findings: [], launch_checked: true, work_packages: [WP('H1', { goal: 'register the new test in test/registered' })] }
+        : { branch: 'inferpilot/task', lint_pass: true, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md`,
+          leak_scan_findings: [], launch_checked: true }),
     });
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
     const afterPr = r.phases.slice(r.phases.indexOf('PR'));
@@ -455,10 +456,44 @@ const scenarios = [
     check(r.result.done.some((d) => d.wp === 'H1'), 'the hygiene package was verified');
     const changed = await run({ mode: 'ci', task: 'c' }, {
       'pr_engineer:pr': () => ({ branch: 'inferpilot/task', lint_pass: true, feature_off_final: true, content_unchanged: false,
-        pr_body_path: `${RUN}/pr_body.md`, work_packages: [WP('H2')] }),
+        pr_body_path: `${RUN}/pr_body.md`, leak_scan_findings: [], launch_checked: true, work_packages: [WP('H2')] }),
     });
     check(changed.result.status === 'blocked' && changed.result.stopped_at === 'PR', `a branch that changed after review: ${changed.result.status}`);
     check(changed.keys.filter((k) => k === 'implementer:implement').length === 1, 'no loop on a branch that changed after review');
+    const clean = { branch: 'inferpilot/task', lint_pass: true, feature_off_final: true, content_unchanged: true, pr_body_path: `${RUN}/pr_body.md`,
+      leak_scan_findings: [], launch_checked: true };
+    const leaky = await run({ mode: 'ci', task: 'c' }, {
+      'pr_engineer:pr': (ins, n) => (n === 1
+        ? { ...clean, leak_scan_findings: ['test/x.py:12 /home/alice/model'], work_packages: [WP('H3', { goal: 'take the local path out of the test' })] }
+        : { ...clean, leak_scan_findings: [], diff_stat: '3 files, +40/-2' }),
+    });
+    check(leaky.result.status === 'ready_for_review' && leaky.result.done.some((d) => d.wp === 'H3'),
+      `a leak goes back as a work package: ${leaky.result.status}`);
+    const launch = await run({ mode: 'ci', task: 'c' }, {
+      'pr_engineer:pr': (ins, n) => (n === 1 ? { ...clean, launch_checked: false, work_packages: [WP('H4')] } : { ...clean, launch_checked: true }),
+    });
+    check(launch.result.status === 'ready_for_review' && launch.result.done.some((d) => d.wp === 'H4'),
+      `a launch command that fails goes back as a work package: ${launch.result.status}`);
+    const lacking = await run({ mode: 'ci', task: 'c' }, {
+      'pr_engineer:pr': (ins, n) => (n === 1 ? { ...clean, work_packages: [WP('H5', { goal: 'drop the refactor of shared code' })] } : clean),
+    });
+    check(lacking.result.status === 'ready_for_review' && lacking.result.done.some((d) => d.wp === 'H5'),
+      `a work package with every check true is made too: ${lacking.result.status}`);
+    const finding = 'a1b2c3d4e5 docs/x.md:3 /home/alice/run';
+    const kept = await run({ mode: 'ci', task: 'c' }, {
+      'pr_engineer:pr': () => ({ ...clean, leak_scan_findings: [finding] }),
+    });
+    const reported = kept.calls.find((c) => c.key === 'director:report');
+    check(kept.result.status === 'blocked' && (kept.result.pr.leak_scan_findings || [])[0] === finding
+      && !!reported && (reported.ins.leak_scan_findings || [])[0] === finding,
+      `a leak the PR stopped on stays in the result and reaches the report: ${kept.result.status}`);
+    const left = await run({ mode: 'ci', task: 'c' }, {
+      'pr_engineer:pr': () => ({ ...clean, work_packages: [WP('H6', { goal: 'drop the refactor of shared code' })] }),
+    });
+    const told = left.calls.find((c) => c.key === 'director:report');
+    check(left.result.status === 'blocked' && ((left.result.pr.work_packages || [])[0] || {}).id === 'H6'
+      && !!told && ((told.ins.pr_work_packages || [])[0] || {}).id === 'H6',
+      `what the second PR round still lacks stays in the result and reaches the report: ${left.result.status}`);
   }],
   ['stop_after: every mode stops after Setup; a phase the mode lacks is asked about', async () => {
     for (const mode of ['issue', 'ci', 'perf']) {

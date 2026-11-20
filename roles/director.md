@@ -80,6 +80,10 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
    - Record the image and what the check before step 0 found (an older image the user accepted
      goes in `notes`), the version of the image's own sglang (`pip show sglang`) and the worktree's
      base commit.
+   - The identity the task's commits will carry (`git -C <framework_dir> var GIT_AUTHOR_IDENT`): one
+     that names `root` or this host goes in `notes`, with the fix (`INFERPILOT_GIT_NAME` and
+     `INFERPILOT_GIT_EMAIL` in `~/.inferpilot_env`, then the bootstrap); the PR phase resets the
+     authors once one is set. Never set it yourself.
    - An image too old for the worktree (sgl-kernel or aiter rejected at import or startup) fails the
      baseline; `baseline` names the newer image to start a container from.
 4. **Baseline.**
@@ -170,9 +174,10 @@ produced so far.
 - Any other status (`blocked`, `stopped`, `awaiting_design_review`, `triaged`, `not_reproduced`,
   `fixed_on_main`, `diagnosed`, `handed_off`, `dropped`, `queued`): write `RUN_DIR/run_report.md` with what was
   done, the evidence, where and why the run stopped, and the exact next step for a human (what to
-  review, approve, post or hand over). For `fixed_on_main`, say on which code it fails and on which it
-  passes, name the fix (`fixed_by`) when Bisect found one, and otherwise give the `bisect_fixed` run
-  that would.
+  review, approve, post or hand over); stopped at PR, each of `leak_scan_findings` (where it is and what it
+  shows) and of `pr_work_packages` (what the branch still lacks). For `fixed_on_main`, say on which code
+  it fails and on which it passes, name the fix (`fixed_by`) when Bisect found one, and otherwise give the
+  `bisect_fixed` run that would.
 - Always list hand-offs with their status (`recorded`, `integrated`, `no_gain`, `failed`,
   `integration_failed`, `rejected`, `not_integrated`) and package paths. A `not_integrated` hand-off's
   back end found a gain that the run, stopped by the control file, never integrated: give its speedup.

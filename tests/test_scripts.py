@@ -25,6 +25,7 @@ import audit_platform_gates  # noqa: E402
 import check_framework_skills  # noqa: E402
 import latest_image  # noqa: E402
 import daily_report  # noqa: E402
+import leak_scan  # noqa: E402
 import find_skill  # noqa: E402
 import propose_knowledge  # noqa: E402
 import run_lock  # noqa: E402
@@ -202,6 +203,10 @@ class DailyReportTest(unittest.TestCase):
         body = "| 1 | fix X | see rocm.docs.amd.com |\nlocal models `/data/models/some-model`\nhost gpu-node-7\nsee confluence"
         self.assertEqual([l.split(":")[0] for l in daily_report.leaks(body, "gpu-node-7")], ["2", "3", "4"])
         self.assertEqual(daily_report.leaks("| 1 | GLM crashes with --dcp-size 8 | #41299 |", "gpu-node-7"), [])
+
+    def test_a_sibling_machine_and_a_storage_root_stop_the_report(self):
+        body = "ran on gpu-node-8\nweights in /models/x\nok"
+        self.assertEqual([l.split(":")[0] for l in daily_report.leaks(body, "gpu-node-7")], ["1", "2"])
 
     def test_check_exit_codes(self):
         template = Path(__file__).resolve().parent.parent / "templates" / "daily_report.md"
@@ -549,6 +554,192 @@ class RunLockTest(unittest.TestCase):
             self.assertEqual(run_lock.main(["--lock", self.lock, "acquire", "--run-dir", self.b]), 1)
             self.assertEqual(run_lock.main(["--lock", self.lock, "status"]), 0)
         self.assertIn('"status": "busy"', out.getvalue())
+
+
+class LeakScanTest(unittest.TestCase):
+    """scripts/leak_scan.py on a throwaway repository."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = Path(tmp.name)
+        git("init", "-q", "-b", "main", cwd=self.repo)
+        (self.repo / "a.py").write_text("x = 1\n")
+        git("add", "-A", cwd=self.repo)
+        git("commit", "-q", "-m", "base", cwd=self.repo)
+        self.base = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True,
+                                   text=True, check=True).stdout.strip()
+
+    def commit(self, text, message="change", author="Jane Doe <jane@users.noreply.github.com>"):
+        (self.repo / "a.py").write_text("x = 1\n" + text)
+        name, email = author[:-1].split(" <")
+        subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=%s" % name, "-c", "user.email=%s" % email,
+                        "commit", "-q", "-am", message], check=True, capture_output=True)
+
+    def scan(self, *extra):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = leak_scan.main(["--repo", str(self.repo), "--base", self.base, "--host", "gpu-node-17", *extra])
+        return rc, json.loads(out.getvalue())
+
+    def test_a_clean_branch_passes_and_rocm_paths_are_public(self):
+        self.commit('LIB = "/opt/rocm/lib"\n')
+        self.assertEqual(self.scan(), (0, {"leaks": [], "identities": []}))
+
+    def test_local_paths_host_names_and_root_are_found(self):
+        self.commit('MODEL = "/data/models/Qwen3-8B"\n', message="measured on gpu-node-17", author="root <root@gpu-node-17>")
+        body = self.repo / "pr_body.md"
+        body.write_text("Results\n\nlogs in /home/alice/run\n")
+        rc, out = self.scan("--body", str(body))
+        self.assertEqual(rc, 1)
+        head = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout
+        self.assertEqual([f["where"] for f in out["leaks"]][0], "%s a.py:2" % head[:10])
+        self.assertTrue(any(f["where"].startswith("commit ") for f in out["leaks"]), out)
+        self.assertIn("%s:3" % body, [f["where"] for f in out["leaks"]])
+        self.assertEqual(out["identities"], ["root <root@gpu-node-17>"])
+
+    def test_a_path_upstream_carries_and_one_under_tmp_or_opt_are_public(self):
+        (self.repo / "ci.py").write_text('os.environ.setdefault("HF_HOME", "/data2/models/huggingface")\n')
+        git("add", "-A", cwd=self.repo)
+        git("commit", "-q", "-m", "AMD CI's model location", cwd=self.repo)
+        self.base = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True,
+                                   text=True, check=True).stdout.strip()
+        self.commit('HF_HOME = "/data2/models/huggingface"\nOUT = "/tmp/sglang_test"\nPY = "/opt/conda/bin/python"\n')
+        self.assertEqual(self.scan(), (0, {"leaks": [], "identities": []}))
+        self.commit('MODEL = "/data2/models/Qwen3-8B"\nLOG = "/tmp/gpu-node-17/run.log"\n')
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]),
+                         (1, ['MODEL = "/data2/models/Qwen3-8B"', 'LOG = "/tmp/gpu-node-17/run.log"']),
+                         "a path new to the repository, and the host name even under /tmp")
+        self.assertEqual(self.scan("--allow", "/data2/models/Qwen3-8B", "--allow", "gpu-node-17")[0], 0)
+
+    def test_an_internal_site_in_a_url_and_every_entry_of_a_path_list_are_found(self):
+        self.commit('BUG = "https://jira.example/browse/ABC-1"\nENV = "PYTHONPATH=/opt/a:/home/alice/x"\n'
+                    'LIBS = "/opt/rocm/lib:/home/alice/aiter/build"\nPR = "https://github.com/sgl-project/sglang/pull/1"\n',
+                    message="as in https://confluence.example/pages/123")
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]),
+                         (1, ['BUG = "https://jira.example/browse/ABC-1"', 'ENV = "PYTHONPATH=/opt/a:/home/alice/x"',
+                              'LIBS = "/opt/rocm/lib:/home/alice/aiter/build"', "as in https://confluence.example/pages/123"]),
+                         "a public URL is no finding")
+
+    def test_the_company_network_is_found_and_public_amd_sites_are_not(self):
+        # In pieces: tests/test_hygiene.py keeps each of these out of this repository's own files.
+        lines = ["https://ci" + ".internal/build/42", "https://acme." + "atlassian.net/browse/ABC-1",
+                 "https://corp." + "sharepoint.com/sites/private", "https://wiki." + "amd.com/x",
+                 "curl http://10." + "1.2.3:8000/v1/models", "jane@ci" + ".internal"]
+        self.commit("".join("# %s\n" % line for line in lines + ["https://rocm.docs.amd.com/en/latest/"]))
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]), (1, ["# %s" % line for line in lines]))
+
+    def test_a_path_after_an_option_or_in_a_shell_default_is_found(self):
+        self.commit('CFLAGS = "-I/home/alice/include"\nMODEL = "${MODEL_DIR:-/data/models/m}"\nLOG = "/data/opt/rocm"\n'
+                    'LIBS = "-L/opt/rocm/lib"\nREL = "sgl-I/home/alice"\n')
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]),
+                         (1, ['CFLAGS = "-I/home/alice/include"', 'MODEL = "${MODEL_DIR:-/data/models/m}"', 'LOG = "/data/opt/rocm"']),
+                         "/opt is public wherever it is, and a relative path is no path")
+
+    def test_root_in_a_commit_message_is_found(self):
+        self.commit("y = 2\n", message="change\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n"
+                                       "Signed-off-by: root <root@a1b2c3d4e5f6>")
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]), (1, ["Signed-off-by: root <root@a1b2c3d4e5f6>"]))
+
+    def test_a_file_git_does_not_diff_and_a_byte_that_is_not_utf8_are_read(self):
+        (self.repo / ".gitattributes").write_text("*.cfg -diff\n")
+        (self.repo / "run.cfg").write_text("model=/home/alice/secret\n")
+        (self.repo / "b.py").write_bytes(b"# caf\xe9\nM = '/home/alice/m'\n")
+        git("add", "-A", cwd=self.repo)
+        self.commit("")
+        rc, out = self.scan()
+        self.assertEqual((rc, sorted(f["text"] for f in out["leaks"])), (1, ["M = '/home/alice/m'", "model=/home/alice/secret"]))
+
+    def test_the_name_of_an_added_or_renamed_file_is_found(self):
+        (self.repo / "logs").mkdir()
+        (self.repo / "logs" / "gpu-node-17.txt").write_text("")
+        (self.repo / "trace.json").write_text("{}\n")
+        git("add", "-A", cwd=self.repo)
+        self.commit("", message="an empty log")
+        git("mv", "trace.json", "trace_gpu-node-17_1.json", cwd=self.repo)
+        self.commit("", message="the trace renamed")
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]), (1, ["logs/gpu-node-17.txt", "trace_gpu-node-17_1.json"]))
+
+    def test_an_identity_with_the_host_name_or_an_internal_site_is_found(self):
+        site = "jane@ci" + ".internal"
+        self.commit("y = 2\n", author="gpu-node-17 <jane@users.noreply.github.com>")
+        self.commit("y = 3\n", author="Jane <%s>" % site)
+        rc, out = self.scan()
+        self.assertEqual((rc, out["identities"]), (1, ["Jane <%s>" % site, "gpu-node-17 <jane@users.noreply.github.com>"]))
+
+    def test_an_internal_host_by_name_is_found_and_a_module_path_is_not(self):
+        lines = ["HOST=ci" + ".internal", "ssh ci" + ".internal"]
+        self.commit("".join("%s\n" % line for line in lines
+                            + ["from google.protobuf.internal import builder", "t = list(self.unique_id.internal)",
+                               "code = grpc.StatusCode.INTERNAL"]))
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]), (1, lines))
+
+    def test_the_network_inside_a_public_path_is_found(self):
+        lines = ["LOG = '/tmp/10." + "1.2.3/run.log'", "CACHE = '/opt/wiki." + "amd.com/cache'"]
+        self.commit("".join("%s\n" % line for line in lines))
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]), (1, lines))
+
+    def test_a_carriage_return_or_a_vertical_tab_inside_a_line_hides_nothing(self):
+        (self.repo / "log.txt").write_bytes(b"progress\rmodel=/home/alice/private\na\x0bLOG=/home/alice/log\n")
+        git("add", "-A", cwd=self.repo)
+        self.commit("")
+        rc, out = self.scan()
+        self.assertEqual((rc, len(out["leaks"])), (1, 2))
+
+    def test_a_sibling_in_the_cluster_is_found(self):
+        self.commit("ssh gpu-node-18\nARGS = '--dist-init-addr gpu-node-18:5000'\nGPUS = 'gpu-nodes'\n")
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]),
+                         (1, ["ssh gpu-node-18", "ARGS = '--dist-init-addr gpu-node-18:5000'"]),
+                         "a word that only starts like the cluster's names is none")
+
+    def test_a_shell_default_without_a_colon_and_a_file_uri_are_read_as_paths(self):
+        self.commit("MODEL=${MODEL_DIR-/data/models/m}\nTMP = 'file:///tmp/sglang/x'\nLIB = 'file:///opt/rocm/lib'\n"
+                    "HOME = 'file:///home/alice/x'\n")
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]),
+                         (1, ["MODEL=${MODEL_DIR-/data/models/m}", "HOME = 'file:///home/alice/x'"]),
+                         "/tmp and /opt stay public in a file URI")
+
+    def test_more_storage_roots_are_local(self):
+        lines = ["/scratch/alice/x", "/raid/alice/models", "--model-path /models/DeepSeek-V4.1-Flash", "/nfs_home/alice/x",
+                 "/export/alice/x", "/work/alice/x", "/kmd3/alice/x"]
+        self.commit("".join("%s\n" % line for line in lines))
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]), (1, lines))
+
+    def test_the_default_host_is_the_name_without_its_domain(self):
+        self.commit("ssh gpu-node-17\n")
+        out = io.StringIO()
+        with mock.patch("socket.gethostname", return_value="gpu-node-17.cluster.example"), redirect_stdout(out):
+            rc = leak_scan.main(["--repo", str(self.repo), "--base", self.base])
+        self.assertEqual((rc, [f["text"] for f in json.loads(out.getvalue())["leaks"]]), (1, ["ssh gpu-node-17"]))
+
+    def test_an_added_line_that_reads_like_a_file_header_is_content(self):
+        self.commit("++ /home/alice/private\n")
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]), (1, ["++ /home/alice/private"]))
+
+    def test_an_external_diff_tool_cannot_hide_a_line(self):
+        self.commit('LOG = "/home/alice/run.log"\n')
+        subprocess.run(["git", "-C", str(self.repo), "config", "diff.external", "true"], check=True)
+        self.assertEqual(self.scan()[0], 1)
+
+    def test_a_line_a_later_commit_removed_is_still_found(self):
+        self.commit('LOG = "/home/alice/run.log"\n', message="first try")
+        first = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout
+        self.commit("", message="drop the log path")
+        rc, out = self.scan()
+        self.assertEqual(rc, 1)
+        self.assertEqual([f["where"] for f in out["leaks"]], ["%s a.py:2" % first[:10]])
 
 
 class ScanCiTest(unittest.TestCase):
