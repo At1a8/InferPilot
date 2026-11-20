@@ -511,6 +511,18 @@ const scenarios = [
     check(sp && r.keys.includes('director:report'), 'Spinoff and the report run after a stop asked for now');
     check(sp && sp.ins.confirm_leads === false && (sp.ins.confirm_skipped || []).some((x) => /stop/.test(x)),
       `no lead is run on the GPUs after a stop asked for now: ${JSON.stringify(sp && [sp.ins.confirm_leads, sp.ins.confirm_skipped])}`);
+    let preparing = false;
+    const last = await run({ mode: 'feature', task: 't', confirm_leads: true }, {
+      'implementer:implement': (ins) => ({ wp: ins.work_package.id, status: 'done', commit: `c_${ins.work_package.id}`,
+        unit_test_cmd: 'pytest -q t.py', leads: [lead] }),
+      'pr_engineer:pr': () => {
+        preparing = true;
+        return DEFAULTS['pr_engineer:pr']();
+      },
+    }, { control: () => (preparing ? { stop_after: 'now' } : {}) });
+    const spLast = last.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(last.result.status === 'ready_for_review' && spLast && spLast.ins.confirm_leads === false,
+      `now during the last phase, which goes straight to the closing phases, runs no lead either: ${JSON.stringify(spLast && spLast.ins.confirm_leads)}`);
   }],
   ['feature: a work package that never passes is rolled back', async () => {
     const r = await run({ mode: 'feature', task: 't', max_fix_rounds: 1 }, {

@@ -733,7 +733,7 @@ async function finish(status, at) {
       // hold the GPUs, and a run that ended at Setup never showed the environment works.
       const skipped = !C.confirm_leads ? [] : [...TIMED_OUT_CALLS].map((c) => `${c} timed out`)
         .concat(at === 'Setup' ? ['the run stopped at Setup'] : [])
-        .concat(stopAfterNow === 'now' ? ['the control file asked the run to stop now'] : []);
+        .concat(liveStopAfter() === 'now' ? ['the control file asked the run to stop now'] : []);
       const sp = await call('issue_triager', 'spinoff', inputs({ status, stopped_at: at || '', phases: R.phases,
         leads: R.leads, attention: R.attention, confirm_leads: C.confirm_leads && !skipped.length, confirm_skipped: skipped }), SPINOFF);
       if (sp && Array.isArray(sp.spinoffs)) {
