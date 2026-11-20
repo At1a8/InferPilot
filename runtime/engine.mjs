@@ -53,6 +53,7 @@ export const fmtMinutes = (ms) => {
 // onContainer(name): called when the script names the container its servers run in; agent calls wait for
 // what it returns (the runner looks there for what runs that are gone left running) before they start.
 // control: a function the script may call for the run's live settings (runtime/run.mjs: the control file).
+// showText: each text an agent writes gets a line too, besides its tool calls.
 export function createRuntime({
   backend,
   concurrency = 4,
@@ -61,11 +62,13 @@ export function createRuntime({
   quietMs = 5 * 60 * 1000,
   onContainer = () => null,
   control = () => ({}),
+  showText = false,
   log = (msg) => process.stderr.write(`[${new Date().toISOString().slice(11, 19)}] ${msg}\n`),
 } = {}) {
   if (!backend || typeof backend.runAgent !== 'function') throw new Error('createRuntime: backend.runAgent is required');
   const slots = new Slots(concurrency);
   const state = { agents: 0, schemaFailures: 0, done: 0, tokens: 0, tokensKnown: false };
+  const live = new Map(); // the agent calls under way: id -> {label, phase, started, last}
   const runStarted = Date.now();
   let current = '';
   // The phases the script says the run passes ("Route: A → B → C" in a log line), for x/y in each phase line.
@@ -111,6 +114,7 @@ export function createRuntime({
   // asked for again, and after the last attempt the error is thrown to the script.
   async function agent(prompt, opts = {}) {
     if (++state.agents > MAX_AGENTS) throw new Error(`more than ${MAX_AGENTS} agent calls`);
+    const id = state.agents;
     const label = opts.label || 'agent';
     const where = opts.phase || current;
     const full = opts.schema ? prompt + outputContract(opts.schema) : prompt;
@@ -118,10 +122,17 @@ export function createRuntime({
     await slots.take();
     const started = Date.now();
     const minutes = () => Math.round((Date.now() - started) / 60000);
+    const call = { label, phase: where, started: new Date(started).toISOString(), last: '' };
+    live.set(id, call);
     let shown = started;
     const show = (msg) => {
       shown = Date.now();
+      call.last = msg.slice(0, 200);
       log(`     · [${where}] ${label}  ${msg}`);
+    };
+    const say = (text) => {
+      const line = text.replace(/\s+/g, ' ').trim();
+      if (line) show(`> ${line.length > 300 ? `${line.slice(0, 300)}...` : line}`);
     };
     const beat = quietMs > 0 ? setInterval(() => {
       if (Date.now() - shown >= quietMs) show(`still working, ${minutes()} min`);
@@ -138,6 +149,7 @@ export function createRuntime({
       for (let attempt = 1; attempt <= (opts.schema ? schemaRetries + 1 : 1); attempt++) {
         const { text, usage } = await backend.runAgent({
           prompt: full, label, cwd: opts.cwd, env: opts.env, model: opts.model, timeoutMs: agentTimeoutMs, onProgress: show,
+          ...(showText ? { onText: say } : {}),
         });
         if (usage && Number.isFinite(usage.total)) {
           tokens = (tokens || 0) + usage.total;
@@ -162,6 +174,7 @@ export function createRuntime({
       }
       throw last;
     } finally {
+      live.delete(id);
       if (beat) clearInterval(beat);
       slots.give();
     }
@@ -203,5 +216,6 @@ export function createRuntime({
     return fn(agent, parallel, pipeline, phase, scriptLog, workflow, args, budget, control);
   }
 
-  return { agent, parallel, pipeline, phase, log: scriptLog, runScript, state, summary, current: () => current };
+  return { agent, parallel, pipeline, phase, log: scriptLog, runScript, state, summary, current: () => current,
+    live: () => [...live.values()] };
 }

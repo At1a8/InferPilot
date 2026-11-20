@@ -15,7 +15,14 @@
 //                                 next to it): {"stop_after": "<phase>"} moves the stop, "now" stops
 //                                 after the phase that is ending, "" runs to the end; a file already
 //                                 there when the run starts counts only once it changes
+//   --agent-log-dir <dir>         each agent run's prompt, whole output stream and stderr (default with
+//                                 --result-file: <name>.agents/ next to it)
+//   --show-text                   the log also shows what the agents write, not only their tool calls
 //   --help                        this usage
+//
+// With --result-file, <name>.status.json next to it is rewritten every 30 s while the runner lives: its
+// state, phase, the agent calls under way (each with its last line) and when it was updated. An update
+// older than a minute or two means the runner is gone.
 //
 // The log ends with what the result's next says comes after the run (=== NEXT); with --args-file, the
 // arguments of each run it names are written next to that file (<name>.again.json, <name>.start-<rank>.json).
@@ -48,11 +55,12 @@ function parse(argv) {
   return out;
 }
 
-const FLAGS = ['backend', 'model', 'args', 'args-file', 'result-file', 'concurrency', 'agent-timeout-ms', 'schema-retries', 'kill-orphans', 'control-file', 'help'];
+const FLAGS = ['backend', 'model', 'args', 'args-file', 'result-file', 'concurrency', 'agent-timeout-ms', 'schema-retries', 'kill-orphans', 'control-file', 'agent-log-dir', 'show-text', 'help'];
 const usage = (code = 2) => {
   (code ? process.stderr : process.stdout).write('usage: node runtime/run.mjs <script.js> --backend claude|cursor [--model <id>] '
     + '(--args <json> | --args-file <path>) [--result-file <path>] [--concurrency <n>] '
-    + '[--agent-timeout-ms <ms>] [--schema-retries <n>] [--kill-orphans] [--control-file <path>] [--help]\n');
+    + '[--agent-timeout-ms <ms>] [--schema-retries <n>] [--kill-orphans] [--control-file <path>] '
+    + '[--agent-log-dir <dir>] [--show-text] [--help]\n');
   process.exit(code);
 };
 
@@ -71,9 +79,12 @@ try {
   process.exit(2);
 }
 const int = (v, d) => (v !== undefined && v !== true && Number.isFinite(Number(v)) ? Number(v) : d);
-const backend = cliBackend(opts.backend, { model: typeof opts.model === 'string' ? opts.model : '' });
+const resultStem = typeof opts['result-file'] === 'string' ? opts['result-file'].replace(/(\.result)?\.json$/, '') : '';
+const agentLogDir = typeof opts['agent-log-dir'] === 'string' ? opts['agent-log-dir'] : resultStem ? `${resultStem}.agents` : '';
+const backend = cliBackend(opts.backend, { model: typeof opts.model === 'string' ? opts.model : '', logDir: agentLogDir });
 const controlFile = typeof opts['control-file'] === 'string' ? opts['control-file']
   : typeof opts['args-file'] === 'string' ? `${opts['args-file'].replace(/\.json$/, '')}.control.json` : '';
+const startedMs = Date.now();
 // A file this run found at its start was written for an earlier one, which a "now" in it already
 // stopped: it counts once it changes. Its state, not the clock, tells: file times lag the clock a little.
 const fileState = (f) => {
@@ -109,6 +120,7 @@ const rt = createRuntime({
   agentTimeoutMs: int(opts['agent-timeout-ms'], 0),
   onContainer: (box) => lookIn(box),
   control,
+  showText: opts['show-text'] === true || opts['show-text'] === 'true',
 });
 const shq = (s) => (/^[\w./:=@,+-]+$/.test(String(s)) ? String(s) : `'${String(s).replace(/'/g, "'\\''")}'`);
 
@@ -148,10 +160,22 @@ const tag = runTag();
 process.env[TAG] = tag;
 rt.log(`runner pid ${process.pid}: kill ${process.pid} stops this run and what it started`);
 if (controlFile) rt.log(`control file: ${controlFile} (read at every phase boundary)`);
+if (agentLogDir) rt.log(`agent streams: ${agentLogDir}/`);
 const mine = () => tagged().filter((p) => p.tag === tag);
 const listed = (ps) => ps.slice(0, 20).map((p) => `\n     ${p.pid} ${p.cmd.slice(0, 160)}`).join('');
 const releaseLock = () => spawnSync('python3', [join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'run_lock.py'),
   'release', '--run-tag', tag], { stdio: 'ignore', timeout: 30000 });
+
+const statusFile = resultStem ? `${resultStem}.status.json` : '';
+const writeStatus = (state) => {
+  if (!statusFile) return;
+  try {
+    writeFileSync(statusFile, `${JSON.stringify({ state, pid: process.pid, run_tag: tag, started: new Date(startedMs).toISOString(),
+      updated: new Date().toISOString(), phase: rt.current(), agents: rt.live(), summary: rt.summary() }, null, 2)}\n`);
+  } catch { /* a full disk does not stop the run */ }
+};
+writeStatus('running');
+if (statusFile) setInterval(() => writeStatus('running'), 30000).unref();
 
 // The container the task's servers run in (InferPilot on the host), however the script resolved it.
 const container = () => (rt.state.container || (typeof args.container === 'string' ? args.container : '')).trim();
@@ -227,6 +251,7 @@ async function interrupted(sig, code) {
     next: { say: `Interrupted by ${sig}${at ? ` in ${at}` : ''}; its agents and what they started were stopped and the `
       + 'machine lock freed. Run again with the same arguments to start over.' } };
   if (typeof opts['result-file'] === 'string') writeFileSync(opts['result-file'], `${JSON.stringify(result, null, 2)}\n`);
+  writeStatus('interrupted');
   rt.log(`=== END (interrupted by ${sig}${at ? ` in ${at}` : ''}): ${rt.summary()} ===`);
   process.exit(code);
 }
@@ -260,6 +285,7 @@ try {
   ended = true;
   if (stopping) await new Promise(() => {});
   await tidyUp();
+  writeStatus('ended');
   rt.log(`=== END: ${rt.summary()} ===`);
   const text = JSON.stringify(result, null, 2);
   if (typeof opts['result-file'] === 'string') writeFileSync(opts['result-file'], `${text}\n`);
@@ -269,6 +295,7 @@ try {
   ended = true;
   if (stopping) await new Promise(() => {});
   await tidyUp();
+  writeStatus('failed');
   rt.log(`=== END (failed): ${rt.summary()} ===`);
   process.stderr.write(`run failed: ${e && e.stack ? e.stack : e}\n`);
   process.exit(1);

@@ -267,7 +267,34 @@ return { status: r.ok ? 'done' : 'no', n: args.n };`);
     const bad = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'nope'], { encoding: 'utf8' });
     check(bad.status === 2 && bad.stderr.includes('usage:'), 'an unknown backend prints the usage');
   }],
-  ['procs: a runner that exited and is not reaped yet is gone', async () => {
+  ['backends: a log dir keeps each run\'s prompt, whole stream and stderr; onText hears what the agent writes', async () => {
+    const dir = path.join(TMP, 'agent-logs');
+    const events = [
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'Looking at the tree.' }] } },
+      { type: 'tool_call', subtype: 'started', tool_call: { shellToolCall: { args: { command: 'ls' } } } },
+      { type: 'result', subtype: 'success', is_error: false, result: 'done' },
+    ];
+    const cli = fakeCli('logged.sh', `echo to-stderr >&2\ncat <<'EOF'\n${events.map((e) => JSON.stringify(e)).join('\n')}\nEOF`);
+    const b = cliBackend('fake', { preset: preset(cli, 'arg', { events: BACKENDS.cursor.events }), logDir: dir });
+    const texts = [];
+    const r = await b.runAgent({ prompt: 'the prompt', label: 'role x', onText: (t) => texts.push(t) });
+    check(r.text === 'done' && texts.length === 1 && texts[0] === 'Looking at the tree.', `texts ${JSON.stringify(texts)}`);
+    const stream = path.join(dir, '001-role_x.jsonl');
+    for (let i = 0; i < 50 && !(existsSync(stream) && readFileSync(stream, 'utf8').split('\n').filter(Boolean).length === 3); i++) await sleep(20);
+    check(readFileSync(path.join(dir, '001-role_x.prompt.md'), 'utf8') === 'the prompt', 'the prompt is kept');
+    check(readFileSync(stream, 'utf8').split('\n').filter(Boolean).length === 3, 'every event is kept');
+    check(readFileSync(path.join(dir, '001-role_x.stderr.log'), 'utf8').includes('to-stderr'), 'stderr is kept');
+    const broken = path.join(TMP, 'agent-logs-broken');
+    const b2 = cliBackend('fake', { preset: preset(cli, 'arg', { events: BACKENDS.cursor.events }), logDir: broken });
+    mkdirSync(path.join(broken, '001-x.jsonl')); // after the backend numbered its runs: the stream cannot open it
+    const r2 = await b2.runAgent({ prompt: 'p', label: 'x' });
+    await sleep(50);
+    check(r2.text === 'done', 'a log that cannot be written leaves the agent run alone');
+    const again = cliBackend('fake', { preset: preset(cli, 'arg', { events: BACKENDS.cursor.events }), logDir: dir });
+    await again.runAgent({ prompt: 'second runner', label: 'role x' });
+    check(readFileSync(path.join(dir, '001-role_x.prompt.md'), 'utf8') === 'the prompt'
+      && readFileSync(path.join(dir, '002-role_x.prompt.md'), 'utf8') === 'second runner',
+    'a runner started again on the same directory goes on numbering and keeps the earlier logs');
     const zombie = spawn('bash', ['-c', 'sleep 0.1 & echo $!; exec sleep 3'], { stdio: ['ignore', 'pipe', 'ignore'] });
     const zpid = await new Promise((r) => zombie.stdout.once('data', (d) => r(Number(String(d).trim()))));
     let zstat = '';
@@ -278,6 +305,41 @@ return { status: r.ok ? 'done' : 'no', n: args.n };`);
     check(/^Z /.test(zstat) && !runnerAlive(`${zpid}-${zstat.split(' ')[19]}-${PID_NS}`),
       'a runner that exited and is not reaped yet is gone');
     zombie.kill('SIGKILL');
+    const said = BACKENDS.claude.events({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' },
+      { type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] } });
+    check(said.texts[0] === 'hi' && said.tools.length === 1, `claude: ${JSON.stringify(said)}`);
+  }],
+  ['engine: showText adds what the agents write; live() lists the calls under way', async () => {
+    const lines = [];
+    let seen = null;
+    const backend = {
+      name: 'fake',
+      async runAgent({ onText }) {
+        if (onText) onText('  thinking\n about it  ');
+        seen = rt.live();
+        return { text: 'ok', usage: null };
+      },
+    };
+    const rt = createRuntime({ backend, log: (m) => lines.push(m), showText: true, quietMs: 0 });
+    rt.phase('P');
+    await rt.agent('q', { label: 'speaker' });
+    check(lines.some((l) => l.endsWith('[P] speaker  > thinking about it')), `lines ${JSON.stringify(lines)}`);
+    check(seen && seen.length === 1 && seen[0].label === 'speaker' && seen[0].phase === 'P' && seen[0].last === '> thinking about it',
+      `live ${JSON.stringify(seen)}`);
+    check(rt.live().length === 0, 'no call once it is done');
+    const quietLines = [];
+    await createRuntime({ backend, log: (m) => quietLines.push(m), quietMs: 0 }).agent('q', { label: 'mute' });
+    check(!quietLines.some((l) => l.includes('> thinking')), 'no text without showText');
+  }],
+  ['run.mjs: with --result-file, a status file and the agent streams next to it', async () => {
+    const script = path.join(TMP, 'status.js');
+    writeFileSync(script, `phase('Only');\nawait agent('go', { label: 'only' });\nreturn { status: 'done' };`);
+    execFileSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor', '--args', '{}',
+      '--result-file', path.join(TMP, 'st.result.json')], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('st.sh', 'echo done') },
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const st = JSON.parse(readFileSync(path.join(TMP, 'st.status.json'), 'utf8'));
+    check(st.state === 'ended' && st.agents.length === 0 && /^\d+-\d+-\d*$/.test(st.run_tag) && st.updated >= st.started, `status ${JSON.stringify(st)}`);
+    check(existsSync(path.join(TMP, 'st.agents', '001-only.jsonl')), 'the agent stream is kept');
   }],
   ['run.mjs: the control file next to --args-file is read when the script asks; one there before the run counts once it changes; the pid stays on the log\'s first line', async () => {
     const script = path.join(TMP, 'control.js');
@@ -339,6 +401,7 @@ sleep 42.25 & wait`);
     check(!running('sleep 42.25'), 'the agent was stopped');
     const result = JSON.parse(readFileSync(resultFile, 'utf8'));
     check(result.status === 'interrupted' && result.signal === 'SIGTERM' && result.stopped_at === 'Long', `result ${JSON.stringify(result)}`);
+    check(JSON.parse(readFileSync(path.join(TMP, 'stop.status.json'), 'utf8')).state === 'interrupted', 'the status file says interrupted');
     const st = JSON.parse(execFileSync('python3', [path.join(INFERPILOT, 'scripts', 'run_lock.py'), '--lock', lock, 'status'], { encoding: 'utf8' }));
     check(st.status === 'free', `the lock is ${st.status}`);
     check(/=== END \(interrupted by SIGTERM in Long\)/.test(log), 'the log ends with the interruption');

@@ -1,7 +1,7 @@
 // Agent backends for runtime/engine.mjs: one command-line agent run per agent() call. The agent's
 // tools (shell, files) run in the agent's own process, in the directory it was started from.
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createWriteStream, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -30,12 +30,16 @@ function usageOf(u) {
 
 const resultOf = (e) => ({ result: String(e.result ?? ''), error: Boolean(e.is_error), usage: usageOf(e.usage) });
 
-// What one event of `claude -p --output-format stream-json --verbose` tells: the tool calls of an
+// The text items of an assistant message, which both CLIs stream as {type: 'assistant', message: {content}}.
+const textsOf = (e) => ((e.message && e.message.content) || []).filter((c) => c && c.type === 'text' && c.text)
+  .map((c) => String(c.text));
+
+// What one event of `claude -p --output-format stream-json --verbose` tells: the tool calls and text of an
 // assistant message, or the final answer.
 function claudeEvent(e) {
   if (e.type === 'assistant') {
     const content = (e.message && e.message.content) || [];
-    return { tools: content.filter((c) => c && c.type === 'tool_use').map((c) => toolLine(c.name, c.input)) };
+    return { tools: content.filter((c) => c && c.type === 'tool_use').map((c) => toolLine(c.name, c.input)), texts: textsOf(e) };
   }
   if (e.type === 'result') return resultOf(e);
   return null;
@@ -49,6 +53,7 @@ function cursorEvent(e) {
     const kind = Object.keys(call).find((k) => k.endsWith('ToolCall'));
     return kind ? { tools: [toolLine(kind.slice(0, -'ToolCall'.length), (call[kind] || {}).args, (call[kind] || {}).description)] } : null;
   }
+  if (e.type === 'assistant') return { texts: textsOf(e) };
   if (e.type === 'result') return resultOf(e);
   return null;
 }
@@ -79,11 +84,25 @@ function promptArg(prompt, label) {
   return { arg: `Your complete instructions are in ${file}. Read the whole file first, then follow it exactly.`, dir };
 }
 
-export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[name] } = {}) {
+// logDir: each agent run's prompt, whole stdout stream and stderr go there as <n>-<label>.prompt.md,
+// .jsonl and .stderr.log, numbered in the order the runs start.
+export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[name], logDir = '' } = {}) {
   if (!preset) throw new Error(`unknown backend ${name}; one of ${Object.keys(BACKENDS).join(', ')}`);
   const bin = (preset.binEnv && process.env[preset.binEnv]) || preset.bin;
   const live = new Set(); // the stop function of every agent run still going
   let closed = false;
+  let runs = 0;
+  let dir = logDir;
+  if (dir) {
+    try {
+      mkdirSync(dir, { recursive: true });
+      // A runner started again on the same directory goes on numbering: the earlier attempt's logs stay.
+      runs = readdirSync(dir).reduce((m, f) => Math.max(m, parseInt(f, 10) || 0), 0);
+    } catch (e) {
+      process.stderr.write(`${name}: no agent logs in ${dir} (${e.message})\n`);
+      dir = '';
+    }
+  }
   return {
     name,
     bin,
@@ -100,10 +119,33 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
     get running() {
       return live.size;
     },
-    // onProgress(line) hears each tool call as it starts, when the CLI streams events; the answer comes
-    // with the tokens its result event reports (usage: {input, output, cache, total}, or null).
-    runAgent({ prompt, label = 'agent', cwd, env, model, timeoutMs = 0, onProgress = () => {} }) {
+    // onProgress(line) hears each tool call as it starts, when the CLI streams events, and onText(text)
+    // each text of an assistant message; the answer comes with the tokens its result event reports
+    // (usage: {input, output, cache, total}, or null).
+    runAgent({ prompt, label = 'agent', cwd, env, model, timeoutMs = 0, onProgress = () => {}, onText = null }) {
       if (closed) return Promise.reject(new Error(`${name} [${label}] not started: the runner is stopping`));
+      let base = dir ? join(dir, `${String(++runs).padStart(3, '0')}-${String(label).replace(/[^\w.-]+/g, '_')}`) : '';
+      try {
+        if (base) writeFileSync(`${base}.prompt.md`, prompt, { flag: 'wx' });
+      } catch (e) {
+        process.stderr.write(`${name} [${label}]: no agent log (${e.message})\n`);
+        base = '';
+      }
+      // A log that cannot be written (a full disk) stops; the agent run goes on.
+      const logTo = (file) => {
+        if (!base) return null;
+        const s = createWriteStream(file, { flags: 'wx' });
+        s.on('error', (e) => {
+          process.stderr.write(`${name} [${label}]: ${file} stops here (${e.message})\n`);
+          s.destroy();
+        });
+        return s;
+      };
+      const stream = logTo(`${base}.jsonl`);
+      const errStream = logTo(`${base}.stderr.log`);
+      const put = (s, d) => {
+        if (s && !s.destroyed) s.write(d);
+      };
       const argv = [...preset.args];
       const m = model || defaultModel;
       if (m) argv.push(preset.modelFlag, m);
@@ -111,6 +153,7 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
       if (preset.promptVia === 'arg') argv.push(viaArg.arg);
       const tidy = () => {
         if (viaArg.dir) rmSync(viaArg.dir, { recursive: true, force: true });
+        for (const s of [stream, errStream]) if (s && !s.writableEnded && !s.destroyed) s.end();
       };
       return new Promise((resolve, reject) => {
         // Its own process group, so a timeout also stops what the agent started.
@@ -145,6 +188,11 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
               onProgress(t);
             } catch { /* a listener's mistake is not the agent's */ }
           }
+          for (const t of (onText && said.texts) || []) {
+            try {
+              onText(t);
+            } catch { /* as above */ }
+          }
           if (said.result !== undefined) {
             answer = said.result;
             answerIsError = said.error;
@@ -154,6 +202,7 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
         child.stdout.setEncoding('utf8');
         child.stderr.setEncoding('utf8');
         child.stdout.on('data', (d) => {
+          put(stream, d);
           if (!preset.events) {
             out += d;
             return;
@@ -163,7 +212,10 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
           partial = lines.pop();
           lines.forEach(take);
         });
-        child.stderr.on('data', (d) => { err = (err + d).slice(-65536); });
+        child.stderr.on('data', (d) => {
+          put(errStream, d);
+          err = (err + d).slice(-65536);
+        });
         child.on('error', (e) => {
           live.delete(stop);
           if (timer) clearTimeout(timer);
