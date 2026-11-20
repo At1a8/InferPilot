@@ -13,8 +13,8 @@ Read: `knowledge/system_perf.md`, `knowledge/perf_evaluation.md`, `knowledge/rew
 The workload is fixed at Setup (`RUN_DIR/run.json`) before any profile is read; never change it after
 seeing results. If it must change, stop and say why.
 
-1. Launch the baseline server with the task's `server_script` and warm it up with its `client_script`
-   (`task_definition.md` §1.1).
+1. Launch the baseline server with the run's `server_script` and warm it up with its `client_script`
+   (the task's, or the ones Setup rendered from the templates: `task_definition.md` §1.1–1.2).
 2. **Path check first.** From the launch script and the server log (`server_args=` line, backend and
    graph-capture messages), compare intended and effective: attention backend, MoE and GEMM backends,
    graph capture and its batch sizes, torch.compile, the quantization path, and any fallback or
@@ -51,8 +51,9 @@ Return:
 
 Inputs: `claim` (empty when the task claims no gain).
 
-1. Follow `perf_evaluation.md`: the benchmark is the task's `client_script`, run unchanged with
-   `OUT_DIR` set, against servers started from its `server_script` (the change's flags in
+1. Follow `perf_evaluation.md`: the benchmark is the run's `client_script` (the task's, or the
+   harness's), run unchanged with `OUT_DIR` set, against servers started from its `server_script` (the
+   change's flags in
    `EXTRA_ARGS`); equal budget for the scarce resource; guard workloads only where the goal or the acceptance
    matrix lists them; fresh server per arm; prefix cache flushed; one warm-up, then one A/B round (one
    timed run per arm), and a round that shows no gain is reproduced at most twice and judged on the

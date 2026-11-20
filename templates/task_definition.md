@@ -14,8 +14,10 @@ of it.
 | `framework_dir` | the framework checkout each task works in, on its own branch from the current main (absolute path; for sglang the image's `/sgl-workspace/sglang` when not given, which the image installs sglang from) | required | required | required | required | the upstream scan reads it |
 | `model_path` | the model the baseline and the gates run | required | recommended: the reporter's model | — | required | — |
 | `workload` | the fixed benchmark, e.g. `{"isl": 8192, "osl": 1024, "conc": 64}` | when the task claims a gain | for a performance issue | — | required | — |
-| `server_script` | the user's script that starts one server for `model_path` (§1.1) | required | recommended | — | required | — |
-| `client_script` | the user's script that runs the fixed workload against that server (§1.1) | when a workload is given | for a performance issue | — | required | — |
+| `server_script` | the user's script that starts one server for `model_path` (§1.1); without one, the harness's (§1.2) | optional | recommended | — | optional | — |
+| `client_script` | the user's script that runs the fixed workload against that server (§1.1); without one, the harness's (§1.2) | optional | for a performance issue | — | optional | — |
+| `accuracy_script` | the user's script that measures accuracy against that server (§1.1); without one, the harness's (§1.2) | optional | optional | — | optional | — |
+| `harness` | template parameters the task sets, e.g. `{"CONTEXT_LENGTH": 8192}` (§1.2) | optional | optional | — | optional | — |
 | `goal` | what done means, measurable when the mode measures | recommended | — | — | recommended | — |
 | `framework` | default `sglang` | | | | | |
 | `platform`, `gpu_ids`, `container` | target and environment; empty `gpu_ids` lets Setup pick free GPUs | | | | | |
@@ -36,8 +38,10 @@ when the likely path of the task needs them.
 
 ### 1.1 Server and client scripts
 
-A task that measures accuracy or performance brings the scripts that run its baseline, so every arm is
-launched and measured the way the user runs the model, not the way an agent guessed.
+A task that measures accuracy or performance may bring the scripts that run its baseline, so every arm
+is launched and measured the way the user runs the model. A script the user gives is the one that runs,
+unchanged, whatever the templates or the feature's source say; what the task does not bring, the
+harness's templates run (§1.2), never a script an agent made up.
 
 - **`server_script`** starts one server in the foreground. InferPilot runs it with `PORT`,
   `HIP_VISIBLE_DEVICES`, `PYTHONPATH` (the tree under test) and `EXTRA_ARGS` (the feature's flags; empty
@@ -46,9 +50,14 @@ launched and measured the way the user runs the model, not the way an agent gues
 - **`client_script`** runs the fixed workload against `PORT` and writes its logs to `OUT_DIR`. It is the
   benchmark: InferPilot runs it unchanged and never edits it. If it reads `CONCURRENCY` (a
   space-separated list), the held-out point (`held_out`) can be measured at half the concurrency.
-- **Accuracy** needs no client of the user's: InferPilot's `scripts/eval_accuracy.sh` measures GSM8K on
+- **`accuracy_script`** measures accuracy against the server at `API_URL`
+  (`http://127.0.0.1:$PORT/v1`; `PORT` is set too) and writes its results under `RESULT_ROOT`, with
+  `TAG` naming the arm. InferPilot runs it unchanged for every arm and compares its scores set by set,
+  each at most 1 point below the baseline.
+- **Accuracy** needs no script of the user's: InferPilot's `scripts/eval_accuracy.sh` measures GSM8K on
   all 1319 questions, once, by default, and for a lossy feature gpqa_diamond and simple_qa too; a task
-  that needs other suites or more runs says so in `goal`.
+  that needs other suites or more runs says so in `goal`. It runs through the
+  harness's `accuracy.sh` (§1.2), which fixes the settings for every arm.
 
 ```bash
 # server.sh
@@ -64,6 +73,33 @@ for c in ${CONCURRENCY:-32 64 128}; do
     --num-prompts $((4 * c)) --warmup-requests $((2 * c)) --flush-cache > "$OUT_DIR/bench_c$c.log" 2>&1
 done
 ```
+
+### 1.2 The harness
+
+What a task does not bring, InferPilot runs from its templates in `templates/harness/`:
+
+- `server.sh`: one sglang server after the model's recipe in the sglang cookbook (the framework
+  checkout's `docs/cookbook/`, published at docs.sglang.io/cookbook) for the run's GPU and checkpoint;
+- `perf.sh`: InferPilot's own, sglang's serving benchmark on random prompts: one run per concurrency,
+  with 4 prompts and 2 warm-up requests per concurrent request after a flush of the prefix cache, as the
+  client above;
+- `accuracy.sh`: InferPilot's own, `scripts/eval_accuracy.sh` with the run's settings.
+
+Setup renders them into `RUN_DIR/scripts/` with `scripts/harness.py`, which takes each parameter from,
+in this order:
+
+1. **the task**: `harness`, `workload` (`isl`, `osl` and `conc`), `model_path` and the run's GPUs;
+2. **the feature's source**: the value its own tests use, with the words it comes from (vLLM PR #49406
+   serves PARD-2 with `--max-model-len 4096`, so `CONTEXT_LENGTH=4096`);
+3. **the cookbook**, for the server: the recipe's flags (`--tp`, `--mem-fraction-static`, ...); its
+   environment and its other flags (attention backends, parsers) are run as the recipe writes them;
+4. **the template's default**.
+
+`python3 scripts/harness.py show` lists every parameter with its default and meaning, and
+`RUN_DIR/scripts/harness.json` the value each one took and where it came from, which the report lists.
+An accuracy run's server keeps the model's own context when the feature's cannot hold the answers
+(`accuracy_server_env`), and `eval_accuracy.sh` lowers `MAX_TOKENS` to what the server's context leaves
+beside a question.
 
 ## 2. Telling the modes apart
 

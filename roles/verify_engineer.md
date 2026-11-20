@@ -13,13 +13,15 @@ read from the task worktree.
 Inputs: `extra_gates` (mode gates such as `issue_repro` or `failing_test`), `round`, `known_issues`
 (failures already proven pre-existing in this run).
 
-1. Launch the feature build and the baseline with the task's `server_script` as Setup did (the feature
-   arm's flags in `EXTRA_ARGS`, each arm's tree on `PYTHONPATH`; the run's own launch script when the
-   task has none); confirm the effective flags from the `server_args=` line of each log.
+1. Launch the feature build and the baseline with the run's `server_script` as Setup did (the task's,
+   or the one Setup rendered from the templates; the feature arm's flags in `EXTRA_ARGS`, each arm's
+   tree on `PYTHONPATH`; for accuracy, the `accuracy_server_env` of `RUN_DIR/scripts/harness.json` on
+   top); confirm the effective flags from the `server_args=` line of each log.
 2. Run the gates the spec or the plan names, in this order, each against the baseline **in the same
    scheduling pattern**:
    - G0 feature off; G2 accuracy: GSM8K on all 1319 questions, once per arm, with
-     `<inferpilot_dir>/scripts/eval_accuracy.sh`, and for a lossy feature gpqa_diamond and simple_qa
+     the run's `accuracy_script` (the task's own, or `scripts/eval_accuracy.sh` with the run's settings;
+     the same for both arms), and for a lossy feature gpqa_diamond and simple_qa
      too, each at most 1 point below the baseline; a set that misses is reproduced at most twice and
      judged on the median of its runs (other suites or more runs only when `goal` or the acceptance
      matrix asks); G3 long context sized so the feature engages; G4 stability under capacity
