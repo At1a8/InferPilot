@@ -823,6 +823,21 @@ class LeakScanTest(unittest.TestCase):
         self.assertIn("%s:3" % body, [f["where"] for f in out["leaks"]])
         self.assertEqual(out["identities"], ["root <root@gpu-node-17>"])
 
+    def test_a_path_upstream_carries_and_one_under_tmp_or_opt_are_public(self):
+        (self.repo / "ci.py").write_text('os.environ.setdefault("HF_HOME", "/data2/models/huggingface")\n')
+        git("add", "-A", cwd=self.repo)
+        git("commit", "-q", "-m", "AMD CI's model location", cwd=self.repo)
+        self.base = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True,
+                                   text=True, check=True).stdout.strip()
+        self.commit('HF_HOME = "/data2/models/huggingface"\nOUT = "/tmp/sglang_test"\nPY = "/opt/conda/bin/python"\n')
+        self.assertEqual(self.scan(), (0, {"leaks": [], "identities": []}))
+        self.commit('MODEL = "/data2/models/Qwen3-8B"\nLOG = "/tmp/gpu-node-17/run.log"\n')
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]),
+                         (1, ['MODEL = "/data2/models/Qwen3-8B"', 'LOG = "/tmp/gpu-node-17/run.log"']),
+                         "a path new to the repository, and the host name even under /tmp")
+        self.assertEqual(self.scan("--allow", "/data2/models/Qwen3-8B", "--allow", "gpu-node-17")[0], 0)
+
     def test_an_added_line_that_reads_like_a_file_header_is_content(self):
         self.commit("++ /home/alice/private\n")
         rc, out = self.scan()

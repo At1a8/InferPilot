@@ -5,11 +5,12 @@
 
 Scans the lines each commit of the branch adds (a line a later commit removed is still published by the
 push), its commit messages, the author and committer of each commit, and the PR description when given,
-for local paths (/home, /mnt, /data, ...), this
-machine's host name, internal sites, and identities such as root or an address with the host name in it
-(daily_report.leaks holds the patterns). Paths that public code needs (/opt/rocm) are allowed; --allow adds
-a pattern. Prints one JSON object, {"leaks": [{"where", "text"}], "identities": [...]}, and exits 1 when
-anything was found. Standard library only.
+for local paths (/home, /mnt, /data, ...: daily_report.LOCAL), this machine's host name, internal sites,
+and identities such as root or an address with the host name in it. A path counts only when the base does
+not carry it already (git grep at the base: AMD CI's /data2/models/huggingface is upstream's, not this
+machine's), and none under /tmp or /opt counts, since those name nothing of this machine; --allow adds a
+pattern for text that is public all the same. Prints one JSON object, {"leaks": [{"where", "text"}],
+"identities": [...]}, and exits 1 when anything was found. Standard library only.
 """
 from __future__ import annotations
 
@@ -22,9 +23,12 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from daily_report import leaks  # noqa: E402
+from daily_report import LOCAL, leaks  # noqa: E402
 
 ALLOW = [r"/opt/rocm\b"]
+# A path as a line holds it: from a / that starts a word to a space, a quote or a bracket.
+PATH = re.compile(r"(?<![\w.-])/[^\s'\"`<>(){}\[\],;]+")
+GENERIC = ("/tmp/", "/opt/")
 
 
 def git(repo: str, *args: str) -> str:
@@ -52,10 +56,27 @@ def added_lines(diff: str):
             n += 1
 
 
-def scan(text: str, host: str, allow: list) -> bool:
+def scan(text: str, host: str, allow: list, public=lambda path: False) -> bool:
+    """Whether a line would publish the host name, an internal site, or a path under a local directory that
+    public(path) does not know as public."""
     for pattern in allow:
         text = re.sub(pattern, "", text)
-    return bool(leaks(text, host))
+    if (host and host.lower() in text.lower()) or leaks(PATH.sub(" ", text), host):
+        return True
+    paths = (p.rstrip(".:!?") for p in PATH.findall(text))
+    return any(LOCAL.match(p) and not p.startswith(GENERIC) and not public(p) for p in paths)
+
+
+def carried(repo: str, base: str):
+    """public(path): whether the base's tree holds the path anywhere already, which upstream published."""
+    seen = {}
+
+    def public(path: str) -> bool:
+        if path not in seen:
+            seen[path] = subprocess.run(["git", "-C", repo, "grep", "-q", "-F", "-e", path, base, "--"],
+                                        capture_output=True).returncode == 0
+        return seen[path]
+    return public
 
 
 def bad_identity(ident: str, host: str) -> bool:
@@ -73,6 +94,7 @@ def main(argv=None) -> int:
     ap.add_argument("--allow", action="append", default=[], help="a regex for text that may stay (repeatable)")
     a = ap.parse_args(argv)
     allow = ALLOW + a.allow
+    public = carried(a.repo, a.base)
     found = []
     # Every outgoing commit's own diff, not the branch's net one: the push publishes the history, so a line
     # a later commit removed is still public.
@@ -80,16 +102,16 @@ def main(argv=None) -> int:
         # No external diff tool or textconv driver: they could show the scan something else than the commit.
         diff = git(a.repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--unified=0", sha + "^", sha)
         for path, n, text in added_lines(diff):
-            if scan(text, a.host, allow):
+            if scan(text, a.host, allow, public):
                 found.append({"where": "%s %s:%d" % (sha[:10], path, n), "text": text.strip()[:200]})
     for sha in git(a.repo, "rev-list", "%s..HEAD" % a.base).split():
         for n, line in enumerate(git(a.repo, "log", "-1", "--format=%B", sha).splitlines(), 1):
-            if scan(line, a.host, allow):
+            if scan(line, a.host, allow, public):
                 found.append({"where": "commit %s message line %d" % (sha[:10], n), "text": line.strip()[:200]})
     if a.body:
         with open(a.body, encoding="utf-8") as f:
             for n, line in enumerate(f.read().splitlines(), 1):
-                if scan(line, a.host, allow):
+                if scan(line, a.host, allow, public):
                     found.append({"where": "%s:%d" % (a.body, n), "text": line.strip()[:200]})
     idents = sorted({i for i in git(a.repo, "log", "--format=%an <%ae>%n%cn <%ce>", "%s..HEAD" % a.base).splitlines()
                      if i and bad_identity(i, a.host)})

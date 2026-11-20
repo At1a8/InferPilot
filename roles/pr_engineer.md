@@ -25,7 +25,10 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
      messages, and no `root` identity (step 2 resets those); each finding in the code is a work
      package; one in a commit whose line a later commit removed is still published by the push, so
      step 2's rewrite drops it (the tree stays the one reviewed). What the last scan (step 5) still
-     finds goes in `leaks`.
+     finds goes in `leaks`. A path the base already carries (an upstream convention, such as the
+     `HF_HOME` of AMD CI's tests) and one under `/tmp` or `/opt` are no findings. One that is public all
+     the same passes with `--allow '<regex>'`, each with its reason in the ledger; never a path of this
+     machine.
    - **Tests the PR carries:** only tests the repository's CI runs, the fewest that cover the change: a
      change to outputs carries one end-to-end accuracy test at the feature's defaults (sglang: GSM8K
      under `test/registered/amd/accuracy/...` with `register_amd_ci`, as its `write-sglang-test` skill

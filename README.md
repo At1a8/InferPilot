@@ -633,7 +633,7 @@ GitHub allows 60 requests an hour and 10 searches a minute per IP address).
 | `scripts/audit_host_syncs.py` | host-device sync and copy candidates on the hot path (leads for a profile) |
 | `scripts/baseline_cache.py` | baseline measurements kept for reuse in `<exp_root>/baseline_cache`, keyed by the framework commit, the model, the contents of the server and client scripts, the workload, the accuracy sets, the contents of `scripts/eval_accuracy.sh`, the GPU architecture and the image; Setup takes a hit from the last 7 days instead of measuring again |
 | `scripts/gpu_status.py` | the GPUs by HIP number (the numbers `HIP_VISIBLE_DEVICES` takes, which can differ from rocm-smi's), each with the memory processes of any container hold on it; `--free <n>` names free ones, skipping those another InferPilot task holds (`scripts/run_lock.py`), `--check <ids>` fails when one is held |
-| `scripts/leak_scan.py` | what a branch would publish about this machine (local paths, host names, internal sites, `root` commits) in the lines each of its commits adds, its commit messages and PR description; the PR engineer runs it before handing a branch over |
+| `scripts/leak_scan.py` | what a branch would publish about this machine (local paths upstream does not already carry, host names, internal sites, `root` commits) in the lines each of its commits adds, its commit messages and PR description; the PR engineer runs it before handing a branch over |
 
 `scripts/restore_owner.sh` (POSIX sh) gives what root wrote in the container on a host mount back to
 its owner (in `/workspace` there is nothing to give back); every agent runs it after a git write ([`knowledge/env_hygiene.md`](knowledge/env_hygiene.md)).

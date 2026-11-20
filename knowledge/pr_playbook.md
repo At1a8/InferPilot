@@ -19,7 +19,8 @@ send what is missing back as work packages, so the branch that is pushed is the 
       module-level platform constant (sglang: `_is_hip = is_hip()` at import); no refactor, rename,
       reformatting or moved code; no check repeated where an earlier one holds; no unused helper.
 - [ ] Nothing private: `scripts/leak_scan.py` finds no local path, host name, internal site or `root`
-      identity in the diff, the commits or the description.
+      identity in the diff, the commits or the description (a path upstream already carries is public;
+      `--allow` passes what else is, with its reason in the ledger).
 - [ ] The repository's own CPU tests for the changed modules pass (sglang: `test/registered/unit/`,
       `test_server_args_docs_coverage` for a new argument).
 - [ ] The launch command the description gives was run once on the final commit, as written but with
