@@ -3,17 +3,19 @@
 //
 //   node tests/runtime_selftest.mjs
 import path from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { extractJson, validate } from '../runtime/schema.mjs';
 import { createRuntime, fmtTokens, scriptBody } from '../runtime/engine.mjs';
 import { BACKENDS, cliBackend } from '../runtime/backends.mjs';
+import { PID_NS, runnerAlive, stopInContainer } from '../runtime/procs.mjs';
 
 const INFERPILOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TMP = mkdtempSync(path.join(tmpdir(), 'inferpilot-runtime-'));
 const quiet = () => {};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
 let passed = 0;
@@ -264,6 +266,141 @@ return { status: r.ok ? 'done' : 'no', n: args.n };`);
     check(r.status === 'done' && r.n === 5 && JSON.parse(readFileSync(resultFile, 'utf8')).n === 5, `result ${out}`);
     const bad = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'nope'], { encoding: 'utf8' });
     check(bad.status === 2 && bad.stderr.includes('usage:'), 'an unknown backend prints the usage');
+  }],
+  ['procs: a runner that exited and is not reaped yet is gone', async () => {
+    const zombie = spawn('bash', ['-c', 'sleep 0.1 & echo $!; exec sleep 3'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const zpid = await new Promise((r) => zombie.stdout.once('data', (d) => r(Number(String(d).trim()))));
+    let zstat = '';
+    for (let i = 0; i < 50 && !/^Z /.test(zstat); i++) {
+      await sleep(20);
+      zstat = readFileSync(`/proc/${zpid}/stat`, 'utf8').split(') ').pop();
+    }
+    check(/^Z /.test(zstat) && !runnerAlive(`${zpid}-${zstat.split(' ')[19]}-${PID_NS}`),
+      'a runner that exited and is not reaped yet is gone');
+    zombie.kill('SIGKILL');
+  }],
+  ['run.mjs: SIGTERM stops the agents and what they started with setsid, frees the lock, writes an interrupted result', async () => {
+    if (!existsSync('/proc/self/environ')) return;
+    const script = path.join(TMP, 'stop.js');
+    writeFileSync(script, `phase('Long');\nawait agent('go', { label: 'long' });\nreturn { status: 'done' };`);
+    const lock = path.join(TMP, 'stop.lock');
+    const runDir = path.join(TMP, 'stop-run');
+    const cli = fakeCli('long.sh', `python3 ${path.join(INFERPILOT, 'scripts', 'run_lock.py')} acquire --run-dir ${runDir} >/dev/null
+setsid sleep 41.25 > /dev/null 2>&1 < /dev/null &
+sleep 42.25 & wait`);
+    const resultFile = path.join(TMP, 'stop.result.json');
+    const runner = spawn(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
+      '--args', '{}', '--result-file', resultFile], { env: { ...process.env, INFERPILOT_CURSOR_BIN: cli, INFERPILOT_LOCK_FILE: lock },
+      stdio: ['ignore', 'ignore', 'pipe'] });
+    let log = '';
+    runner.stderr.on('data', (d) => { log += d; });
+    const running = (what) => spawnSync('pgrep', ['-f', what]).status === 0;
+    for (let i = 0; i < 100 && !(running('sleep 41.25') && running('sleep 42.25') && existsSync(lock)); i++) await sleep(100);
+    check(running('sleep 41.25') && running('sleep 42.25'), 'the agent and its setsid child started');
+    runner.kill('SIGTERM');
+    const code = await new Promise((r) => runner.on('exit', (c) => r(c)));
+    check(code === 143, `exit ${code}`);
+    check(!running('sleep 41.25'), 'the setsid child of the agent was stopped');
+    check(!running('sleep 42.25'), 'the agent was stopped');
+    const result = JSON.parse(readFileSync(resultFile, 'utf8'));
+    check(result.status === 'interrupted' && result.signal === 'SIGTERM' && result.at === 'Long', `result ${JSON.stringify(result)}`);
+    const st = JSON.parse(execFileSync('python3', [path.join(INFERPILOT, 'scripts', 'run_lock.py'), '--lock', lock, 'status'], { encoding: 'utf8' }));
+    check(st.status === 'free', `the lock is ${st.status}`);
+    check(/=== END \(interrupted by SIGTERM in Long\)/.test(log), 'the log ends with the interruption');
+  }],
+  ['run.mjs: a second SIGTERM kills at once an agent that ignores the first; the lock is freed and the result written all the same', async () => {
+    if (!existsSync('/proc/self/environ')) return;
+    const script = path.join(TMP, 'deaf.js');
+    writeFileSync(script, `phase('Long');\nawait agent('go', { label: 'deaf' });\nreturn { status: 'done' };`);
+    const lock = path.join(TMP, 'deaf.lock');
+    const cli = fakeCli('deaf.sh', `python3 ${path.join(INFERPILOT, 'scripts', 'run_lock.py')} acquire --run-dir ${path.join(TMP, 'deaf-run')} >/dev/null
+trap '' TERM
+sleep 46.25 & wait`);
+    const resultFile = path.join(TMP, 'deaf.result.json');
+    const runner = spawn(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
+      '--args', '{}', '--result-file', resultFile], { env: { ...process.env, INFERPILOT_CURSOR_BIN: cli, INFERPILOT_LOCK_FILE: lock },
+      stdio: ['ignore', 'ignore', 'pipe'] });
+    let log = '';
+    runner.stderr.on('data', (d) => { log += d; });
+    const running = (what) => spawnSync('pgrep', ['-f', what]).status === 0;
+    for (let i = 0; i < 100 && !(running('sleep 46.25') && existsSync(lock)); i++) await sleep(100);
+    check(running('sleep 46.25'), 'the agent started');
+    const t0 = Date.now();
+    runner.kill('SIGTERM');
+    for (let i = 0; i < 100 && !/=== SIGTERM: stopping/.test(log); i++) await sleep(20);
+    await sleep(300);
+    runner.kill('SIGTERM');
+    const code = await new Promise((r) => runner.on('exit', (c) => r(c)));
+    const took = Date.now() - t0;
+    check(code === 143 && took < 8000, `exit ${code} after ${took} ms, not the first signal's 10 s of grace`);
+    check(!running('sleep 46.25'), 'the agent that ignored SIGTERM was killed');
+    check(existsSync(resultFile) && JSON.parse(readFileSync(resultFile, 'utf8')).status === 'interrupted', 'the interrupted result was written');
+    const st = JSON.parse(execFileSync('python3', [path.join(INFERPILOT, 'scripts', 'run_lock.py'), '--lock', lock, 'status'], { encoding: 'utf8' }));
+    check(st.status === 'free', `the lock is ${st.status}`);
+    check(/=== SIGTERM again: killing them at once/.test(log), 'the log says the second signal killed them');
+  }],
+  ['procs: a task with a container has its tagged processes stopped there, by the container\'s root', async () => {
+    if (!existsSync('/proc/self/environ')) return;
+    const bin = path.join(TMP, 'fakedocker');
+    mkdirSync(bin, { recursive: true });
+    const calls = path.join(TMP, 'docker_calls.txt');
+    // docker exec <container> <command...>: here the command runs on this machine, as the container's root would.
+    writeFileSync(path.join(bin, 'docker'), `#!/bin/bash\necho "$*" >> ${calls}\n[ "$1" = exec ] || exit 1\nshift 2\nexec "$@"\n`);
+    chmodSync(path.join(bin, 'docker'), 0o755);
+    const old = process.env.PATH;
+    process.env.PATH = `${bin}:${old}`;
+    try {
+      const victim = spawn('sleep', ['48.25'], { env: { ...process.env, INFERPILOT_RUN_TAG: '424242-1-1' }, detached: true, stdio: 'ignore' });
+      victim.unref();
+      await sleep(200);
+      // a worker that, told to stop, starts another tagged process on its way out
+      const forker = spawn('bash', ['-c', 'trap "sleep 49.25 & exit 0" TERM; while :; do sleep 0.1; done'],
+        { env: { ...process.env, INFERPILOT_RUN_TAG: '424242-1-1' }, detached: true, stdio: 'ignore' });
+      forker.unref();
+      await sleep(300);
+      const got = stopInContainer('box', '424242-1-1', 3);
+      check(got && got.map(Number).includes(victim.pid) && got.map(Number).includes(forker.pid), `stopped ${JSON.stringify(got)}`);
+      await sleep(200);
+      check(spawnSync('pgrep', ['-f', 'sleep 48.25']).status !== 0, 'the tagged process in the container is gone');
+      check(spawnSync('pgrep', ['-f', 'sleep 49.25']).status !== 0, 'and the one its worker started while stopping');
+      const script = path.join(TMP, 'boxed.js');
+      writeFileSync(script, `phase('Only');\nawait agent('go', { label: 'only' });\nreturn { status: 'done' };`);
+      const r = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
+        '--args', '{"container": "box"}'], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('boxed.sh', 'echo done') }, encoding: 'utf8' });
+      check(r.status === 0 && /^exec box sh -c [\s\S]* sh \d+-\d+-\d* 10$/m.test(readFileSync(calls, 'utf8')),
+        `the runner looked in the task's container at its end: ${readFileSync(calls, 'utf8').slice(-200)}`);
+      const named = path.join(TMP, 'named.js');
+      writeFileSync(named, `log('[inferpilot] container=box2');\nphase('Only');\nawait agent('go', { label: 'only' });\nreturn { status: 'done' };`);
+      const r2 = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), named, '--backend', 'cursor',
+        '--args', '{}'], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('named.sh', 'echo done') }, encoding: 'utf8' });
+      check(r2.status === 0 && /^exec box2 /m.test(readFileSync(calls, 'utf8')), 'a container the script resolved is cleaned up too');
+    } finally {
+      process.env.PATH = old;
+    }
+  }],
+  ['run.mjs: what the agents left running is stopped at the end; orphans are listed, and stopped with --kill-orphans', async () => {
+    if (!existsSync('/proc/self/environ')) return;
+    const script = path.join(TMP, 'tidy.js');
+    writeFileSync(script, `phase('Only');\nreturn { status: (await agent('go', { label: 'only', schema: ${JSON.stringify(SCHEMA)} })).ok };`);
+    const run = (...extra) => spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
+      '--args', '{}', ...extra], { env: { ...process.env, INFERPILOT_CURSOR_BIN: fakeCli('tidy.sh',
+      `setsid sleep 43.25 > /dev/null 2>&1 < /dev/null &\n${OK_JSON}`), INFERPILOT_LOCK_FILE: path.join(TMP, 'tidy.lock') }, encoding: 'utf8' });
+    const running = (what) => spawnSync('pgrep', ['-f', what]).status === 0;
+    const r = run();
+    check(r.status === 0 && /stopped 1 process\(es\) the run's agents left running/.test(r.stderr), `end ${r.stderr.slice(-300)}`);
+    check(!running('sleep 43.25'), 'the leftover was stopped');
+    const orphan = spawn('sleep', ['44.25'], { env: { ...process.env, INFERPILOT_RUN_TAG: '999999999-1' }, detached: true, stdio: 'ignore' });
+    orphan.unref();
+    await sleep(200);
+    const warned = run();
+    check(/1 process\(es\) left by runs that are gone/.test(warned.stderr) && running('sleep 44.25'), 'an orphan is listed and left alone');
+    const foreign = spawn('sleep', ['45.25'], { env: { ...process.env, INFERPILOT_RUN_TAG: '999999999-1-1' }, detached: true, stdio: 'ignore' });
+    foreign.unref();
+    await sleep(200);
+    const killed = run('--kill-orphans');
+    check(/stopped 1 process\(es\) left by runs that are gone/.test(killed.stderr) && !running('sleep 44.25'), 'and stopped on request');
+    check(running('sleep 45.25'), 'a process of a runner in another pid namespace is not judged an orphan');
+    process.kill(foreign.pid, 'SIGKILL');
   }],
 ];
 

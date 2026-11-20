@@ -401,6 +401,12 @@ nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.j
 tail -f exp/scan.log    # Ctrl-C leaves the log; the run goes on
 ```
 
+**Stopping a run.** `kill <runner pid>` (SIGTERM), or Ctrl-C on a runner started in the foreground,
+stops its agents and everything they started, servers started with `setsid` or `nohup` included (each
+inherits `INFERPILOT_RUN_TAG`, which names the runner), frees the machine lock and writes
+`"status": "interrupted"` to `--result-file`. A run that died otherwise (`kill -9`, a restarted
+container) leaves its processes behind: the next run lists them, and `--kill-orphans` stops them first.
+
 The file holds, as JSON, the arguments the sentences above give Claude Code. The issue that stops after
 the reproduction is `{"mode": "issue", "task": "https://github.com/sgl-project/sglang/issues/41299",
 "inferpilot_dir": "/workspace/inferpilot", "model_path": "<weights>", "gpu_ids": "0", "stop_after": "Reproduce"}`;
@@ -516,8 +522,8 @@ node runtime/run.mjs inferpilot.js --backend cursor \
   --args '{"mode":"scan","inferpilot_dir":"'"$PWD"'","framework_dir":"/path/to/sglang"}'
 ```
 
-`--model`, `--args-file`, `--result-file`, `--concurrency`, `--agent-timeout-ms` and `--schema-retries` are
-described at the top of `runtime/run.mjs`.
+`--model`, `--args-file`, `--result-file`, `--concurrency`, `--agent-timeout-ms`, `--schema-retries`
+and `--kill-orphans` are described at the top of `runtime/run.mjs`.
 
 | Argument | Meaning |
 |---|---|
@@ -575,8 +581,9 @@ post, the daily report to share.
 **One task per machine.** A run takes the machine before it creates anything — a lock in `/dev/shm`,
 which every container started with `--ipc=host` shares with the host and no other machine sees — and
 frees it at the end of its report. While another task holds it, a new run ends at once as `busy` and
-names the holder. A lock whose run finished, or wrote nothing in its run directory for twice its
-longest agent call (12 h by default), is taken over by the next run. A run in another container is
+names the holder. A lock whose run finished, whose runner (`runtime/run.mjs`, seen from the same
+container) is gone, or which wrote nothing in its run directory for twice its longest agent call (12 h
+by default), is taken over by the next run. A run in another container is
 never taken over for silence, since its run directory is not visible from here; once that run is
 gone, the second command frees the machine, as it frees one a run that died left behind:
 

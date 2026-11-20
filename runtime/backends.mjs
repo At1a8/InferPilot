@@ -82,12 +82,28 @@ function promptArg(prompt, label) {
 export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[name] } = {}) {
   if (!preset) throw new Error(`unknown backend ${name}; one of ${Object.keys(BACKENDS).join(', ')}`);
   const bin = (preset.binEnv && process.env[preset.binEnv]) || preset.bin;
+  const live = new Set(); // the stop function of every agent run still going
+  let closed = false;
   return {
     name,
     bin,
+    // Signals the process group of every agent run still going; returns how many there were.
+    stopAll(signal = 'SIGTERM') {
+      for (const stop of live) stop(signal);
+      return live.size;
+    },
+    // No agent run starts after this, so a script that retries a stopped call starts nothing new.
+    close() {
+      closed = true;
+      return this.stopAll('SIGTERM');
+    },
+    get running() {
+      return live.size;
+    },
     // onProgress(line) hears each tool call as it starts, when the CLI streams events; the answer comes
     // with the tokens its result event reports (usage: {input, output, cache, total}, or null).
     runAgent({ prompt, label = 'agent', cwd, env, model, timeoutMs = 0, onProgress = () => {} }) {
+      if (closed) return Promise.reject(new Error(`${name} [${label}] not started: the runner is stopping`));
       const argv = [...preset.args];
       const m = model || defaultModel;
       if (m) argv.push(preset.modelFlag, m);
@@ -114,6 +130,7 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
             process.kill(-child.pid, signal);
           } catch { /* already gone */ }
         };
+        if (child.pid) live.add(stop);
         const take = (raw) => {
           let e;
           try {
@@ -148,11 +165,13 @@ export function cliBackend(name, { model: defaultModel = '', preset = BACKENDS[n
         });
         child.stderr.on('data', (d) => { err = (err + d).slice(-65536); });
         child.on('error', (e) => {
+          live.delete(stop);
           if (timer) clearTimeout(timer);
           tidy();
           reject(new Error(`${name}: cannot run ${bin}: ${e.message}`));
         });
         child.on('close', (code, signal) => {
+          live.delete(stop);
           if (timer) clearTimeout(timer);
           tidy();
           if (preset.events && partial) take(partial);
