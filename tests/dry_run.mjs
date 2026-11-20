@@ -458,6 +458,7 @@ const scenarios = [
       const r = await run({ mode, task: 't', stop_after: 'Setup' });
       check(r.result.status === 'stopped' && r.result.stopped_at === 'Setup' && r.keys.at(-2) === 'director:report',
         `${mode}: ${r.result.status} at ${r.result.stopped_at}`);
+      check(r.result.next.say.startsWith('Stopped after Setup, as stop_after asked.'), `${mode}: ${r.result.next.say}`);
     }
     check(asks(await run({ mode: 'feature', task: 't', stop_after: 'Reproduce' }), 'stop_after'), 'Reproduce is not a feature phase');
     check(asks(await run({ mode: 'ci', task: 't', stop_after: 'Performance' }), 'stop_after'), 'ci never runs Performance');
@@ -468,6 +469,9 @@ const scenarios = [
     const moved = await run({ mode: 'feature', task: 't' }, undefined, { control: () => ({ stop_after: 'Spec' }) });
     check(moved.result.status === 'stopped' && moved.result.stopped_at === 'Spec', `moved: ${moved.result.status} at ${moved.result.stopped_at}`);
     check(moved.lines.some((l) => l === '[inferpilot] control: stop_after=spec'), 'the change is logged');
+    check(moved.result.next.say.startsWith('Stopped after Spec, as the control file asked.')
+      && moved.result.phases.some((p) => p.phase === 'Spec' && p.verdict === 'stopped' && p.summary === 'the control file asked: stop_after=spec'),
+    `the result says the control file asked for the stop: ${moved.result.next.say}`);
     let verifying = false;
     const now = await run({ mode: 'feature', task: 't' }, {
       'verify_engineer:verify': () => {
@@ -478,6 +482,9 @@ const scenarios = [
     check(now.result.status === 'stopped' && now.result.stopped_at === 'Verify', `now: ${now.result.status} at ${now.result.stopped_at}`);
     check(!now.keys.includes('investigator:investigate') && now.keys.includes('director:report'),
       'now during a failing Verify stops before Investigate, and the report still runs');
+    const told = now.calls.find((c) => c.key === 'director:report');
+    check(told && told.ins.phases.some((p) => p.verdict === 'stopped' && p.summary === 'the control file asked: stop_after=now'),
+      'the report hears that the control file asked for the stop');
     let reviewed = false;
     const inLoop = await run({ mode: 'feature', task: 't' }, {
       'reviewer:review': () => {
@@ -499,6 +506,16 @@ const scenarios = [
     check(past.result.status === 'ready_for_review'
       && past.lines.includes('[inferpilot] control: stop_after=spec; the run is past Spec and stops there only if it comes back to it'),
     `a stop the run is past is named as such, and the run goes on: ${past.result.status}`);
+    let designing = false;
+    const resumed = await run({ mode: 'feature', task: 't', resume_from: 'implement', run_dir: RUN }, {
+      'architect:design': (ins) => {
+        designing = true;
+        return DEFAULTS['architect:design'](ins);
+      },
+    }, { control: () => (designing ? { stop_after: 'Spec' } : {}) });
+    check(resumed.result.status === 'ready_for_review'
+      && resumed.lines.includes('[inferpilot] control: stop_after=spec; the run is past Spec and stops there only if it comes back to it'),
+    `a resumed run is past the stops of the run it resumes: ${resumed.result.status}`);
     let again = false;
     const checkedNow = await run({ mode: 'feature', task: 't' }, {
       'reviewer:review': (ins, n) => (n === 1
@@ -546,6 +563,19 @@ const scenarios = [
     const spLast = last.calls.find((c) => c.key === 'issue_triager:spinoff');
     check(last.result.status === 'ready_for_review' && spLast && spLast.ins.confirm_leads === false,
       `now during the last phase, which goes straight to the closing phases, runs no lead either: ${JSON.stringify(spLast && spLast.ins.confirm_leads)}`);
+    let tuning = false;
+    const kernel = await run({ mode: 'feature', task: 't', ...CMD }, {
+      ...withKernelHandoff('hot op'),
+      'kernel_liaison:run': (ins) => {
+        tuning = true;
+        return DEFAULTS['kernel_liaison:run'](ins);
+      },
+    }, { control: () => (tuning ? { stop_after: 'now' } : {}) });
+    const statuses = (hs) => (hs || []).map((h) => h.status).join();
+    const reported = kernel.calls.find((c) => c.key === 'director:report');
+    check(kernel.result.status === 'stopped' && kernel.result.stopped_at === 'Kernel' && !kernel.phases.includes('Verify')
+      && statuses(kernel.result.handoffs) === 'not_integrated' && reported && statuses(reported.ins.handoffs) === 'not_integrated',
+    `now while the kernel back end runs leaves its gain not_integrated, as the report hears: ${statuses(kernel.result.handoffs)}`);
   }],
   ['feature: a work package that never passes is rolled back', async () => {
     const r = await run({ mode: 'feature', task: 't', max_fix_rounds: 1 }, {

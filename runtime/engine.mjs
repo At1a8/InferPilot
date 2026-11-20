@@ -1,8 +1,8 @@
 // InferPilot's workflow runner: runs inferpilot.js outside Claude Code, with the globals Claude Code's
 // Workflow tool gives a script (agent, parallel, pipeline, phase, log, workflow, args, budget), and
-// control, which the Workflow tool lacks. Every
-// agent() call goes to a backend: { name, async runAgent({prompt, label, cwd, env, model, timeoutMs, onProgress})
-// -> {text, usage} }, where onProgress(line) hears each tool call and usage, when known, is {total, ...} tokens.
+// control, which the Workflow tool lacks. Every agent() call goes to a backend: { name, async
+// runAgent({prompt, label, cwd, env, model, timeoutMs, onProgress}) -> {text, usage} }, where onProgress(line)
+// hears each tool call and usage, when known, is {total, ...} tokens.
 import { readFile } from 'node:fs/promises';
 import { extractJson, outputContract, validate } from './schema.mjs';
 

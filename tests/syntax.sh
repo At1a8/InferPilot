@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The syntax of every script: inferpilot.js as the runner compiles it, the modules and tests as Node loads
-# them, the shell scripts as bash reads them, and every Python file parsed (not compiled to files: no
-# __pycache__ in the checkout). Exit 1 at the first that fails.
+# The syntax of every script: inferpilot.js as the Workflow tool compiles it (the runner adds control),
+# the modules and tests as Node loads them, the shell scripts as bash reads them, and every Python file
+# parsed (not compiled to files: no __pycache__ in the checkout). Exit 1 at the first that fails.
 #
 #   tests/syntax.sh            # all of them
 #   tests/syntax.sh js|sh|py   # one kind

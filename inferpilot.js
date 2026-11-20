@@ -732,6 +732,8 @@ function checkedOnBase(s) {
 async function finish(status, at) {
   R.status = status;
   R.stopped_at = at || '';
+  // A stop the control file asked for is the report's to explain: stop_after did not ask.
+  if (status === 'stopped' && stopAfterNow !== STOP_AFTER) note(at, 'stopped', `the control file asked: stop_after=${stopAfterNow}`);
   if (C.run_dir) {
     // What the run found that is not its own to fix is someone's: find it upstream or draft the issue.
     // Leads are run on the base commit only with confirm_leads; the GPUs are the task's.
@@ -803,7 +805,8 @@ function nextSteps(status, at) {
       + `Implement in this run directory; to change it, say how and run the task again.${report}`;
     out.rerun_with = { resume_from: 'implement', run_dir: C.run_dir, stop_after: '' };
   } else if (status === 'stopped') {
-    out.say = `Stopped after ${at}, as stop_after asked. To go on, run again without stop_after: the task starts over.${report}`;
+    out.say = `Stopped after ${at}, as ${stopAfterNow !== STOP_AFTER ? 'the control file' : 'stop_after'} asked. To go on, run again `
+      + `without stop_after: the task starts over.${report}`;
     out.rerun_with = { stop_after: '' };
   } else if (status === 'busy') {
     out.say = `${last || 'Another InferPilot task holds this machine'}. Run again when it ends; python3 scripts/run_lock.py status names it.`;
@@ -1174,6 +1177,7 @@ async function kernelStage() {
     h.status = res ? res.status : 'failed';
     h.result = res ? { speedup: res.speedup, evidence: res.evidence || '' } : result;
     if (res && res.status === 'improved' && res.integrate_wp) {
+      h.status = 'not_integrated'; // what stays when a stop asked for now ends the run before Implement
       const r = await implementAll([res.integrate_wp]);
       h.status = r.ok ? 'integrated' : 'integration_failed';
       if (r.ok) {
@@ -1248,6 +1252,8 @@ async function runFeature() {
   if (RESUME === 'implement') {
     C.spec_path = String(A.spec_path || `${C.run_dir}/feature_spec.md`);
     C.design_path = String(A.design_path || `${C.run_dir}/design.md`);
+    // The run this one resumes passed these stops: one named for them now never holds.
+    for (const p of ['spec', 'recon', 'design']) STOPS_PASSED.add(p);
     enter('Design');
     const approved = await call('architect', 'design', inputs({ approved_design: true }), DESIGN);
     if (!approved || approved.gate_ok !== true || !(approved.work_packages || []).length) {
