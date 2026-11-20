@@ -535,6 +535,23 @@ const scenarios = [
     check(bad.lines.some((l) => /stop_after=performance is not a phase of mode=ci; the stop stays verify/.test(l))
       && bad.result.status === 'stopped' && bad.result.stopped_at === 'Verify', `a phase the mode lacks keeps the stop: ${bad.result.stopped_at}`);
   }],
+  ['stop_after: a stop asked for now still runs the closing phases, Spinoff among them, without confirming leads', async () => {
+    const lead = { title: 'tokenizer test fails on main', observed: '3/3 KeyError', reproduce: 'pytest test_tokenizer.py' };
+    let verifying = false;
+    const r = await run({ mode: 'feature', task: 't', confirm_leads: true }, {
+      'implementer:implement': (ins) => ({ wp: ins.work_package.id, status: 'done', commit: `c_${ins.work_package.id}`,
+        unit_test_cmd: 'pytest -q t.py', leads: [lead] }),
+      'verify_engineer:verify': () => {
+        verifying = true;
+        return { all_pass: false, failures: [{ gate: 'G2' }] };
+      },
+    }, { control: () => (verifying ? { stop_after: 'now' } : {}) });
+    check(r.result.status === 'stopped' && r.result.stopped_at === 'Verify', `now with a lead: ${r.result.status} at ${r.result.stopped_at}`);
+    const sp = r.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(sp && r.keys.includes('director:report'), 'Spinoff and the report run after a stop asked for now');
+    check(sp && sp.ins.confirm_leads === false && (sp.ins.confirm_skipped || []).some((x) => /stop/.test(x)),
+      `no lead is run on the GPUs after a stop asked for now: ${JSON.stringify(sp && [sp.ins.confirm_leads, sp.ins.confirm_skipped])}`);
+  }],
   ['feature: a work package that never passes is rolled back', async () => {
     const r = await run({ mode: 'feature', task: 't', max_fix_rounds: 1 }, {
       'test_engineer:unit': (ins) => ({ wp: ins.work_package.id, unit_pass: false, feature_off_unchanged: true, fails_without_change: 'parent', failure_summary: 'still wrong' }),

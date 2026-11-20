@@ -362,7 +362,7 @@ function note(phaseTitle, verdict, summary) {
 // A stop the control file asks for "now" takes effect at the next phase boundary, wherever the route
 // goes from there (Verify into Investigate as well); the closing phases always run.
 class StopRequested extends Error {}
-const CLOSING = new Set(['Reply', 'Report']);
+const CLOSING = new Set(['Spinoff', 'Reply', 'Report']);
 function enter(title) {
   if (PHASE && !CLOSING.has(title) && liveStopAfter() === 'now') throw new StopRequested(PHASE);
   PHASE = title;
@@ -739,7 +739,8 @@ async function finish(status, at) {
       // A base run that fails for another reason would pass for a confirmed lead: a timed-out agent may still
       // hold the GPUs, and a run that ended at Setup never showed the environment works.
       const skipped = !C.confirm_leads ? [] : [...TIMED_OUT_CALLS].map((c) => `${c} timed out`)
-        .concat(at === 'Setup' ? ['the run stopped at Setup'] : []);
+        .concat(at === 'Setup' ? ['the run stopped at Setup'] : [])
+        .concat(stopAfterNow === 'now' ? ['the control file asked the run to stop now'] : []);
       const sp = await call('issue_triager', 'spinoff', inputs({ status, stopped_at: at || '', phases: R.phases,
         leads: R.leads, attention: R.attention, confirm_leads: C.confirm_leads && !skipped.length, confirm_skipped: skipped }), SPINOFF);
       if (sp && Array.isArray(sp.spinoffs)) {
