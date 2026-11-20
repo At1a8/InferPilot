@@ -1146,8 +1146,9 @@ async function preparePR(round) {
     if (pr.branch) C.branch = pr.branch;
     C.pr_body_path = pr.pr_body_path || '';
     C.leak_scan_findings = leaks;
+    C.pr_work_packages = wps;
     R.pr = { title: pr.title || '', branch: pr.branch, pr_body_path: pr.pr_body_path, push_command: pr.push_command || '',
-      merges_cleanly: pr.merges_cleanly !== false, leak_scan_findings: leaks };
+      merges_cleanly: pr.merges_cleanly !== false, leak_scan_findings: leaks, work_packages: wps };
   }
   note('PR', ok ? 'pass' : 'fail', !pr ? 'the PR engineer returned nothing'
     : `${pr.title || pr.branch}${pr.diff_stat ? ` (${pr.diff_stat})` : ''}`

@@ -15,7 +15,7 @@ from test_readme import ROOT
 
 sys.path.insert(0, str(ROOT / "scripts"))
 # The scripts that check what InferPilot publishes (daily_report, leak_scan) use the same patterns.
-from daily_report import AMD_HOST, INTERNAL_SITE, PRIVATE_IP, PUBLIC_AMD  # noqa: E402
+from daily_report import AMD_HOST, INTERNAL_SITE, PRIVATE_IP, PUBLIC_AMD, machine_names  # noqa: E402
 
 SECRET = re.compile(r"ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[ousr]_[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9_-]{16,}"
                     r"|\bsk-[A-Za-z0-9_-]{32,}|AKIA[0-9A-Z]{16}|\bhf_[A-Za-z0-9]{30,}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
@@ -59,16 +59,6 @@ def files():
 def found(pattern, keep=lambda m: True, show=lambda s: s[:60]):
     return ["%s:%d: %s" % (name, text.count("\n", 0, m.start()) + 1, show(m.group(0)))
             for name, text in files() for m in pattern.finditer(text) if keep(m)]
-
-
-def machine_names(host):
-    """This machine's name, and the stem its cluster's siblings share (node-m01-13: node-m01-12 too)."""
-    stem = host
-    while re.search(r"[-_.][a-z]?\d+$", stem, re.I):
-        stem = re.sub(r"[-_.][a-z]?\d+$", "", stem, flags=re.I)
-    if stem != host and len(stem) >= 8:
-        return re.compile(r"(?<![\w-])%s(?:[-_.][a-z]?\d+)*(?![\w-])" % re.escape(stem), re.I)
-    return re.compile(r"(?<![\w-])%s(?![\w-])" % re.escape(host), re.I)
 
 
 @unittest.skipIf(FILES is None, "not a git checkout")

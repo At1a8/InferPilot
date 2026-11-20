@@ -204,6 +204,10 @@ class DailyReportTest(unittest.TestCase):
         self.assertEqual([l.split(":")[0] for l in daily_report.leaks(body, "gpu-node-7")], ["2", "3", "4"])
         self.assertEqual(daily_report.leaks("| 1 | GLM crashes with --dcp-size 8 | #41299 |", "gpu-node-7"), [])
 
+    def test_a_sibling_machine_and_a_storage_root_stop_the_report(self):
+        body = "ran on gpu-node-8\nweights in /models/x\nok"
+        self.assertEqual([l.split(":")[0] for l in daily_report.leaks(body, "gpu-node-7")], ["1", "2"])
+
     def test_check_exit_codes(self):
         template = Path(__file__).resolve().parent.parent / "templates" / "daily_report.md"
         with tempfile.TemporaryDirectory() as d:
@@ -668,6 +672,56 @@ class LeakScanTest(unittest.TestCase):
         self.commit("y = 3\n", author="Jane <%s>" % site)
         rc, out = self.scan()
         self.assertEqual((rc, out["identities"]), (1, ["Jane <%s>" % site, "gpu-node-17 <jane@users.noreply.github.com>"]))
+
+    def test_an_internal_host_by_name_is_found_and_a_module_path_is_not(self):
+        lines = ["HOST=ci" + ".internal", "ssh ci" + ".internal"]
+        self.commit("".join("%s\n" % line for line in lines
+                            + ["from google.protobuf.internal import builder", "t = list(self.unique_id.internal)",
+                               "code = grpc.StatusCode.INTERNAL"]))
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]), (1, lines))
+
+    def test_the_network_inside_a_public_path_is_found(self):
+        lines = ["LOG = '/tmp/10." + "1.2.3/run.log'", "CACHE = '/opt/wiki." + "amd.com/cache'"]
+        self.commit("".join("%s\n" % line for line in lines))
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]), (1, lines))
+
+    def test_a_carriage_return_or_a_vertical_tab_inside_a_line_hides_nothing(self):
+        (self.repo / "log.txt").write_bytes(b"progress\rmodel=/home/alice/private\na\x0bLOG=/home/alice/log\n")
+        git("add", "-A", cwd=self.repo)
+        self.commit("")
+        rc, out = self.scan()
+        self.assertEqual((rc, len(out["leaks"])), (1, 2))
+
+    def test_a_sibling_in_the_cluster_is_found(self):
+        self.commit("ssh gpu-node-18\nARGS = '--dist-init-addr gpu-node-18:5000'\nGPUS = 'gpu-nodes'\n")
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]),
+                         (1, ["ssh gpu-node-18", "ARGS = '--dist-init-addr gpu-node-18:5000'"]),
+                         "a word that only starts like the cluster's names is none")
+
+    def test_a_shell_default_without_a_colon_and_a_file_uri_are_read_as_paths(self):
+        self.commit("MODEL=${MODEL_DIR-/data/models/m}\nTMP = 'file:///tmp/sglang/x'\nLIB = 'file:///opt/rocm/lib'\n"
+                    "HOME = 'file:///home/alice/x'\n")
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]),
+                         (1, ["MODEL=${MODEL_DIR-/data/models/m}", "HOME = 'file:///home/alice/x'"]),
+                         "/tmp and /opt stay public in a file URI")
+
+    def test_more_storage_roots_are_local(self):
+        lines = ["/scratch/alice/x", "/raid/alice/models", "--model-path /models/DeepSeek-V4.1-Flash", "/nfs_home/alice/x",
+                 "/export/alice/x", "/work/alice/x", "/kmd3/alice/x"]
+        self.commit("".join("%s\n" % line for line in lines))
+        rc, out = self.scan()
+        self.assertEqual((rc, [f["text"] for f in out["leaks"]]), (1, lines))
+
+    def test_the_default_host_is_the_name_without_its_domain(self):
+        self.commit("ssh gpu-node-17\n")
+        out = io.StringIO()
+        with mock.patch("socket.gethostname", return_value="gpu-node-17.cluster.example"), redirect_stdout(out):
+            rc = leak_scan.main(["--repo", str(self.repo), "--base", self.base])
+        self.assertEqual((rc, [f["text"] for f in json.loads(out.getvalue())["leaks"]]), (1, ["ssh gpu-node-17"]))
 
     def test_an_added_line_that_reads_like_a_file_header_is_content(self):
         self.commit("++ /home/alice/private\n")

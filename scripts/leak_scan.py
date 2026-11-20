@@ -6,12 +6,16 @@
 Scans the lines each commit of the branch adds to any file (a line a later commit removed is still published
 by the push), the names of the files it adds, its commit messages, the author and committer of each commit,
 and the PR description when given, for local paths (/home, /mnt, /data, ...: daily_report.LOCAL), this
-machine's host name, the company's network (internal sites and hosts, private addresses: daily_report.leaks),
-and identities such as root or an address with the host name in it. A path counts only when the base does
-not carry it already (git grep at the base: AMD CI's /data2/models/huggingface is upstream's, not this
-machine's), and none under /tmp or /opt counts, since those name nothing of this machine; --allow adds a
-pattern for text that is public all the same. Prints one JSON object, {"leaks": [{"where", "text"}],
-"identities": [...]}, and exits 1 when anything was found. Standard library only.
+machine's name and its siblings' (daily_report.machine), the company's network (internal sites and hosts,
+private addresses: daily_report.network), and identities such as root or an address with the host name in
+it. A path counts only when the base does not carry it already (git grep at the base: AMD CI's
+/data2/models/huggingface is upstream's, not this machine's), and none under /tmp or /opt counts, since
+those name nothing of this machine; --allow adds a pattern for text that is public all the same. Prints one
+JSON object, {"leaks": [{"where", "text"}], "identities": [...]}, and exits 1 when anything was found.
+Standard library only.
+
+It finds what these patterns describe and no more: a name they do not know, or one in a picture or an
+encoding, passes. A human reads the branch before pushing it.
 """
 from __future__ import annotations
 
@@ -19,33 +23,36 @@ import argparse
 import json
 import os
 import re
-import socket
 import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from daily_report import LOCAL, leaks  # noqa: E402
+from daily_report import LOCAL, machine, network, this_host  # noqa: E402
 
 # A path as a line holds it: from a / that starts a word, or follows an option (-I/x) or a shell default
 # (${V:-/x}), to a space, a quote, a bracket or a colon, so each entry of PYTHONPATH=/a:/b is one. None
-# starts in the // of a URL: leaks() reads its host.
+# starts in the // of a URL: network() reads its host.
 PATH = re.compile(r"(?:(?<![\w./-])|(?<=(?<![\w-])-[A-Za-z])|(?<=:[-=?+]))/(?!/)[^\s'\"`<>(){}\[\],;:]+")
 GENERIC = ("/tmp/", "/opt/")
 # root as a person: a name with its address (Signed-off-by: root <root@node>), or a root@ address.
 ROOT = re.compile(r"(?<![\w.-])root\s*<[^<>\s]+@[^<>\s]+>|(?<![\w.+-])root@[a-z0-9]", re.I)
+# Read as the paths they hold: ${V-/x} as ${V:-/x}, file:///x as /x.
+SHELL_DEFAULT = re.compile(r"(\$\{\w+)([-=?+])(?=/)")
+FILE_URI = re.compile(r"\bfile://(?=/)", re.I)
 
 
 def git(repo: str, *args: str) -> str:
-    # A byte that is not UTF-8 is replaced: it must not stop the scan of the line it is in.
-    return subprocess.run(["git", "-C", repo, *args], capture_output=True, encoding="utf-8", errors="replace",
-                          check=True).stdout
+    # Bytes, decoded here: one that is not UTF-8 is replaced, and a \r stays inside its line (text mode would
+    # break the line there, and what follows would lose its + and be skipped).
+    return subprocess.run(["git", "-C", repo, *args], capture_output=True, check=True).stdout.decode("utf-8", "replace")
 
 
 def added_lines(diff: str):
-    """(path, line number, text) of every line a unified diff adds. File headers are read only before a
-    file's first hunk: inside one, a line that adds '++ x' reads '+++ x' and is content."""
+    """(path, line number, text) of every line a unified diff adds. A line ends at a line feed only (a carriage
+    return or a vertical tab in it is content), and file headers are read only before a file's first hunk:
+    inside one, a line that adds '++ x' reads '+++ x' and is content."""
     path, n, in_hunk = "", 0, False
-    for line in diff.splitlines():
+    for line in diff.split("\n"):
         if line.startswith("diff --git "):
             in_hunk = False
         elif line.startswith("@@"):
@@ -63,11 +70,13 @@ def added_lines(diff: str):
 
 
 def scan(text: str, host: str, allow: list, public=lambda path: False) -> bool:
-    """Whether a line would publish the host name, the company's network, root as a person, or a path under a
-    local directory that public(path) does not know as public."""
+    """Whether a line would publish this machine or a sibling, the company's network, root as a person, or a
+    path under a local directory that public(path) does not know as public."""
     for pattern in allow:
         text = re.sub(pattern, "", text)
-    if (host and host.lower() in text.lower()) or ROOT.search(text) or leaks(PATH.sub(" ", text), host):
+    text = FILE_URI.sub("", SHELL_DEFAULT.sub(r"\1:\2", text))
+    # The machine and the network count wherever they are, inside a public path too (/tmp/<address>/run.log).
+    if machine(text, host) or network(text) or ROOT.search(text) or LOCAL.search(PATH.sub(" ", text)):
         return True
     paths = (p.rstrip(".:!?") for p in PATH.findall(text))
     return any(LOCAL.match(p) and not p.startswith(GENERIC) and not public(p) for p in paths)
@@ -96,7 +105,7 @@ def main(argv=None) -> int:
     ap.add_argument("--repo", required=True)
     ap.add_argument("--base", required=True, help="the commit the branch starts from")
     ap.add_argument("--body", default="", help="the PR description, when written")
-    ap.add_argument("--host", default=socket.gethostname(), help="this machine's name (default: the host name)")
+    ap.add_argument("--host", default=this_host(), help="this machine's name (default: the host name, without its domain)")
     ap.add_argument("--allow", action="append", default=[], help="a regex for text that may stay (repeatable)")
     a = ap.parse_args(argv)
     allow = a.allow

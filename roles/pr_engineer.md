@@ -21,15 +21,16 @@ Inputs: `round` (1 after the work packages of an earlier round were made).
    switches documented. Each gap becomes a work package whose `test` shows it closed (`lint_pass`
    false while lint fails). Then what a reviewer upstream asks first (`pr_playbook.md` §Before opening):
    - **Nothing private:** `python3 <inferpilot_dir>/scripts/leak_scan.py --repo <worktree> --base <base>`
-     finds no local path, host name, internal site or host, or private address in the lines any commit
-     adds, the names of the files it adds or the commit messages, and no `root` identity (step 2 resets
-     the authors and rewords a message that names root); each finding in the code is a work package;
-     one in a commit whose line a later commit removed is still published by the push, so step 2's
-     rewrite drops it (the tree stays the one reviewed). What the last scan (step 5) still finds goes in
-     `leak_scan_findings`, never in `leads`, which are problems of the framework. A path the base
-     already carries (an upstream convention, such as the `HF_HOME` of AMD CI's tests) and one under
-     `/tmp` or `/opt` are no findings. One that is public all the same passes with `--allow '<regex>'`,
-     each with its reason in the ledger; never a path of this machine.
+     finds no local path, name of this host or of a sibling in its cluster, internal site or host, or
+     private address in the lines any commit adds, the names of the files it adds or the commit
+     messages, and no `root` identity (step 2 resets the authors and rewords a message that names root);
+     each finding in the code is a work package; one in a commit whose line a later commit removed is
+     still published by the push, so step 2's rewrite drops it (the tree stays the one reviewed). What
+     the last scan (step 5) still finds goes in `leak_scan_findings`, never in `leads`, which are
+     problems of the framework. A path the base already carries (an upstream convention, such as the
+     `HF_HOME` of AMD CI's tests) and one under `/tmp` or `/opt` are no findings. One that is public all
+     the same passes with `--allow '<regex>'`, each with its reason in the ledger; never a path of this
+     machine.
    - **Tests the PR carries:** only tests the repository's CI runs, the fewest that cover the change: a
      change to outputs carries one end-to-end accuracy test at the feature's defaults (sglang: GSM8K
      under `test/registered/amd/accuracy/...` with `register_amd_ci`, as its `write-sglang-test` skill

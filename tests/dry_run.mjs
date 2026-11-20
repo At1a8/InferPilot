@@ -487,6 +487,13 @@ const scenarios = [
     check(kept.result.status === 'blocked' && (kept.result.pr.leak_scan_findings || [])[0] === finding
       && !!reported && (reported.ins.leak_scan_findings || [])[0] === finding,
       `a leak the PR stopped on stays in the result and reaches the report: ${kept.result.status}`);
+    const left = await run({ mode: 'ci', task: 'c' }, {
+      'pr_engineer:pr': () => ({ ...clean, work_packages: [WP('H6', { goal: 'drop the refactor of shared code' })] }),
+    });
+    const told = left.calls.find((c) => c.key === 'director:report');
+    check(left.result.status === 'blocked' && ((left.result.pr.work_packages || [])[0] || {}).id === 'H6'
+      && !!told && ((told.ins.pr_work_packages || [])[0] || {}).id === 'H6',
+      `what the second PR round still lacks stays in the result and reaches the report: ${left.result.status}`);
   }],
   ['stop_after: every mode stops after Setup; a phase the mode lacks is asked about', async () => {
     for (const mode of ['issue', 'ci', 'perf']) {

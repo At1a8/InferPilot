@@ -20,7 +20,6 @@ import base64
 import json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -28,7 +27,7 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from daily_report import default_repo, leaks  # noqa: E402
+from daily_report import default_repo, leaks, this_host  # noqa: E402
 
 INFERPILOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MARKER = "<!-- inferpilot:knowledge -->"
@@ -150,7 +149,7 @@ def main(argv=None) -> int:
             return 0
         diff = patch(a.inferpilot_dir, tracked, untracked)
         body = open(a.body, encoding="utf-8").read()
-        bad = leaks(added(diff), socket.gethostname()) + leaks(body, socket.gethostname())
+        bad = leaks(added(diff), this_host()) + leaks(body, this_host())
         if bad:
             print("propose_knowledge: not proposed; it names something local or internal:\n  " + "\n  ".join(bad), file=sys.stderr)
             return 3
