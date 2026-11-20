@@ -300,6 +300,31 @@ const scenarios = [
     check(r.result.status === 'blocked' && r.result.stopped_at === 'Verify', `status ${r.result.status} at ${r.result.stopped_at}`);
     check(r.keys.filter((k) => k === 'verify_engineer:verify').length === 3, 'verify runs max_investigate_rounds + 1 times');
   }],
+  ['feature: a report-only item that misses is reported, never investigated', async () => {
+    const r = await run({ mode: 'feature', task: 't' }, {
+      'verify_engineer:verify': () => ({ all_pass: false, failures: [{ gate: 'ACC-3 simple_qa', blocking: false }] }),
+    });
+    check(!r.keys.includes('investigator:investigate'), 'no investigation for a report-only miss');
+    check(r.result.phases.some((p) => p.phase === 'Verify' && p.verdict === 'pass' && /report-only items missed: ACC-3 simple_qa/.test(p.summary)),
+      'the miss is in the Verify note');
+    const mixed = await run({ mode: 'feature', task: 't', max_investigate_rounds: 1 }, {
+      'verify_engineer:verify': () => ({ all_pass: false, failures: [{ gate: 'G2' }, { gate: 'ACC-3', blocking: false }] }),
+      'investigator:investigate': () => ({ verdict: 'inconclusive' }),
+    });
+    check(mixed.result.status === 'blocked' && mixed.result.stopped_at === 'Verify', `a blocking miss still fails: ${mixed.result.status}`);
+    const inv = mixed.calls.find((c) => c.key === 'investigator:investigate');
+    check(inv && eqList(inv.ins.failures.map((f) => f.gate), ['G2']), 'the investigator gets the blocking failures only');
+  }],
+  ['feature: the verify call knows its time limit; a suite that cannot finish within it stops the run, uninvestigated', async () => {
+    const r = await run({ mode: 'feature', task: 't' }, {
+      'verify_engineer:verify': () => ({ all_pass: false, failures: [{ gate: 'ACC-3 simple_qa', failure_class: 'time' }] }),
+    });
+    const ver = r.calls.find((c) => c.key === 'verify_engineer:verify');
+    check(ver && ver.ins.time_limit_min === 360, `the default limit of a long role, in minutes: ${ver && ver.ins.time_limit_min}`);
+    check(!r.keys.includes('investigator:investigate'), 'no investigation for a suite out of time');
+    check(r.result.status === 'blocked' && r.result.stopped_at === 'Verify', `status ${r.result.status} at ${r.result.stopped_at}`);
+    check(r.result.phases.some((p) => p.phase === 'Verify' && /larger agent_timeout_ms/.test(p.summary)), 'the note says what to raise');
+  }],
   ['feature: with auto_approve_design false, L3 waits for a human-approved design', async () => {
     const r = await run({ mode: 'feature', task: 't', auto_approve_design: false }, {
       'analyst:recon': () => ({ design_path: `${RUN}/design.md`, unmapped: [], level: 'L3', gap_type: 'framework-only' }),

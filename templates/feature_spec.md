@@ -8,6 +8,16 @@
 - Upstream design: <PR / paper / design doc link>, at commit <sha>
 - Dependencies that are not merged yet: <PR links, commits to cherry-pick>
 - Matching feature skill, if any: `knowledge/feature_skills/<id>/SKILL.md` (status: <validated / stale>)
+- Scenarios the source reports: <data sets, input / output lengths, concurrency, sampling, thinking,
+  hardware, and its numbers>; the port is measured on these, and their gain reproduced here is the
+  performance claim
+
+## Feasibility
+
+<!-- The documented range of each model the feature uses (model card, config: training context of a
+     draft model, max_position_embeddings, checkpoint precision) and the range the source was tested
+     on. A scenario outside the source's, the task's own workload included, is a non-goal unless the
+     goal names it: say why here and list it under Non-goals. -->
 
 ## Target
 

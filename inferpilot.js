@@ -639,7 +639,8 @@ const ROLLBACK = S({ wp: str, reset_to: str, clean: bool }, ['reset_to', 'clean'
 const VERIFY = S({
   all_pass: bool,
   gates: obj,
-  failures: arr(S({ gate: str, failure_class: str, counts: str, evidence: str }, ['gate'])),
+  // blocking false: a report-only item of the acceptance matrix, which is reported and never investigated
+  failures: arr(S({ gate: str, failure_class: str, counts: str, evidence: str, blocking: bool }, ['gate'])),
   ledger_path: str,
   summary: str,
 }, ['all_pass', 'failures']);
@@ -980,26 +981,33 @@ async function implementAll(wps) {
 async function verifyLoop(extraGates) {
   for (let round = 0; ; round++) {
     enter('Verify');
-    const v = await call('verify_engineer', 'verify', inputs({ extra_gates: extraGates || [], round }),
-      VERIFY, `verify_engineer#${round}`);
+    const v = await call('verify_engineer', 'verify', inputs({ extra_gates: extraGates || [], round,
+      time_limit_min: Math.round(timeoutFor('verify_engineer') / 60000) }), VERIFY, `verify_engineer#${round}`);
     if (!v) {
       note('Verify', 'fail', 'the verify engineer returned nothing');
       return { ok: false, reason: 'no verification result' };
     }
     if (v.ledger_path) C.ledger_path = v.ledger_path;
-    if (v.all_pass === true) {
-      note('Verify', 'pass', v.summary || 'all gates pass');
+    const failures = v.failures || [];
+    const blocking = failures.filter((f) => f.blocking !== false);
+    if (v.all_pass === true || (failures.length && !blocking.length)) {
+      const missed = failures.filter((f) => f.blocking === false).map((f) => f.gate).join(', ');
+      note('Verify', 'pass', `${v.summary || 'all blocking gates pass'}${missed ? `; report-only items missed: ${missed}` : ''}`);
       return { ok: true };
     }
-    const failing = (v.failures || []).map((f) => `${f.gate}${f.failure_class ? `:${f.failure_class}` : ''}`).join(', ');
-    note('Verify', 'fail', failing || v.summary || 'gates failed');
+    const failing = blocking.map((f) => `${f.gate}${f.failure_class ? `:${f.failure_class}` : ''}`).join(', ');
+    // A suite that cannot finish within the call's limit is no defect to investigate.
+    const late = blocking.filter((f) => f.failure_class === 'time').map((f) => f.gate);
+    note('Verify', 'fail', `${failing || v.summary || 'gates failed'}${late.length
+      ? `; ${late.join(', ')} cannot finish within the verify call's limit: run again with a larger agent_timeout_ms` : ''}`);
+    if (late.length) return { ok: false, reason: `out of time: ${late.join(', ')}` };
     if (round >= MAX_INVESTIGATE) return { ok: false, reason: `investigation budget exhausted (${failing})` };
 
     enter('Investigate');
     const integratedKernels = R.handoffs.filter((h) => h.status === 'integrated')
       .map((h) => ({ handoff: h.id, wp: h.integrated_wp, commit: h.commit }));
     const inv = await call('investigator', 'investigate',
-      inputs({ failures: v.failures || [], round, integrated_kernels: integratedKernels }),
+      inputs({ failures: blocking, round, integrated_kernels: integratedKernels }),
       INVESTIGATE, `investigator#${round}`);
     if (!inv) {
       note('Investigate', 'fail', 'the investigator returned nothing');
