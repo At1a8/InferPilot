@@ -26,8 +26,12 @@ Inputs: `round`, `extra_gates`, `claim`, `verified_work_packages`, `known_issues
    hot path; serving APIs, metrics and server arguments change only as the task requires.
 4. **Conventions.** The framework's code-style rules, with its linters run on the changed files (the PR
    changes no code, so what fails here is a finding); tests present and registered where its CI runs
-   them (`register_amd_ci` only for AMD paths); user-visible switches documented; debug
-   instrumentation off by default; environment variables defined and named per its conventions.
+   them (`register_amd_ci` only for AMD paths), and no more than cover the change (`pr_playbook.md`);
+   user-visible switches documented; debug instrumentation off by default; environment variables
+   defined and named per its conventions. The smallest diff: a hunk the change does not need, a
+   refactor or reformatting of code CUDA also runs, a check repeated where an earlier one holds, or a
+   platform test called per use instead of a module-level constant (sglang: `_is_hip`) is a `major`
+   finding.
 5. **Evidence.** Every number in the ledger points at an artifact; the gates ran against the
    same-pattern baseline; a performance claim was measured on the fixed workload with the same flags on
    both arms and enough runs, and, with `held_out` on, held at the held-out operating point; nothing was re-run until it
