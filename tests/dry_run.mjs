@@ -51,16 +51,19 @@ function makeBackend(overrides) {
   return { backend: b, calls };
 }
 
-async function run(args, overrides) {
+async function run(args, overrides, { control } = {}) {
   const phases = [];
   const heads = [];
+  const lines = [];
   let route = [];
   const { backend, calls } = makeBackend(overrides);
   const rt = createRuntime({
     backend,
     concurrency: 2,
     schemaRetries: 0,
+    ...(control ? { control } : {}),
     log: (msg) => {
+      lines.push(msg);
       // "=== PHASE: X ===", "=== PHASE 3/10 [###-------]: X ===" or "=== PHASE (off the route): X ==="
       const m = /^=== PHASE(?: \d+\/\d+ \[[#-]+\]| \(off the route\))?: (.*?) ===/.exec(msg);
       if (m) {
@@ -77,7 +80,7 @@ async function run(args, overrides) {
   const prefix = SCENARIO.split(':')[0];
   if (result && result.mode) MODES_RUN.set(prefix, (MODES_RUN.get(prefix) || new Set()).add(result.mode));
   RESULTS.push({ scenario: SCENARIO, result });
-  return { result, phases, heads, route, calls, keys: calls.map((c) => c.key), summary: rt.summary() };
+  return { result, phases, heads, route, calls, lines, keys: calls.map((c) => c.key), summary: rt.summary() };
 }
 
 let failed = 0;
@@ -460,6 +463,54 @@ const scenarios = [
     check(asks(await run({ mode: 'ci', task: 't', stop_after: 'Performance' }), 'stop_after'), 'ci never runs Performance');
     const ok = await run({ mode: 'issue', task: 'i', stop_after: 'reproduce' });
     check(ok.result.status === 'stopped' && ok.result.stopped_at === 'Reproduce', `case does not matter: ${ok.result.status}`);
+  }],
+  ['stop_after: the control file moves the stop while the run goes on; now stops at the next boundary', async () => {
+    const moved = await run({ mode: 'feature', task: 't' }, undefined, { control: () => ({ stop_after: 'Spec' }) });
+    check(moved.result.status === 'stopped' && moved.result.stopped_at === 'Spec', `moved: ${moved.result.status} at ${moved.result.stopped_at}`);
+    check(moved.lines.some((l) => l === '[inferpilot] control: stop_after=spec'), 'the change is logged');
+    let verifying = false;
+    const now = await run({ mode: 'feature', task: 't' }, {
+      'verify_engineer:verify': () => {
+        verifying = true;
+        return { all_pass: false, failures: [{ gate: 'G2' }] };
+      },
+    }, { control: () => (verifying ? { stop_after: 'now' } : {}) });
+    check(now.result.status === 'stopped' && now.result.stopped_at === 'Verify', `now: ${now.result.status} at ${now.result.stopped_at}`);
+    check(!now.keys.includes('investigator:investigate') && now.keys.includes('director:report'),
+      'now during a failing Verify stops before Investigate, and the report still runs');
+    let reviewed = false;
+    const inLoop = await run({ mode: 'feature', task: 't' }, {
+      'reviewer:review': () => {
+        reviewed = true;
+        return { verdict: 'changes_requested', findings: [{ severity: 'major', issue: 'x' }], work_packages: [WP('R9')],
+          review_path: `${RUN}/review.md` };
+      },
+    }, { control: () => (reviewed ? { stop_after: 'Verify' } : {}) });
+    check(inLoop.result.status === 'stopped' && inLoop.result.stopped_at === 'Verify' && !inLoop.keys.includes('pr_engineer:pr')
+      && inLoop.keys.filter((k) => k === 'verify_engineer:verify').length === 2,
+    `a stop named during the review repair round ends the run after its Verify: ${inLoop.result.status} at ${inLoop.result.stopped_at}`);
+    const cleared = await run({ mode: 'issue', task: 'i', stop_after: 'Setup' }, undefined, { control: () => ({ stop_after: '' }) });
+    check(cleared.result.stopped_at !== 'Setup' && cleared.phases.includes('Triage'), `cleared: ${cleared.result.status}`);
+    const bad = await run({ mode: 'ci', task: 'c', stop_after: 'Verify' }, undefined, { control: () => ({ stop_after: 'Performance' }) });
+    check(bad.lines.some((l) => /stop_after=performance is not a phase of mode=ci; the stop stays verify/.test(l))
+      && bad.result.status === 'stopped' && bad.result.stopped_at === 'Verify', `a phase the mode lacks keeps the stop: ${bad.result.stopped_at}`);
+  }],
+  ['stop_after: a stop asked for now still runs the closing phases, Spinoff among them, without confirming leads', async () => {
+    const lead = { title: 'tokenizer test fails on main', observed: '3/3 KeyError', reproduce: 'pytest test_tokenizer.py' };
+    let verifying = false;
+    const r = await run({ mode: 'feature', task: 't', confirm_leads: true }, {
+      'implementer:implement': (ins) => ({ wp: ins.work_package.id, status: 'done', commit: `c_${ins.work_package.id}`,
+        unit_test_cmd: 'pytest -q t.py', leads: [lead] }),
+      'verify_engineer:verify': () => {
+        verifying = true;
+        return { all_pass: false, failures: [{ gate: 'G2' }] };
+      },
+    }, { control: () => (verifying ? { stop_after: 'now' } : {}) });
+    check(r.result.status === 'stopped' && r.result.stopped_at === 'Verify', `now with a lead: ${r.result.status} at ${r.result.stopped_at}`);
+    const sp = r.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(sp && r.keys.includes('director:report'), 'Spinoff and the report run after a stop asked for now');
+    check(sp && sp.ins.confirm_leads === false && (sp.ins.confirm_skipped || []).some((x) => /stop/.test(x)),
+      `no lead is run on the GPUs after a stop asked for now: ${JSON.stringify(sp && [sp.ins.confirm_leads, sp.ins.confirm_skipped])}`);
   }],
   ['feature: a work package that never passes is rolled back', async () => {
     const r = await run({ mode: 'feature', task: 't', max_fix_rounds: 1 }, {

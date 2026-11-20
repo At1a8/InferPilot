@@ -1,5 +1,6 @@
 // InferPilot's workflow runner: runs inferpilot.js outside Claude Code, with the globals Claude Code's
-// Workflow tool gives a script (agent, parallel, pipeline, phase, log, workflow, args, budget). Every
+// Workflow tool gives a script (agent, parallel, pipeline, phase, log, workflow, args, budget), and
+// control, which the Workflow tool lacks. Every
 // agent() call goes to a backend: { name, async runAgent({prompt, label, cwd, env, model, timeoutMs, onProgress})
 // -> {text, usage} }, where onProgress(line) hears each tool call and usage, when known, is {total, ...} tokens.
 import { readFile } from 'node:fs/promises';
@@ -49,12 +50,14 @@ export const fmtMinutes = (ms) => {
 };
 
 // quietMs: an agent call that showed nothing for that long gets a still-working line (0: never).
+// control: a function the script may call for the run's live settings (runtime/run.mjs: the control file).
 export function createRuntime({
   backend,
   concurrency = 4,
   schemaRetries = 2,
   agentTimeoutMs = 0,
   quietMs = 5 * 60 * 1000,
+  control = () => ({}),
   log = (msg) => process.stderr.write(`[${new Date().toISOString().slice(11, 19)}] ${msg}\n`),
 } = {}) {
   if (!backend || typeof backend.runAgent !== 'function') throw new Error('createRuntime: backend.runAgent is required');
@@ -184,12 +187,12 @@ export function createRuntime({
   async function runScript(path, args = {}) {
     let fn;
     try {
-      fn = new AsyncFunction('agent', 'parallel', 'pipeline', 'phase', 'log', 'workflow', 'args', 'budget',
+      fn = new AsyncFunction('agent', 'parallel', 'pipeline', 'phase', 'log', 'workflow', 'args', 'budget', 'control',
         scriptBody(await readFile(path, 'utf8')));
     } catch (e) {
       throw new Error(`cannot compile ${path}: ${e.message}`);
     }
-    return fn(agent, parallel, pipeline, phase, scriptLog, workflow, args, budget);
+    return fn(agent, parallel, pipeline, phase, scriptLog, workflow, args, budget, control);
   }
 
   return { agent, parallel, pipeline, phase, log: scriptLog, runScript, state, summary, current: () => current };

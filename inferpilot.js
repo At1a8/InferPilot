@@ -356,11 +356,43 @@ function note(phaseTitle, verdict, summary) {
   R.phases.push({ phase: phaseTitle, verdict, summary: String(summary || '').slice(0, 600) });
 }
 
+// A stop the control file asks for "now" takes effect at the next phase boundary, wherever the route
+// goes from there (Verify into Investigate as well); the closing phases always run.
+class StopRequested extends Error {}
+const CLOSING = new Set(['Spinoff', 'Reply', 'Report']);
 function enter(title) {
+  if (PHASE && !CLOSING.has(title) && liveStopAfter() === 'now') throw new StopRequested(PHASE);
   PHASE = title;
   phase(title);
 }
-const stopHere = (title) => STOP_AFTER !== '' && STOP_AFTER === title.toLowerCase();
+// Under runtime/run.mjs, control() returns the run's control file, read at every phase boundary: its
+// stop_after replaces the argument's while the run goes on, and "now" stops after the phase that is ending.
+// The Workflow tool has no control global.
+let stopAfterNow = STOP_AFTER;
+let stopAfterSeen = STOP_AFTER;
+function liveStopAfter() {
+  if (typeof control !== 'function') return STOP_AFTER;
+  let c = null;
+  try {
+    c = control();
+  } catch { /* an unreadable file changes nothing */ }
+  const s = c && typeof c.stop_after === 'string' ? c.stop_after.trim().toLowerCase() : stopAfterNow;
+  if (s !== stopAfterSeen) {
+    stopAfterSeen = s;
+    const known = s === '' || s === 'now' || (STOP_PHASES[MODE] || []).some((p) => p.toLowerCase() === s);
+    log(`[inferpilot] control: stop_after=${s || '(none)'}${known ? '' : ` is not a phase of mode=${MODE}; the stop stays ${stopAfterNow || '(none)'}`}`);
+    if (known) stopAfterNow = s;
+  }
+  return stopAfterNow;
+}
+const stopHere = (title) => {
+  const s = liveStopAfter();
+  return s !== '' && (s === 'now' || s === title.toLowerCase());
+};
+// The same check where the verify, review and PR repair loops end a phase again: a stop named while the
+// run is in such a loop ends the run there, as the route's own checks do on its first pass.
+const stopAt = (title) => (stopHere(title) ? { ok: false, stopped: true, at: title } : null);
+const ended = (r, at) => finish(r.stopped ? 'stopped' : 'blocked', r.stopped ? r.at : at);
 
 // Inputs every role sees: the context plus what earlier phases produced.
 const inputs = (extra) => ({
@@ -700,7 +732,8 @@ async function finish(status, at) {
       // A base run that fails for another reason would pass for a confirmed lead: a timed-out agent may still
       // hold the GPUs, and a run that ended at Setup never showed the environment works.
       const skipped = !C.confirm_leads ? [] : [...TIMED_OUT_CALLS].map((c) => `${c} timed out`)
-        .concat(at === 'Setup' ? ['the run stopped at Setup'] : []);
+        .concat(at === 'Setup' ? ['the run stopped at Setup'] : [])
+        .concat(stopAfterNow === 'now' ? ['the control file asked the run to stop now'] : []);
       const sp = await call('issue_triager', 'spinoff', inputs({ status, stopped_at: at || '', phases: R.phases,
         leads: R.leads, attention: R.attention, confirm_leads: C.confirm_leads && !skipped.length, confirm_skipped: skipped }), SPINOFF);
       if (sp && Array.isArray(sp.spinoffs)) {
@@ -971,7 +1004,11 @@ async function verifyLoop(extraGates) {
     if (inv.verdict === 'fix_needed' && Array.isArray(inv.work_packages) && inv.work_packages.length) {
       const fix = await implementAll(inv.work_packages);
       if (!fix.ok) return { ok: false, reason: `fix ${fix.failed_wp || ''} failed: ${fix.reason}` };
+      const afterFix = stopAt('Implement');
+      if (afterFix) return afterFix;
       await kernelStage(); // hand-offs a fix raised
+      const afterKernel = stopAt('Kernel');
+      if (afterKernel) return afterKernel;
       continue;
     }
     return { ok: false, reason: 'investigation inconclusive' };
@@ -1056,11 +1093,29 @@ async function reviewLoop(extraGates, perfClaim, runPerf) {
     }
     const fix = await implementAll(wps);
     if (!fix.ok) return { ok: false, at: 'Implement' };
-    await kernelStage(); // hand-offs a requested change raised
-    const ver = await verifyLoop(extraGates);
-    if (!ver.ok) return { ok: false, at: 'Verify' };
-    if (runPerf && !(await performance(perfClaim)).ok) return { ok: false, at: 'Performance' };
+    const stop = await repaired(extraGates, perfClaim, runPerf);
+    if (stop) return stop;
   }
+}
+
+// After the fixes of a review or PR round: Kernel, Verify and Performance again, each ending with the
+// stop check; what failed or stopped, or null.
+async function repaired(extraGates, perfClaim, runPerf) {
+  const afterFix = stopAt('Implement');
+  if (afterFix) return afterFix;
+  await kernelStage(); // hand-offs a requested change raised
+  const afterKernel = stopAt('Kernel');
+  if (afterKernel) return afterKernel;
+  const ver = await verifyLoop(extraGates);
+  if (!ver.ok) return ver.stopped ? ver : { ok: false, at: 'Verify' };
+  const afterVerify = stopAt('Verify');
+  if (afterVerify) return afterVerify;
+  if (runPerf) {
+    if (!(await performance(perfClaim)).ok) return { ok: false, at: 'Performance' };
+    const afterPerf = stopAt('Performance');
+    if (afterPerf) return afterPerf;
+  }
+  return null;
 }
 
 // The PR engineer changes no code: the branch it hands over must be the tree Verify and Review passed.
@@ -1137,7 +1192,7 @@ async function deliver(wps, extraGates, perfClaim, runPerf) {
   if (stopHere('Kernel')) return finish('stopped', 'Kernel');
 
   const ver = await verifyLoop(extraGates);
-  if (!ver.ok) return finish('blocked', 'Verify');
+  if (!ver.ok) return ended(ver, 'Verify');
   if (stopHere('Verify')) return finish('stopped', 'Verify');
 
   if (runPerf) {
@@ -1156,7 +1211,7 @@ async function deliver(wps, extraGates, perfClaim, runPerf) {
   }
 
   const rev = await reviewLoop(extraGates, perfClaim, runPerf);
-  if (!rev.ok) return finish('blocked', rev.at);
+  if (!rev.ok) return ended(rev, rev.at);
   if (stopHere('Review')) return finish('stopped', 'Review');
 
   // What the PR engineer finds missing goes back through Implement, Verify and Review, once.
@@ -1166,12 +1221,11 @@ async function deliver(wps, extraGates, perfClaim, runPerf) {
     if (!pr.wps.length || round >= 1) return finish('blocked', 'PR');
     const fix = await implementAll(pr.wps);
     if (!fix.ok) return finish('blocked', 'Implement');
-    await kernelStage();
-    const again = await verifyLoop(extraGates);
-    if (!again.ok) return finish('blocked', 'Verify');
-    if (runPerf && !(await performance(perfClaim)).ok) return finish('blocked', 'Performance');
+    const stop = await repaired(extraGates, perfClaim, runPerf);
+    if (stop) return ended(stop, stop.at);
     const reviewed = await reviewLoop(extraGates, perfClaim, runPerf);
-    if (!reviewed.ok) return finish('blocked', reviewed.at);
+    if (!reviewed.ok) return ended(reviewed, reviewed.at);
+    if (stopHere('Review')) return finish('stopped', 'Review');
   }
 }
 
@@ -1454,4 +1508,9 @@ const RUNNERS = { feature: runFeature, issue: runIssue, ci: runCi, perf: runPerf
 log(`[inferpilot] mode=${MODE} inferpilot_dir=${INFERPILOT} framework=${C.framework}${C.framework_dir ? ` (${C.framework_dir})` : ''}`);
 if (ROUTES[MODE]) logRoute(ROUTES[MODE]);
 if (C.container) log(`[inferpilot] container=${C.container}`); // the runner stops what the run started there
-return await RUNNERS[MODE]();
+try {
+  return await RUNNERS[MODE]();
+} catch (e) {
+  if (e instanceof StopRequested) return finish('stopped', e.message);
+  throw e;
+}

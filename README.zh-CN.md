@@ -235,6 +235,8 @@ nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.j
 tail -f exp/scan.log    # Ctrl-C 只是退出查看，运行会继续
 ```
 
+**改变运行的停止点。** runner 在每个阶段边界读取 `exp/scan.control.json`（参数文件名换成 `.control.json`；`--control-file` 可以指定别的文件）：`{"stop_after": "Verify"}` 在 Verify 之后停，`{"stop_after": "now"}` 在当前阶段结束后停，`{"stop_after": ""}` 跑到结束。停止点变化时日志里会写一行；运行开始时就已经存在的文件，要等它被改过之后才生效。
+
 **停止一个运行。** `kill <runner 的 pid>`（SIGTERM），或者对前台启动的 runner 按 Ctrl-C，会停掉它的所有 agent 以及它们启动的一切，包括用 `setsid` 或 `nohup` 启动的 server（它们都继承了标明这个 runner 的 `INFERPILOT_RUN_TAG`），释放机器锁，并在 `--result-file` 里写下 `"status": "interrupted"`。以其他方式死掉的运行（`kill -9`、容器重启）会留下它的进程：下一个运行会把它们列出来，`--kill-orphans` 会先停掉它们。
 
 文件里写的就是上面交给 Claude Code 的那些参数，格式为 JSON。在复现之后停下的那个 issue 任务写成 `{"mode": "issue", "task": "https://github.com/sgl-project/sglang/issues/41299", "inferpilot_dir": "/workspace/inferpilot", "model_path": "<weights>", "gpu_ids": "0", "stop_after": "Reproduce"}`；用一句话描述的写成 `{"inferpilot_dir": "/workspace/inferpilot", "request": "..."}`。`exp/scan.log` 按这个模式的路线给每个阶段编号，并附上到目前为止的用量（`=== PHASE 2/3 [##-]: Dispatch ===  so far: 1 agent call, 410k tokens, 4 min`）；写出每次 agent 调用，调用里的每个工具调用开始时各写一行（执行的命令、读写的文件）；安静五分钟后写一行"仍在运行"；每次调用结束时写出用时和 token（按 CLI 的计数，含缓存），整个运行结束时写一行总结；`exp/scan.result.json` 是最终结果：其中有 `status`，以及 `next`，即运行结束后接下来做什么。日志末尾列出同样的步骤（`=== NEXT: ...`）：只有你能回答的问题；接下来可以发起的每次运行，参数写在你那个文件旁边（`exp/scan.start-1.json` 是 scan 排名第一的任务，`exp/<name>.again.json` 是同一个任务再跑一次、待你填好回答），并附上启动它的命令；以及只有你能做的事。
@@ -303,7 +305,7 @@ node runtime/run.mjs inferpilot.js --backend cursor \
   --args '{"mode":"scan","inferpilot_dir":"'"$PWD"'","framework_dir":"/path/to/sglang"}'
 ```
 
-`--model`、`--args-file`、`--result-file`、`--concurrency`、`--agent-timeout-ms`、`--schema-retries` 和 `--kill-orphans` 的说明在 `runtime/run.mjs` 开头。
+`--model`、`--args-file`、`--result-file`、`--concurrency`、`--agent-timeout-ms`、`--schema-retries`、`--kill-orphans` 和 `--control-file` 的说明在 `runtime/run.mjs` 开头。
 
 | 参数 | 含义 |
 |---|---|
