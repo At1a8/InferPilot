@@ -68,22 +68,32 @@ Return:
 
 Inputs: `known_issues` (failures a same-pattern baseline control already proved pre-existing, in the
 `known_issues.md` format), `leads` (problems a role met that are not this task's, each with `title`,
-`observed`, `where`, `evidence`, `reproduce` and the call it came `from`), `status`, `phases`, the
-ledger. None of them is this task's to fix, and each is someone's: give a human what it takes to hand
-it on.
+`observed`, `where`, `evidence`, `reproduce` and the call it came `from`), `confirm_leads`,
+`attention`, `status`, `phases`, the ledger. None of them is this task's to fix, and each is
+someone's: give a human what it takes to hand it on. Also read `knowledge/env_hygiene.md` (*The code
+under test*, and how to stop what you start).
 
 1. **Leads first.** Drop a lead that repeats a known issue or another lead.
    - Without `confirm_leads` (the default), run nothing: the run's time is the task's. Look each lead
      up as in step 2; one tracked upstream is `tracked`, the rest `unconfirmed`, with `note` giving the
-     command that would show it on the base commit. No draft for them.
+     command that would show it on the base commit. No draft for them. `confirm_leads` also comes in
+     false when a call of this run timed out (`attention`): its agent may still hold the GPUs, and a
+     base run that fails for that would pass for a confirmed lead. Say so in each `note`.
    - With `confirm_leads`, check each on the base commit the ledger records, without this task's
-     change: a throwaway worktree (`git -C <framework_dir> worktree add --detach RUN_DIR/spinoff/base
-     <base>`, removed when done), the GPUs in `gpu_ids`, the smallest run that shows it (the lead's
-     `reproduce`, else the command in its evidence), at most a few runs each, one log per run under
-     `RUN_DIR/logs/`. One that shows there is a known issue now: write it in the `known_issues.md`
-     format as `known_issue`, and go on with it as with the others. One that does not show, or cannot
-     run here (another model, platform or scale), is `unconfirmed`, with `note` saying what was tried
-     and what would confirm it.
+     change, on the GPUs in `gpu_ids`, at most a few runs each, one log per run under `RUN_DIR/logs/`:
+     - The tree: `RUN_DIR/base` when it is a worktree at that commit, else a throwaway one
+       (`git -C <framework_dir> worktree add --detach RUN_DIR/spinoff/base <base>`, removed when done).
+     - The command: the lead's `reproduce`, else the one in its evidence, with the base tree first on
+       `PYTHONPATH` (sglang: `<base tree>/python`). A lead was written by a role working on the task
+       tree, so replace any `PYTHONPATH` or `TREE` in it that names another tree; one you cannot point
+       at the base tree is `unconfirmed`, and `note` says why.
+     - The first log of each run prints `sglang.__file__`; a run that did not import it from the base
+       tree does not count.
+     - Stop only what you started, from the PIDs you recorded when you started it (`env_hygiene.md`).
+     One that shows there is a known issue now: write it in the `known_issues.md` format as
+     `known_issue`, and go on with it as with the others. One that does not show, or cannot run here
+     (another model, platform or scale), is `unconfirmed`, with `note` saying what was tried and what
+     would confirm it.
 2. **Tracked already?** For each known issue: its entry in `knowledge/known_issues.md` if it has one,
    then the framework's open issues and PRs (`scripts/scan_issues.py`, or the search API with
    `GITHUB_TOKEN`) by component, symptom and error text. An issue or PR that matches the symptom and

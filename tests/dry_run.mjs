@@ -171,6 +171,7 @@ const scenarios = [
     const rep = r.calls.find((c) => c.key === 'director:report');
     check(rep && rep.ins.spinoffs.length === 1 && rep.ins.spinoffs[0].draft_path === `${RUN}/spinoff/KI-007.md`
       && r.result.spinoffs.length === 1 && r.result.spinoffs[0].id === 'KI-007', 'the report and the result list the draft');
+    check((r.result.next.user || []).some((u) => u.includes(`${RUN}/spinoff/KI-007.md`)), 'next.user asks the human to file the draft');
     const tracked = await run({ mode: 'feature', task: 't' }, { ...bug,
       'issue_triager:spinoff': () => ({ spinoffs: [{ id: 'KI-007', source: 'known_issue', status: 'tracked',
         upstream: 'sgl-project/sglang#51020 (open)' }] }) });
@@ -201,6 +202,19 @@ const scenarios = [
     const asp = asked.calls.find((c) => c.key === 'issue_triager:spinoff');
     check(sp.ins.confirm_leads === false && asp && asp.ins.confirm_leads === true,
       'leads are checked on the base commit only when the task asks for it (confirm_leads)');
+    const timedOut = await run({ mode: 'feature', task: 't', confirm_leads: true, agent_timeout_ms: 100 }, {
+      'implementer:implement': (ins) => ({ wp: ins.work_package.id, status: 'done', commit: `c_${ins.work_package.id}`,
+        unit_test_cmd: 'pytest -q t.py', leads: [lead] }),
+      'verify_engineer:verify': async () => {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        return { all_pass: true, failures: [] };
+      },
+    });
+    const tsp = timedOut.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(timedOut.result.status === 'blocked' && tsp && tsp.ins.confirm_leads === false
+      && (tsp.ins.attention || []).some((a) => String(a.call).startsWith('verify_engineer')),
+      'after a timeout the spinoff confirms nothing, since the timed-out agent may still hold the GPUs, and sees why');
+    check(!(r.result.next.user || []).some((u) => u.includes('issue draft')), 'an unconfirmed lead asks the human for nothing');
     const confirmed = await run({ mode: 'feature', task: 't' }, {
       'reviewer:review': () => ({ verdict: 'approve', findings: [], review_path: `${RUN}/review.md`, leads: [lead] }),
       'issue_triager:spinoff': () => ({ spinoffs: [{ id: 'KI-009', source: 'lead', status: 'drafted', draft_path: `${RUN}/spinoff/KI-009.md`,

@@ -376,8 +376,9 @@ function rolePrompt(role, sub, ins, attempt, takesLeads) {
     : `Write artifacts only under RUN_DIR (code changes only in the
 task worktree named in the inputs). Never push, never post on GitHub. The one exception is the curator's knowledge pull request to
 InferPilot's own repository (scripts/propose_knowledge.py).
-Framework code runs from the tree under test, the task worktree (or RUN_DIR/base for a baseline at the
-base commit): put it first on PYTHONPATH (sglang: <tree>/python) for every server, test and benchmark.
+Framework code runs from the tree under test, the task worktree (or a worktree at the base commit,
+RUN_DIR/base or RUN_DIR/spinoff/base, for a run there): put it first on PYTHONPATH (sglang:
+<tree>/python) for every server, test and benchmark.
 Use only the GPUs in gpu_ids: export HIP_VISIBLE_DEVICES=<gpu_ids> for every server, test and
 benchmark. Touch only the processes, servers and containers this run started (knowledge/guardrails.md).
 As root in the container, give back what you write on host mounts: after every git write and before you
@@ -682,8 +683,9 @@ async function finish(status, at) {
     // Leads are run on the base commit only with confirm_leads; the GPUs are the task's.
     if (R.known_issues.length || R.leads.length) {
       enter('Spinoff');
-      const sp = await call('issue_triager', 'spinoff',
-        inputs({ status, stopped_at: at || '', phases: R.phases, leads: R.leads }), SPINOFF);
+      // A timed-out call may still hold the GPUs: a base run that fails for that would pass for a confirmed lead.
+      const sp = await call('issue_triager', 'spinoff', inputs({ status, stopped_at: at || '', phases: R.phases,
+        leads: R.leads, attention: R.attention, confirm_leads: C.confirm_leads && TIMED_OUT_CALLS.size === 0 }), SPINOFF);
       if (sp && Array.isArray(sp.spinoffs)) {
         R.spinoffs = sp.spinoffs;
         for (const s of sp.spinoffs) if (s && s.source === 'lead' && s.known_issue) R.known_issues.push(s.known_issue);
@@ -753,6 +755,7 @@ function nextSteps(status, at) {
   if (status === 'ready_for_review' && R.pr) user.push(R.pr.push_command || `push ${R.pr.branch}: the report has the command`);
   if (status === 'queued') user.push(`share ${C.run_dir}/daily_report.md as a new issue in InferPilot's repository (README step 5)`);
   if (R.reply_draft_path) user.push(`post the reply draft on the issue: ${R.reply_draft_path}`);
+  for (const s of R.spinoffs) if (s && s.status === 'drafted' && s.draft_path) user.push(`file the issue draft upstream: ${s.draft_path}`);
   if (R.knowledge_pr) user.push(`review the curator's pull request to InferPilot: ${R.knowledge_pr}`);
   for (const a of R.attention) user.push(`clean up before anything else runs there: ${a.issue}${a.worktree ? ` (${a.worktree})` : ''}`);
   if (user.length) out.user = user;
