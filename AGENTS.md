@@ -52,7 +52,8 @@ Only when the user asks:
 
 - to stop after another phase, or after the one now running, write `{"stop_after": "<phase>"}` or
   `{"stop_after": "now"}` to `exp/<name>.control.json`; the runner reads it at every phase boundary and
-  logs the change (`[inferpilot] control: stop_after=...`). `""` runs to the end again.
+  logs the change (`[inferpilot] control: stop_after=...`, which also says when the run is past that
+  phase), or `!! control file ...` when the file holds no JSON object. `""` runs to the end again.
 - to stop at once, `kill <runner pid>`, the pid on the first line of `exp/<name>.log` (SIGTERM, never
   `kill -9`): the runner stops its agents and what they started, frees the machine lock and writes
   `"status": "interrupted"` to the result file.

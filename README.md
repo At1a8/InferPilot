@@ -402,10 +402,11 @@ tail -f exp/scan.log    # Ctrl-C leaves the log; the run goes on
 ```
 
 **Moving a run's stop.** The runner reads `exp/scan.control.json` (the arguments file's name with
-`.control.json`; `--control-file` names another) at every phase boundary: `{"stop_after": "Verify"}`
-stops after Verify, `{"stop_after": "now"}` after the phase now running, `{"stop_after": ""}` runs to the
-end. The log says when the stop moved; a file already there when the run starts counts only once it
-changes.
+`.control.json`; `--control-file` names another) at every phase boundary: `{"stop_after": "<phase>"}`
+stops after that phase of the mode (`Collect` for this scan, `Verify` for a feature task),
+`{"stop_after": "now"}` after the phase now running, `{"stop_after": ""}` runs to the end. The log says
+when the stop moved, and when the run is already past that phase or the file holds no JSON object; a
+file already there when the run starts counts only once it changes.
 
 **Stopping a run.** `kill <runner pid>` (SIGTERM; the log's first line gives the pid), or Ctrl-C on a
 runner started in the foreground, stops its agents and everything they started, servers started with

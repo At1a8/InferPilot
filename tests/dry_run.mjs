@@ -489,6 +489,29 @@ const scenarios = [
     check(inLoop.result.status === 'stopped' && inLoop.result.stopped_at === 'Verify' && !inLoop.keys.includes('pr_engineer:pr')
       && inLoop.keys.filter((k) => k === 'verify_engineer:verify').length === 2,
     `a stop named during the review repair round ends the run after its Verify: ${inLoop.result.status} at ${inLoop.result.stopped_at}`);
+    let reviewing = false;
+    const past = await run({ mode: 'feature', task: 't' }, {
+      'reviewer:review': () => {
+        reviewing = true;
+        return DEFAULTS['reviewer:review']();
+      },
+    }, { control: () => (reviewing ? { stop_after: 'Spec' } : {}) });
+    check(past.result.status === 'ready_for_review'
+      && past.lines.includes('[inferpilot] control: stop_after=spec; the run is past Spec and stops there only if it comes back to it'),
+    `a stop the run is past is named as such, and the run goes on: ${past.result.status}`);
+    let again = false;
+    const checkedNow = await run({ mode: 'feature', task: 't' }, {
+      'reviewer:review': (ins, n) => (n === 1
+        ? { verdict: 'changes_requested', findings: [{ severity: 'major', issue: 'x' }], work_packages: [WP('R9')], review_path: `${RUN}/review.md` }
+        : DEFAULTS['reviewer:review']()),
+      'verify_engineer:verify': (ins, n) => {
+        again = n === 2;
+        return DEFAULTS['verify_engineer:verify']();
+      },
+    }, { control: () => (again ? { stop_after: 'Verify' } : {}) });
+    check(checkedNow.result.status === 'stopped' && checkedNow.result.stopped_at === 'Verify'
+      && checkedNow.lines.includes('[inferpilot] control: stop_after=verify'),
+    `a stop named while the run passes that phase again is not behind it: ${checkedNow.result.status} at ${checkedNow.result.stopped_at}`);
     const cleared = await run({ mode: 'issue', task: 'i', stop_after: 'Setup' }, undefined, { control: () => ({ stop_after: '' }) });
     check(cleared.result.stopped_at !== 'Setup' && cleared.phases.includes('Triage'), `cleared: ${cleared.result.status}`);
     const bad = await run({ mode: 'ci', task: 'c', stop_after: 'Verify' }, undefined, { control: () => ({ stop_after: 'Performance' }) });

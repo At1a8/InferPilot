@@ -235,7 +235,7 @@ nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.j
 tail -f exp/scan.log    # Ctrl-C 只是退出查看，运行会继续
 ```
 
-**改变运行的停止点。** runner 在每个阶段边界读取 `exp/scan.control.json`（参数文件名换成 `.control.json`；`--control-file` 可以指定别的文件）：`{"stop_after": "Verify"}` 在 Verify 之后停，`{"stop_after": "now"}` 在当前阶段结束后停，`{"stop_after": ""}` 跑到结束。停止点变化时日志里会写一行；运行开始时就已经存在的文件，要等它被改过之后才生效。
+**改变运行的停止点。** runner 在每个阶段边界读取 `exp/scan.control.json`（参数文件名换成 `.control.json`；`--control-file` 可以指定别的文件）：`{"stop_after": "<phase>"}` 在该模式的这个阶段之后停（这个 scan 是 `Collect`，feature 任务可以是 `Verify`），`{"stop_after": "now"}` 在当前阶段结束后停，`{"stop_after": ""}` 跑到结束。停止点变化时日志里会写一行；运行已经过了那个阶段、或者文件里不是 JSON 对象时，日志也会说明；运行开始时就已经存在的文件，要等它被改过之后才生效。
 
 **停止一个运行。** `kill <runner 的 pid>`（SIGTERM；日志第一行给出这个 pid），或者对前台启动的 runner 按 Ctrl-C，会停掉它的所有 agent 以及它们启动的一切，包括用 `setsid` 或 `nohup` 启动的 server（它们都继承了标明这个 runner 的 `INFERPILOT_RUN_TAG`），释放机器锁，并在 `--result-file` 里写下 `"status": "interrupted"`。以其他方式死掉的运行（`kill -9`、被 OOM killer 杀掉）会留下它的进程：下一个运行会把它们列出来（任务容器里的也包括在内），`--kill-orphans` 会先停掉它们。容器重启会带走其中的进程，但会留下机器锁，而新容器判断不了锁的 runner 是否还在：用 `python3 scripts/run_lock.py release --force` 释放它。
 

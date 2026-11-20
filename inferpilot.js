@@ -370,7 +370,10 @@ function enter(title) {
 // The Workflow tool has no control global.
 let stopAfterNow = STOP_AFTER;
 let stopAfterSeen = STOP_AFTER;
-function liveStopAfter() {
+// The stops the route has checked: one named there holds only if the run checks it again (a repair loop
+// may; Spec never comes back). `at` is the stop being checked now, which is not behind the run.
+const STOPS_PASSED = new Set();
+function liveStopAfter(at = '') {
   if (typeof control !== 'function') return STOP_AFTER;
   let c = null;
   try {
@@ -379,15 +382,20 @@ function liveStopAfter() {
   const s = c && typeof c.stop_after === 'string' ? c.stop_after.trim().toLowerCase() : stopAfterNow;
   if (s !== stopAfterSeen) {
     stopAfterSeen = s;
-    const known = s === '' || s === 'now' || (STOP_PHASES[MODE] || []).some((p) => p.toLowerCase() === s);
-    log(`[inferpilot] control: stop_after=${s || '(none)'}${known ? '' : ` is not a phase of mode=${MODE}; the stop stays ${stopAfterNow || '(none)'}`}`);
+    const phaseName = (STOP_PHASES[MODE] || []).find((p) => p.toLowerCase() === s);
+    const known = s === '' || s === 'now' || !!phaseName;
+    const why = !known ? ` is not a phase of mode=${MODE}; the stop stays ${stopAfterNow || '(none)'}`
+      : phaseName && s !== at && STOPS_PASSED.has(s) ? `; the run is past ${phaseName} and stops there only if it comes back to it` : '';
+    log(`[inferpilot] control: stop_after=${s || '(none)'}${why}`);
     if (known) stopAfterNow = s;
   }
   return stopAfterNow;
 }
 const stopHere = (title) => {
-  const s = liveStopAfter();
-  return s !== '' && (s === 'now' || s === title.toLowerCase());
+  const t = title.toLowerCase();
+  const s = liveStopAfter(t);
+  STOPS_PASSED.add(t);
+  return s !== '' && (s === 'now' || s === t);
 };
 // The same check where the verify, review and PR repair loops end a phase again: a stop named while the
 // run is in such a loop ends the run there, as the route's own checks do on its first pass.

@@ -85,12 +85,20 @@ const fileState = (f) => {
   }
 };
 const staleControl = controlFile ? fileState(controlFile) : '';
+// A file that holds no JSON object changes nothing; the log names it once for each state it is in.
+let badControl = '';
 const control = () => {
   try {
     if (!controlFile || !existsSync(controlFile) || (staleControl && fileState(controlFile) === staleControl)) return {};
     const c = JSON.parse(readFileSync(controlFile, 'utf8'));
-    return c && typeof c === 'object' ? c : {};
-  } catch {
+    if (c && typeof c === 'object' && !Array.isArray(c)) return c;
+    throw new Error('not a JSON object');
+  } catch (e) {
+    const state = fileState(controlFile);
+    if (state && state !== badControl) {
+      badControl = state;
+      rt.log(`!! control file ${controlFile}: ${e.message}; the stop stays as it was`);
+    }
     return {};
   }
 };
