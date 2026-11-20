@@ -340,6 +340,7 @@ node runtime/run.mjs inferpilot.js --backend cursor \
 | `auto_approve_design` | `feature`，默认 `true`：architect 标记需要人审的设计和 L3 任务直接进入 Implement，报告会写明设计没有经过人审。设为 `false` 时，这样的设计会停在 Design 等人审（`awaiting_design_review`）。`stop_after` 仍然生效 |
 | `held_out`、`guards`、`sweep` | 任务 workload 和 goal 之外的性能检查，默认都不开启：`held_out` 在 held-out 工作点（一半并发）上再测一次收益，并要求收益在那里同样成立；`guards` 在 goal 指定的守护负载之外，再加 InferPilot 自己选的守护负载；`sweep` 测 workload 之外的点（更多并发或长度） |
 | `tune` | `feature`，默认 `false`：功能按目标 PR 或设计的配置运行（FLy 就是 vLLM 的 window 2、threshold 0.3、top-k 3），并要在这个配置下达标；设为 `true` 时增加一个通过测量来选参数的工作包 |
+| `measure_alone` | 默认 `true`：只有本机没有其他 GPU 被占用时测出的速度才算数，测量期间运行占住整台机器。在多人共用的机器上可设为 `false`：只要求运行自己的 GPU 空闲，每次测量前后其他卡被谁占用会记录在数字旁边 |
 | `review_model` | reviewer 使用的模型，随它的 agent 调用一起传入（InferPilot 的 runner 把它作为命令行工具的 `--model` 传入；在 Claude Code 里取决于它的 Workflow 工具） |
 | `max_fix_rounds`、`max_investigate_rounds`、`max_review_rounds`、`max_work_packages` | 预算 |
 | `agent_retries`、`agent_timeout_ms` | agent 调用出错时会重试（重试前先检查失败的那次留下了什么），超时则不重试：超时的 agent 可能还在运行，会被记入报告里的待人工处理清单，它所在的工作包也不再开新一轮、不做 rollback。默认超时 3 小时，verify engineer、performance engineer 和 investigator 为 6 小时 |
@@ -350,7 +351,7 @@ node runtime/run.mjs inferpilot.js --backend cursor \
 
 每个结果最后都有 `next`，说明运行结束后接下来做什么，对 Claude Code、Cursor 的 agent 和 runner 的日志都一样：`say` 是写给你的一句话；`ask` 是只有你能回答的问题；`rerun_with` 是再跑一次之前要设置的参数，其余参数不变（answers 会和已有的回答合并）；`start` 是它建议发起的新运行，比如 scan 排在前面的任务及其参数；`user` 是只有你能做的事：推送、发出回复、分享日报。
 
-**一组 GPU 一个任务。** 运行在创建任何东西之前先占住它要用的 GPU：锁放在 `/dev/shm`，所有用 `--ipc=host` 启动的容器都和宿主机共用它，其他机器看不到；运行在写完报告后释放。不同容器里的任务只要不共用 GPU 就可以同时运行（GPU 按 HIP 编号，由 `scripts/gpu_status.py` 给出，它也会说明每张卡上是谁占着显存）；不用 GPU 的任务（比如 scan）占住整台机器。新运行需要的东西被另一个任务占着时，它会立即以 `busy` 结束，并说明是谁占着。如果持有锁的运行已经结束，或者它的 runner（`runtime/run.mjs`，从同一个容器里看）已经不在，或者在两倍于最长 agent 调用的时间里（默认 12 小时）没往运行目录写过任何东西，下一个运行会直接接管。另一个容器里的运行不会因为没动静而被接管，因为这里看不到它的运行目录；确认那次运行已经不在之后，用第二条命令释放机器，和释放意外中断的运行留下的锁一样：
+**一组 GPU 一个任务。** 运行在创建任何东西之前先占住它要用的 GPU：锁放在 `/dev/shm`，所有用 `--ipc=host` 启动的容器都和宿主机共用它，其他机器看不到；运行在写完报告后释放。不同容器里的任务只要不共用 GPU 就可以同时运行（GPU 按 HIP 编号，由 `scripts/gpu_status.py` 给出，它也会说明每张卡上是谁占着显存）；不用 GPU 的任务（比如 scan）占住整台机器；要测性能的任务（perf 任务，或带 `client_script` 的任务）也占住整台机器：吞吐、TTFT、TPOT 必须在本机没有其他 GPU 被占用时单独测，否则会被拖慢。之后才知道要测性能的任务（由 Spec 写 client 的 feature、被 Triage 判为性能问题的 issue）在第一次测量前把锁扩大到整台机器（`run_lock.py acquire --whole`）；设了 `measure_alone` 为 false 的任务在多人共用的机器上只占自己的 GPU，并记录同时还有什么在跑。新运行需要的东西被另一个任务占着时，它会立即以 `busy` 结束，并说明是谁占着。如果持有锁的运行已经结束，或者它的 runner（`runtime/run.mjs`，从同一个容器里看）已经不在，或者在两倍于最长 agent 调用的时间里（默认 12 小时）没往运行目录写过任何东西，下一个运行会直接接管。另一个容器里的运行不会因为没动静而被接管，因为这里看不到它的运行目录；确认那次运行已经不在之后，用第二条命令释放机器，和释放意外中断的运行留下的锁一样：
 
 ```bash
 python3 scripts/run_lock.py status            # 谁占着这台机器

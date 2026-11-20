@@ -784,6 +784,18 @@ const scenarios = [
     const ar = asked.calls.find((c) => c.key === 'architect:design');
     check(ar && ar.ins.tune === true, 'tune reaches the architect, which adds a tuning package only then');
   }],
+  ['perf: speed is measured alone by default; a task on a shared machine turns that off, and every role sees it', async () => {
+    const alone = await run({ mode: 'perf', task: 'p' });
+    const pe = alone.calls.find((c) => c.key === 'perf_engineer:perf_eval');
+    check(pe && pe.ins.measure_alone === true, `on by default for the perf engineer: ${pe && pe.ins.measure_alone}`);
+    for (const off of [false, 'false']) {
+      const shared = await run({ mode: 'feature', task: 't', measure_alone: off });
+      const setup = shared.calls.find((c) => c.key === 'director:setup');
+      const perf = shared.calls.find((c) => c.key === 'perf_engineer:perf_eval');
+      check(setup && setup.ins.measure_alone === false && perf && perf.ins.measure_alone === false,
+        `off for Setup and the perf engineer with ${JSON.stringify(off)}`);
+    }
+  }],
   ['perf: measured win to a PR', async () => {
     const r = await run({ mode: 'perf', task: 'p', apply_prs: ['#46329'] });
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);

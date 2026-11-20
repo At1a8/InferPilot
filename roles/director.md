@@ -27,8 +27,13 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
    the task needs from `python3 <inferpilot_dir>/scripts/gpu_status.py --free <n>` (HIP numbers, the
    ones `HIP_VISIBLE_DEVICES` takes; rocm-smi's card numbers can differ from them). It skips GPUs another
    InferPilot task holds, idle or not; when it names fewer than needed (exit 1), return `lock: "busy"` as
-   below, with its `locked` list as the holder. A task that uses no GPU (scan) takes the whole
-   machine instead. Take them:
+   below, with its `locked` list as the holder. Two kinds of task
+   take the whole machine instead: one that uses no GPU (scan), and one that measures performance (a
+   `perf` task, or any task with a `client_script`), since throughput, TTFT and TPOT move when another
+   GPU of the machine is busy (`perf_evaluation.md`). A task that turns out to measure speed later (a
+   feature whose client the Spec writes, an issue triaged as a performance issue) takes its GPUs here and
+   the whole machine before its first measurement (`run_lock.py acquire --whole`). With `measure_alone`
+   false, neither takes the whole machine, only its GPUs (`perf_evaluation.md`). Take them:
    `python3 <inferpilot_dir>/scripts/run_lock.py acquire --run-dir RUN_DIR --mode <mode> --task "<task>"
    --gpus <ids> --idle-hours <lock_idle_hours>` (no `--gpus` for the whole machine). Exit 1 means another
    InferPilot task holds one of these GPUs, this container or the machine: create nothing

@@ -3,6 +3,25 @@
 Start only after the correctness gates pass. The question is "what does the feature buy, under which
 conditions, at what cost", answered with an A/B that a reviewer can reproduce.
 
+**Performance is measured alone.** Throughput, TTFT, TPOT, latency and every other speed number are
+measured only while no other process uses any GPU of the machine: work on the other GPUs shares the
+CPUs, the PCIe and xGMI links, memory bandwidth and the power budget, and moves the numbers. A run that
+measures speed holds the whole machine from its first measurement to its report, so that no other
+InferPilot task starts on the other GPUs in the middle of a measurement. Setup takes it for a `perf` task
+and a task with a `client_script`; a run that holds only its GPUs (a feature whose client the Spec writes,
+an issue triaged as a performance issue) widens its hold first: `python3
+<inferpilot_dir>/scripts/run_lock.py acquire --run-dir RUN_DIR --whole` (exit 1: another task holds GPUs,
+and the run keeps its own). Then, before each measurement, with this run's servers not started yet,
+`python3 <inferpilot_dir>/scripts/gpu_status.py --check all` exits 0. When either fails, wait (re-check
+every 5 minutes, up to 30), then report the measurement as not run. Accuracy and accept length do not
+depend on speed and may run next to other work.
+
+A task on a machine others share can set `measure_alone` to false. Its run then keeps only its own GPUs
+(no `--whole`), checks those before each measurement (`gpu_status.py --check <gpu_ids>`), and records
+what `gpu_status.py` shows on the other GPUs right before and right after each measurement, next to its
+numbers in the ledger. Both arms of a comparison are interleaved (§3), so that they share the load, and
+the report says the numbers come from a shared machine.
+
 ## 1. Compare at an equal budget
 
 A feature usually spends a resource to save another. Hold the scarce resource equal:
@@ -18,6 +37,9 @@ A feature usually spends a resource to save another. Hold the scarce resource eq
 
 The benchmark is the task's: its `client_script` and `workload` (`../templates/task_definition.md` §1.1),
 run unchanged, against servers started from its `server_script`. InferPilot never edits or retunes it.
+A port of an upstream PR is the exception: it is measured on that PR's own scenarios (its data sets,
+lengths, concurrency and sampling), and a scenario the PR did not consider is not measured unless the
+goal names it. The PARD-2 port needed vLLM's four data sets at 256 tokens and concurrency 1, not 8k/1k.
 The table below is for the workloads a task lists beside it, and for choosing one with the user when a
 task has none. Guard workloads are the ones the task's `goal` names; InferPilot adds its own from the
 table only when the task sets `guards`. When there is none, the report says that none was measured.

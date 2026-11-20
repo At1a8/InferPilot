@@ -547,6 +547,28 @@ class RunLockTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": "box2"}):
             self.assertEqual(run_lock.acquire(self.lock, self.b, gpus=[0])["status"], "acquired", "GPU 0 was let go")
 
+    def test_a_run_holding_gpus_takes_the_whole_machine_before_it_measures_speed(self):
+        def take(run_dir, container, **kw):
+            with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": container}):
+                return run_lock.acquire(self.lock, run_dir, **kw)
+        Path(self.b).mkdir()
+        take(self.a, "box1", task="port PARD-2", mode="feature", idle_hours=24, gpus=[0, 1], now=1000.0)
+        take(self.b, "box2", gpus=[2, 3], now=1000.0)
+        busy = take(self.a, "box1", whole=True, now=1100.0)
+        self.assertEqual((busy["status"], busy["holder"]["run_dir"]), ("busy", self.b))
+        self.assertEqual([h["holder"]["gpus"] for h in run_lock.status(self.lock, now=1100.0)["holders"]], [[0, 1], [2, 3]],
+                         "a run that has to wait keeps its own GPUs")
+        run_lock.release(self.lock, self.b)
+        whole = take(self.a, "box1", whole=True, now=1200.0)["holder"]
+        self.assertEqual((whole["gpus"], whole["task"], whole["mode"], whole["idle_hours"], whole["started"]),
+                         ([], "port PARD-2", "feature", 24, 1000.0))
+        self.assertEqual(take(self.b, "box2", gpus=[4], now=1300.0)["status"], "busy", "no task starts on the other GPUs")
+        self.assertEqual(take(self.a, "box1", now=1400.0)["holder"]["gpus"], [], "a retry without --gpus keeps the machine")
+        with redirect_stdout(io.StringIO()), mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": "box1"}):
+            self.assertEqual(run_lock.main(["--lock", self.lock, "acquire", "--run-dir", self.a, "--whole"]), 0)
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            run_lock.main(["--lock", self.lock, "acquire", "--run-dir", self.a, "--whole", "--gpus", "0"])
+
     def test_two_containers_on_the_same_path_without_runner_tags_do_not_share_it(self):
         with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": "box1"}):
             run_lock.acquire(self.lock, self.a, gpus=[0], now=1000.0)
