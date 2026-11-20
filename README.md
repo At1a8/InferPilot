@@ -405,7 +405,8 @@ tail -f exp/scan.log    # Ctrl-C leaves the log; the run goes on
 stops its agents and everything they started, servers started with `setsid` or `nohup` included (each
 inherits `INFERPILOT_RUN_TAG`, which names the runner), frees the machine lock and writes
 `"status": "interrupted"` to `--result-file`. A run that died otherwise (`kill -9`, a restarted
-container) leaves its processes behind: the next run lists them, and `--kill-orphans` stops them first.
+container) leaves its processes behind: the next run lists them, those in the task's container too, and
+`--kill-orphans` stops them first.
 
 The file holds, as JSON, the arguments the sentences above give Claude Code. The issue that stops after
 the reproduction is `{"mode": "issue", "task": "https://github.com/sgl-project/sglang/issues/41299",

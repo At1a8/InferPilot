@@ -23,14 +23,14 @@
 // (scripts/run_lock.py) and writes a result with status "interrupted" (exit 130 or 143). A second signal
 // kills them at once instead of waiting for them, and the lock and the result still follow; a third exits
 // at once. At its end it stops what its agents left running. At the start it lists what runs that are gone
-// left running.
+// left running, those in the task's container too.
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BACKENDS, cliBackend } from './backends.mjs';
 import { createRuntime } from './engine.mjs';
-import { TAG, orphans, runTag, signal, stopInContainer, stopPids, tagged } from './procs.mjs';
+import { TAG, orphans, orphansIn, runTag, signal, stopInContainer, stopPids, tagged } from './procs.mjs';
 
 function parse(argv) {
   const out = { _: [] };
@@ -73,6 +73,7 @@ const rt = createRuntime({
   concurrency: int(opts.concurrency, 4),
   schemaRetries: int(opts['schema-retries'], 2),
   agentTimeoutMs: int(opts['agent-timeout-ms'], 0),
+  onContainer: (box) => lookIn(box),
 });
 const shq = (s) => (/^[\w./:=@,+-]+$/.test(String(s)) ? String(s) : `'${String(s).replace(/'/g, "'\\''")}'`);
 
@@ -115,16 +116,50 @@ const listed = (ps) => ps.slice(0, 20).map((p) => `\n     ${p.pid} ${p.cmd.slice
 const releaseLock = () => spawnSync('python3', [join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'run_lock.py'),
   'release', '--run-tag', tag], { stdio: 'ignore', timeout: 30000 });
 
-const left = opts['kill-orphans'] ? await stopPids(orphans) : orphans();
-if (left.length && opts['kill-orphans']) {
-  rt.log(`stopped ${left.length} process(es) left by runs that are gone:${listed(left)}`);
-} else if (left.length) {
-  rt.log(`!! ${left.length} process(es) left by runs that are gone, which may hold GPUs or ports; `
-    + `--kill-orphans stops them:${listed(left)}`);
+// The container the task's servers run in (InferPilot on the host), however the script resolved it.
+const container = () => (rt.state.container || (typeof args.container === 'string' ? args.container : '')).trim();
+
+// What runs that are gone left running, here or (where) in the task's container: listed, or stopped
+// with --kill-orphans.
+function reportOrphans(left, where = '') {
+  if (left.length && opts['kill-orphans']) {
+    rt.log(`stopped ${left.length} process(es) left${where} by runs that are gone:${listed(left)}`);
+  } else if (left.length) {
+    rt.log(`!! ${left.length} process(es) left${where} by runs that are gone, which may hold GPUs or ports; `
+      + `--kill-orphans stops them:${listed(left)}`);
+  }
 }
+reportOrphans(opts['kill-orphans'] ? await stopPids(orphans) : orphans());
+
+// In the task's container their environments are root's, unreadable from here: the container's root looks,
+// once per container, at the start for one given in the arguments, else when the script names it, and
+// the next agent waits for that.
+const looked = new Map();
+function lookIn(box) {
+  if (!looked.has(box)) {
+    looked.set(box, (async () => {
+      const left = await orphansIn(box);
+      if (left === null) {
+        rt.log(`!! could not look in container ${box} for what runs that are gone left running`);
+        return;
+      }
+      if (opts['kill-orphans'] && left.length) {
+        const stopped = await Promise.all([...new Set(left.map((p) => p.tag))].map((t) => stopInContainer(box, t)));
+        if (stopped.includes(null)) {
+          rt.log(`!! could not stop what runs that are gone left running in container ${box}:${listed(left)}`);
+          return;
+        }
+      }
+      reportOrphans(left, ` in container ${box}`);
+    })());
+  }
+  return looked.get(box);
+}
+if (container()) await lookIn(container());
 
 let stopping = false;
 let hurried = false;
+let hurry = () => {}; // cuts short a sweep of the task's container that waits out its grace
 async function interrupted(sig, code) {
   if (hurried) process.exit(code);
   if (stopping) {
@@ -132,6 +167,7 @@ async function interrupted(sig, code) {
     rt.log(`=== ${sig} again: killing them at once, then freeing the lock; once more to exit without that ===`);
     backend.stopAll('SIGKILL');
     signal(mine().map((p) => p.pid), 'SIGKILL');
+    hurry();
     return;
   }
   stopping = true;
@@ -144,7 +180,7 @@ async function interrupted(sig, code) {
     backend.stopAll('SIGKILL');
   })();
   await Promise.all([groups, stopPids(mine)]);
-  inContainer(hurried ? 0 : 10);
+  await inContainer();
   releaseLock();
   const result = { status: 'interrupted', signal: sig, at, summary: rt.summary(),
     next: { say: `Interrupted by ${sig}${at ? ` in ${at}` : ''}; its agents and what they started were stopped and the `
@@ -160,15 +196,20 @@ process.on('SIGTERM', () => interrupted('SIGTERM', 143));
 async function tidyUp() {
   const still = await stopPids(mine);
   if (still.length) rt.log(`stopped ${still.length} process(es) the run's agents left running:${listed(still)}`);
-  inContainer();
+  await inContainer();
   releaseLock();
 }
 
-// A task with a container (InferPilot on the host) started its servers there: stop those too.
-function inContainer(graceS = 10) {
-  const box = (rt.state.container || (typeof args.container === 'string' ? args.container : '')).trim();
+// A task with a container (InferPilot on the host) started its servers there: stop those too. Hurried,
+// at once: a second signal drops a sweep that waits out its grace for one that kills.
+async function inContainer() {
+  const box = container();
   if (!box) return;
-  const got = stopInContainer(box, tag, graceS);
+  const wait = new AbortController();
+  hurry = () => wait.abort();
+  let got = await stopInContainer(box, tag, hurried ? 0 : 10, wait.signal);
+  hurry = () => {};
+  if (wait.signal.aborted) got = await stopInContainer(box, tag, 0);
   if (got === null) rt.log(`!! could not look for this run's processes in container ${box}: check it before reusing its GPUs`);
   else if (got.length) rt.log(`stopped ${got.length} process(es) of this run in container ${box}: ${got.join(' ')}`);
 }

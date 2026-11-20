@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { extractJson, validate } from '../runtime/schema.mjs';
 import { createRuntime, fmtTokens, scriptBody } from '../runtime/engine.mjs';
 import { BACKENDS, cliBackend } from '../runtime/backends.mjs';
-import { PID_NS, runnerAlive, stopInContainer } from '../runtime/procs.mjs';
+import { PID_NS, orphansIn, runnerAlive, stopInContainer } from '../runtime/procs.mjs';
 
 const INFERPILOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TMP = mkdtempSync(path.join(tmpdir(), 'inferpilot-runtime-'));
@@ -358,11 +358,21 @@ sleep 46.25 & wait`);
         { env: { ...process.env, INFERPILOT_RUN_TAG: '424242-1-1' }, detached: true, stdio: 'ignore' });
       forker.unref();
       await sleep(300);
-      const got = stopInContainer('box', '424242-1-1', 3);
+      const got = await stopInContainer('box', '424242-1-1', 3);
       check(got && got.map(Number).includes(victim.pid) && got.map(Number).includes(forker.pid), `stopped ${JSON.stringify(got)}`);
       await sleep(200);
       check(spawnSync('pgrep', ['-f', 'sleep 48.25']).status !== 0, 'the tagged process in the container is gone');
       check(spawnSync('pgrep', ['-f', 'sleep 49.25']).status !== 0, 'and the one its worker started while stopping');
+      const gone = spawn('sleep', ['50.25'], { env: { ...process.env, INFERPILOT_RUN_TAG: `999999999-1-${PID_NS}` }, detached: true, stdio: 'ignore' });
+      gone.unref();
+      const foreign = spawn('sleep', ['51.25'], { env: { ...process.env, INFERPILOT_RUN_TAG: '999999999-1-1' }, detached: true, stdio: 'ignore' });
+      foreign.unref();
+      await sleep(200);
+      const left = await orphansIn('box');
+      process.kill(gone.pid, 'SIGKILL');
+      process.kill(foreign.pid, 'SIGKILL');
+      check(left && left.some((p) => p.pid === gone.pid && p.tag === `999999999-1-${PID_NS}` && p.cmd === 'sleep 50.25')
+        && !left.some((p) => p.pid === foreign.pid), `the container's root lists what a runner that is gone left there, and only that: ${JSON.stringify(left)}`);
       const script = path.join(TMP, 'boxed.js');
       writeFileSync(script, `phase('Only');\nawait agent('go', { label: 'only' });\nreturn { status: 'done' };`);
       const r = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
@@ -401,6 +411,100 @@ sleep 46.25 & wait`);
     check(/stopped 1 process\(es\) left by runs that are gone/.test(killed.stderr) && !running('sleep 44.25'), 'and stopped on request');
     check(running('sleep 45.25'), 'a process of a runner in another pid namespace is not judged an orphan');
     process.kill(foreign.pid, 'SIGKILL');
+  }],
+  ['run.mjs: a second signal cuts short the wait in the task\'s container and kills there at once; a third exits at once', async () => {
+    if (!existsSync('/proc/self/environ')) return;
+    const bin = path.join(TMP, 'slowdocker');
+    mkdirSync(bin, { recursive: true });
+    const calls = path.join(TMP, 'slow_docker_calls.txt');
+    // A container whose server ignores SIGTERM: a sweep waits out its grace (longer here); with SLOW_KILL, so does one that kills.
+    writeFileSync(path.join(bin, 'docker'), `#!/bin/bash
+[ "\${@: -1}" = sh ] && exit 0
+echo "grace \${@: -1}" >> ${calls}
+[ "\${@: -1}" = 0 ] && [ -z "$SLOW_KILL" ] && exit 0
+exec sleep 53.25
+`);
+    chmodSync(path.join(bin, 'docker'), 0o755);
+    const script = path.join(TMP, 'slow.js');
+    writeFileSync(script, `phase('Long');\nawait agent('go', { label: 'long' });\nreturn { status: 'done' };`);
+    const lock = path.join(TMP, 'slow.lock');
+    const cli = fakeCli('slow.sh', `python3 ${path.join(INFERPILOT, 'scripts', 'run_lock.py')} acquire --run-dir ${path.join(TMP, 'slow-run')} >/dev/null
+sleep 54.25 & wait`);
+    const resultFile = path.join(TMP, 'slow.result.json');
+    const has = (what) => existsSync(calls) && readFileSync(calls, 'utf8').includes(what);
+    const until = async (ok) => {
+      for (let i = 0; i < 200 && !ok(); i++) await sleep(25);
+      return ok();
+    };
+    // Two signals: the first reaches the sweep of the container, the second comes while it waits.
+    const twice = async (env = {}) => {
+      writeFileSync(calls, '');
+      const runner = spawn(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
+        '--args', '{"container": "box"}', '--result-file', resultFile], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`,
+        INFERPILOT_CURSOR_BIN: cli, INFERPILOT_LOCK_FILE: lock, ...env }, stdio: 'ignore' });
+      const exited = new Promise((r) => runner.on('exit', (c) => r(c)));
+      await until(() => spawnSync('pgrep', ['-f', 'sleep 54.25']).status === 0);
+      runner.kill('SIGTERM');
+      check(await until(() => has('grace 10')), 'the first signal swept the container, with a grace');
+      runner.kill('SIGTERM');
+      return { runner, exited, sent: Date.now() };
+    };
+    try {
+      const fast = await twice();
+      const code = await fast.exited;
+      check(code === 143 && Date.now() - fast.sent < 3000, `exit ${code} ${Date.now() - fast.sent} ms after the second signal, not after the grace`);
+      check(has('grace 0'), 'the second signal swept it again, killing at once');
+      check(JSON.parse(readFileSync(resultFile, 'utf8')).status === 'interrupted', 'the interrupted result was written');
+      const st = JSON.parse(execFileSync('python3', [path.join(INFERPILOT, 'scripts', 'run_lock.py'), '--lock', lock, 'status'], { encoding: 'utf8' }));
+      check(st.status === 'free', `the lock is ${st.status}`);
+      const slow = await twice({ SLOW_KILL: '1' });
+      check(await until(() => has('grace 0')), 'the sweep that kills is under way');
+      const third = Date.now();
+      slow.runner.kill('SIGTERM');
+      const code3 = await slow.exited;
+      check(code3 === 143 && Date.now() - third < 1500, `a third signal exits at once: exit ${code3} after ${Date.now() - third} ms`);
+    } finally {
+      spawnSync('pkill', ['-f', 'sleep 53.25']);
+    }
+  }],
+  ['run.mjs: what runs that are gone left in the task\'s container is listed before an agent starts, and stopped with --kill-orphans', async () => {
+    const bin = path.join(TMP, 'boxdocker');
+    mkdirSync(bin, { recursive: true });
+    const calls = path.join(TMP, 'box_docker_calls.txt');
+    const gone = `999999999-1-${PID_NS}`;
+    // The container's root sees a server that a host runner now gone left there, and one of a runner in another
+    // pid namespace; a sweep notes the tag it stops.
+    writeFileSync(path.join(bin, 'docker'), `#!/bin/bash
+if [ "\${@: -1}" = sh ]; then
+  echo "look $2" >> ${calls}
+  printf '4242 ${gone} python3 -m sglang.launch_server --port 30000\\n4343 999999999-1-1 sleep 60\\n'
+  exit 0
+fi
+echo "stop $2 \${@: -2:1} \${@: -1}" >> ${calls}
+`);
+    chmodSync(path.join(bin, 'docker'), 0o755);
+    const named = path.join(TMP, 'box_named.js');
+    writeFileSync(named, `log('[inferpilot] container=box4');\nphase('Only');\nawait agent('go', { label: 'only' });\nreturn { status: 'done' };`);
+    const given = path.join(TMP, 'box_given.js');
+    writeFileSync(given, `phase('Only');\nawait agent('go', { label: 'only' });\nreturn { status: 'done' };`);
+    const run = (file, a, ...extra) => {
+      writeFileSync(calls, '');
+      const r = spawnSync(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), file, '--backend', 'cursor', '--args', a, ...extra],
+        { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, INFERPILOT_CURSOR_BIN: fakeCli('box_agent.sh', `echo agent >> ${calls}; echo done`) },
+          encoding: 'utf8' });
+      return { ...r, calls: readFileSync(calls, 'utf8') };
+    };
+    const listed = run(named, '{}');
+    check(listed.status === 0 && /!! 1 process\(es\) left in container box4 by runs that are gone[^\n]*\n\s+4242 python3 -m sglang\.launch_server/
+      .test(listed.stderr), `listed: ${listed.stderr.slice(-400)}`);
+    check(listed.calls.includes('look box4') && listed.calls.indexOf('look box4') < listed.calls.indexOf('agent'),
+      `the container the script named was looked in before the agent started: ${JSON.stringify(listed.calls)}`);
+    check(!listed.calls.includes(`stop box4 ${gone}`), 'and nothing was stopped without --kill-orphans');
+    const killed = run(given, '{"container": "box5"}', '--kill-orphans');
+    check(/stopped 1 process\(es\) left in container box5 by runs that are gone/.test(killed.stderr)
+      && killed.calls.includes(`stop box5 ${gone} 10`), `stopped with --kill-orphans: ${JSON.stringify(killed.calls)}`);
+    check(killed.calls.indexOf(`stop box5 ${gone}`) < killed.calls.indexOf('agent'), 'before the agent started');
+    check(!killed.calls.includes('999999999-1-1'), 'a runner in another pid namespace is not judged');
   }],
 ];
 

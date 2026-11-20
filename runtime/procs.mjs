@@ -2,7 +2,7 @@
 // process group misses what it started with setsid or nohup, the environment does not. A process
 // started with `docker exec` carries the tag only when it was given (-e INFERPILOT_RUN_TAG). Linux only:
 // without /proc nothing is found.
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { readdirSync, readFileSync, readlinkSync } from 'node:fs';
 
 export const TAG = 'INFERPILOT_RUN_TAG';
@@ -75,8 +75,9 @@ export const orphans = () => tagged().filter((p) => !runnerAlive(p.tag));
 // local docker client leaves them running. The container's root finds and stops them instead, as
 // stopPids() does here: SIGTERM to each tagged process, looking again every second of graceS for ones
 // started meanwhile, then SIGKILL to those still alive, each checked by its start time first, so a reused
-// pid is never signalled. Resolves to the pids it signalled, or null when docker could not be run. One grep
-// reads every environment: two processes per pid made each scan take 8 s where /proc held 9,000 pids.
+// pid is never signalled. Resolves to the pids it signalled, or null when docker could not be run or abort
+// (an AbortSignal) ended the wait. One grep reads every environment: two processes per pid made each scan
+// take 8 s where /proc held 9,000 pids.
 const IN_CONTAINER = [
   't="INFERPILOT_RUN_TAG=$1"; seen=""',
   'start_of() { sed "s/.*) //" "/proc/$1/stat" 2>/dev/null | awk \'$1 != "Z" && $1 != "X" {print $20}\'; }',
@@ -95,11 +96,36 @@ const IN_CONTAINER = [
   'for e in $seen; do printf "%s " "${e%%:*}"; done',
 ].join('\n');
 
-export function stopInContainer(container, tag, graceS = 10) {
-  const script = IN_CONTAINER;
-  const r = spawnSync('docker', ['exec', container, 'sh', '-c', script, 'sh', tag, String(graceS)],
-    { encoding: 'utf8', timeout: (graceS + 30) * 1000 });
-  return r.status === 0 ? String(r.stdout || '').trim().split(/\s+/).filter(Boolean) : null;
+// A script run by the container's root: its output, or null when docker could not be run.
+const dockerSh = (container, script, args, timeoutS, abort) => new Promise((resolve) => {
+  execFile('docker', ['exec', container, 'sh', '-c', script, 'sh', ...args],
+    { encoding: 'utf8', timeout: timeoutS * 1000, maxBuffer: 16 * 1024 * 1024, signal: abort },
+    (err, stdout) => resolve(err ? null : String(stdout || '')));
+});
+
+export async function stopInContainer(container, tag, graceS = 10, abort = undefined) {
+  const out = await dockerSh(container, IN_CONTAINER, [tag, String(graceS)], graceS + 30, abort);
+  return out === null ? null : out.trim().split(/\s+/).filter(Boolean);
+}
+
+const TAGGED_IN_CONTAINER = [
+  'for f in $(grep -l -s -z "^INFERPILOT_RUN_TAG=" /proc/[0-9]*/environ); do',
+  '  p=${f#/proc/}; p=${p%/environ}',
+  '  t=$(tr "\\0" "\\n" < "$f" 2>/dev/null | grep -m 1 "^INFERPILOT_RUN_TAG=") || continue',
+  '  printf "%s %s %s\\n" "$p" "${t#*=}" "$(tr "\\0" " " < "/proc/$p/cmdline" 2>/dev/null)"',
+  'done',
+].join('\n');
+
+// What runs that are gone left running in a container, found by its root: [{pid, tag, cmd}], with the pids
+// the container gives them, or null when docker could not be run. As in orphans(), a runner is judged only
+// from its own pid namespace: from the host, a runner on the host that started its task's servers there.
+export async function orphansIn(container) {
+  const out = await dockerSh(container, TAGGED_IN_CONTAINER, [], 30);
+  if (out === null) return null;
+  return out.split('\n').filter(Boolean).map((line) => {
+    const [pid, tag, ...cmd] = line.split(' ');
+    return { pid: Number(pid), tag, cmd: cmd.join(' ').trim() };
+  }).filter((p) => !runnerAlive(p.tag));
 }
 
 export function signal(pids, sig) {
