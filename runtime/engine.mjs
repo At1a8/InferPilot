@@ -49,12 +49,15 @@ export const fmtMinutes = (ms) => {
 };
 
 // quietMs: an agent call that showed nothing for that long gets a still-working line (0: never).
+// onContainer(name): called when the script names the container its servers run in; agent calls wait for
+// what it returns (the runner looks there for what runs that are gone left running) before they start.
 export function createRuntime({
   backend,
   concurrency = 4,
   schemaRetries = 2,
   agentTimeoutMs = 0,
   quietMs = 5 * 60 * 1000,
+  onContainer = () => null,
   log = (msg) => process.stderr.write(`[${new Date().toISOString().slice(11, 19)}] ${msg}\n`),
 } = {}) {
   if (!backend || typeof backend.runAgent !== 'function') throw new Error('createRuntime: backend.runAgent is required');
@@ -65,6 +68,7 @@ export function createRuntime({
   // The phases the script says the run passes ("Route: A → B → C" in a log line), for x/y in each phase line.
   let route = [];
   const entered = new Set();
+  let ready = null; // what agent calls wait for: onContainer's answer
 
   const soFar = () => `${state.done} agent call${state.done === 1 ? '' : 's'}`
     + `${state.tokensKnown ? `, ${fmtTokens(state.tokens)} tokens` : ''}, ${fmtMinutes(Date.now() - runStarted)}`;
@@ -80,9 +84,16 @@ export function createRuntime({
   };
 
   // A whole line "Route: ...", after an optional "[tag] ": the same words inside a longer message do not count.
+  // "[inferpilot] container=<name>": the container the task's servers run in (InferPilot on the host),
+  // however the script resolved it, for the runner's cleanup.
   const scriptLog = (msg) => {
     const m = /^(?:\[[^\]\n]+\] )?Route: ([^\n]+)$/.exec(String(msg));
     if (m) route = m[1].split('→').map((s) => s.trim()).filter(Boolean);
+    const box = /^\[inferpilot\] container=(\S+)$/.exec(String(msg));
+    if (box) {
+      state.container = box[1];
+      ready = onContainer(box[1]);
+    }
     log(msg);
   };
 
@@ -100,6 +111,7 @@ export function createRuntime({
     const label = opts.label || 'agent';
     const where = opts.phase || current;
     const full = opts.schema ? prompt + outputContract(opts.schema) : prompt;
+    await ready;
     await slots.take();
     const started = Date.now();
     const minutes = () => Math.round((Date.now() - started) / 60000);
@@ -188,5 +200,5 @@ export function createRuntime({
     return fn(agent, parallel, pipeline, phase, scriptLog, workflow, args, budget);
   }
 
-  return { agent, parallel, pipeline, phase, log: scriptLog, runScript, state, summary };
+  return { agent, parallel, pipeline, phase, log: scriptLog, runScript, state, summary, current: () => current };
 }

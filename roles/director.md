@@ -28,7 +28,8 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
    --idle-hours <lock_idle_hours>`. Exit 1 means another InferPilot task holds this machine: create nothing
    and return `lock: "busy"`, `run_dir: ""`, `baseline_status: "skip"`, `gpu_ids: ""`, with the holder
    (its run directory, task, container and start) and the release command in `notes`. Otherwise
-   `lock: "acquired"`; a lock taken over from a run that finished or went silent is noted.
+   `lock: "acquired"`; a lock taken over from a run that finished, whose runner is gone or that went
+   silent is noted.
 1. **Run directory.** If `resume_run_dir` is set, reuse it: check that it exists, that its branch
    exists in `framework_dir` and is checked out there (check it out when the checkout is clean), and
    re-run one baseline smoke to confirm the environment still matches the ledger.
@@ -62,7 +63,8 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
    process and no memory in use, as many as the task needs (`env_hygiene.md`). Every later role uses
    exactly these, through `HIP_VISIBLE_DEVICES`. Servers, tests and benchmarks run where InferPilot runs,
    normally inside the container. When `container` is set (InferPilot on the host), run them with
-   `docker exec <container> ...` and check the worktree is visible there at the same path. Every server
+   `docker exec -e INFERPILOT_RUN_TAG <container> ...`, so the runner can stop them when the run is
+   stopped, and check the worktree is visible there at the same path. Every server
    is started from the task's `server_script` (`task_definition.md` §1.1; copy it and `client_script`
    to `RUN_DIR/scripts/` for the record): `PORT=<port> HIP_VISIBLE_DEVICES=<gpus>
    PYTHONPATH=<tree>/python EXTRA_ARGS='<the feature flags, empty for the baseline>' bash <server_script>`,

@@ -10,15 +10,27 @@
 //   --concurrency <n>             agent calls at once (default 4)
 //   --agent-timeout-ms <ms>       kill an agent run after this long (default 0: inferpilot.js's own timeouts)
 //   --schema-retries <n>          asks again for an answer that does not match its schema (default 2)
+//   --kill-orphans                first stop what runs that are gone left running (agents, servers)
 //   --help                        this usage
 //
 // The log ends with what the result's next says comes after the run (=== NEXT); with --args-file, the
 // arguments of each run it names are written next to that file (<name>.again.json, <name>.start-<rank>.json).
 // INFERPILOT_CLAUDE_BIN and INFERPILOT_CURSOR_BIN name the CLIs when they are not `claude` and `agent` on PATH.
+//
+// Every agent, and whatever it starts, inherits INFERPILOT_RUN_TAG, which names this runner. On SIGINT or
+// SIGTERM the runner stops them all (servers started with setsid or nohup too, and, for a task with a
+// container, those started there with docker exec -e INFERPILOT_RUN_TAG), frees the machine lock
+// (scripts/run_lock.py) and writes a result with status "interrupted" (exit 130 or 143). A second signal
+// kills them at once instead of waiting for them, and the lock and the result still follow; a third exits
+// at once. At its end it stops what its agents left running; a signal then only hurries that. Its first log
+// line gives its pid; then it lists what runs that are gone left running, those in the task's container too.
+import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { BACKENDS, cliBackend } from './backends.mjs';
 import { createRuntime } from './engine.mjs';
+import { TAG, orphans, orphansIn, runTag, signal, stopInContainer, stopPids, tagged } from './procs.mjs';
 
 function parse(argv) {
   const out = { _: [] };
@@ -32,11 +44,11 @@ function parse(argv) {
   return out;
 }
 
-const FLAGS = ['backend', 'model', 'args', 'args-file', 'result-file', 'concurrency', 'agent-timeout-ms', 'schema-retries', 'help'];
+const FLAGS = ['backend', 'model', 'args', 'args-file', 'result-file', 'concurrency', 'agent-timeout-ms', 'schema-retries', 'kill-orphans', 'help'];
 const usage = (code = 2) => {
   (code ? process.stderr : process.stdout).write('usage: node runtime/run.mjs <script.js> --backend claude|cursor [--model <id>] '
     + '(--args <json> | --args-file <path>) [--result-file <path>] [--concurrency <n>] '
-    + '[--agent-timeout-ms <ms>] [--schema-retries <n>] [--help]\n');
+    + '[--agent-timeout-ms <ms>] [--schema-retries <n>] [--kill-orphans] [--help]\n');
   process.exit(code);
 };
 
@@ -61,6 +73,7 @@ const rt = createRuntime({
   concurrency: int(opts.concurrency, 4),
   schemaRetries: int(opts['schema-retries'], 2),
   agentTimeoutMs: int(opts['agent-timeout-ms'], 0),
+  onContainer: (box) => lookIn(box),
 });
 const shq = (s) => (/^[\w./:=@,+-]+$/.test(String(s)) ? String(s) : `'${String(s).replace(/'/g, "'\\''")}'`);
 
@@ -96,14 +109,130 @@ function nextLines(next) {
   return lines;
 }
 
+const tag = runTag();
+process.env[TAG] = tag;
+rt.log(`runner pid ${process.pid}: kill ${process.pid} stops this run and what it started`);
+const mine = () => tagged().filter((p) => p.tag === tag);
+const listed = (ps) => ps.slice(0, 20).map((p) => `\n     ${p.pid} ${p.cmd.slice(0, 160)}`).join('');
+const releaseLock = () => spawnSync('python3', [join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'run_lock.py'),
+  'release', '--run-tag', tag], { stdio: 'ignore', timeout: 30000 });
+
+// The container the task's servers run in (InferPilot on the host), however the script resolved it.
+const container = () => (rt.state.container || (typeof args.container === 'string' ? args.container : '')).trim();
+
+// What runs that are gone left running, here or (where) in the task's container: listed, or stopped
+// with --kill-orphans.
+function reportOrphans(left, where = '') {
+  if (left.length && opts['kill-orphans']) {
+    rt.log(`stopped ${left.length} process(es) left${where} by runs that are gone:${listed(left)}`);
+  } else if (left.length) {
+    rt.log(`!! ${left.length} process(es) left${where} by runs that are gone, which may hold GPUs or ports; `
+      + `--kill-orphans stops them:${listed(left)}`);
+  }
+}
+reportOrphans(opts['kill-orphans'] ? await stopPids(orphans) : orphans());
+
+// In the task's container their environments are root's, unreadable from here: the container's root looks,
+// once per container, at the start for one given in the arguments, else when the script names it, and
+// the next agent waits for that.
+const looked = new Map();
+function lookIn(box) {
+  if (!looked.has(box)) {
+    looked.set(box, (async () => {
+      const left = await orphansIn(box);
+      if (left === null) {
+        rt.log(`!! could not look in container ${box} for what runs that are gone left running`);
+        return;
+      }
+      if (opts['kill-orphans'] && left.length) {
+        const stopped = await Promise.all([...new Set(left.map((p) => p.tag))].map((t) => stopInContainer(box, t)));
+        if (stopped.includes(null)) {
+          rt.log(`!! could not stop what runs that are gone left running in container ${box}:${listed(left)}`);
+          return;
+        }
+      }
+      reportOrphans(left, ` in container ${box}`);
+    })());
+  }
+  return looked.get(box);
+}
+if (container()) await lookIn(container());
+
+let stopping = false;
+let hurried = false;
+let ended = false; // the script is done: a signal only hurries what the run's end stops
+let hurry = () => {}; // cuts short a sweep of the task's container that waits out its grace
+async function interrupted(sig, code) {
+  if (hurried) process.exit(code);
+  if (stopping || ended) {
+    hurried = true;
+    rt.log(stopping
+      ? `=== ${sig} again: killing them at once, then freeing the lock; once more to exit without that ===`
+      : `=== ${sig} after the run's end: killing what its agents left running at once, then freeing the lock; `
+        + 'once more to exit without that ===');
+    backend.stopAll('SIGKILL');
+    signal(mine().map((p) => p.pid), 'SIGKILL');
+    hurry();
+    return;
+  }
+  stopping = true;
+  const at = rt.current();
+  rt.log(`=== ${sig}: stopping the agents (${backend.running}) and what they started; once more to kill at once ===`);
+  backend.close();
+  const groups = (async () => {
+    const deadline = Date.now() + 10000;
+    while (backend.running && !hurried && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
+    backend.stopAll('SIGKILL');
+  })();
+  await Promise.all([groups, stopPids(mine)]);
+  await inContainer();
+  releaseLock();
+  const result = { status: 'interrupted', signal: sig, stopped_at: at, summary: rt.summary(),
+    next: { say: `Interrupted by ${sig}${at ? ` in ${at}` : ''}; its agents and what they started were stopped and the `
+      + 'machine lock freed. Run again with the same arguments to start over.' } };
+  if (typeof opts['result-file'] === 'string') writeFileSync(opts['result-file'], `${JSON.stringify(result, null, 2)}\n`);
+  rt.log(`=== END (interrupted by ${sig}${at ? ` in ${at}` : ''}): ${rt.summary()} ===`);
+  process.exit(code);
+}
+process.on('SIGINT', () => interrupted('SIGINT', 130));
+process.on('SIGTERM', () => interrupted('SIGTERM', 143));
+
+// What the agents left running when the run ends: servers, benchmarks.
+async function tidyUp() {
+  const still = await stopPids(mine);
+  if (still.length) rt.log(`stopped ${still.length} process(es) the run's agents left running:${listed(still)}`);
+  await inContainer();
+  releaseLock();
+}
+
+// A task with a container (InferPilot on the host) started its servers there: stop those too. Hurried,
+// at once: a second signal drops a sweep that waits out its grace for one that kills.
+async function inContainer() {
+  const box = container();
+  if (!box) return;
+  const wait = new AbortController();
+  hurry = () => wait.abort();
+  let got = await stopInContainer(box, tag, hurried ? 0 : 10, wait.signal);
+  hurry = () => {};
+  if (wait.signal.aborted) got = await stopInContainer(box, tag, 0);
+  if (got === null) rt.log(`!! could not look for this run's processes in container ${box}: check it before reusing its GPUs`);
+  else if (got.length) rt.log(`stopped ${got.length} process(es) of this run in container ${box}: ${got.join(' ')}`);
+}
+
 try {
   const result = await rt.runScript(resolve(script), args);
+  ended = true;
+  if (stopping) await new Promise(() => {});
+  await tidyUp();
   rt.log(`=== END: ${rt.summary()} ===`);
   const text = JSON.stringify(result, null, 2);
   if (typeof opts['result-file'] === 'string') writeFileSync(opts['result-file'], `${text}\n`);
   process.stdout.write(`${text}\n`);
   if (result && result.next && result.next.say) nextLines(result.next).forEach((line) => rt.log(line));
 } catch (e) {
+  ended = true;
+  if (stopping) await new Promise(() => {});
+  await tidyUp();
   rt.log(`=== END (failed): ${rt.summary()} ===`);
   process.stderr.write(`run failed: ${e && e.stack ? e.stack : e}\n`);
   process.exit(1);

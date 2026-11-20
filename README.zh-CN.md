@@ -235,6 +235,8 @@ nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.j
 tail -f exp/scan.log    # Ctrl-C 只是退出查看，运行会继续
 ```
 
+**停止一个运行。** `kill <runner 的 pid>`（SIGTERM；日志第一行给出这个 pid），或者对前台启动的 runner 按 Ctrl-C，会停掉它的所有 agent 以及它们启动的一切，包括用 `setsid` 或 `nohup` 启动的 server（它们都继承了标明这个 runner 的 `INFERPILOT_RUN_TAG`），释放机器锁，并在 `--result-file` 里写下 `"status": "interrupted"`。以其他方式死掉的运行（`kill -9`、被 OOM killer 杀掉）会留下它的进程：下一个运行会把它们列出来（任务容器里的也包括在内），`--kill-orphans` 会先停掉它们。容器重启会带走其中的进程，但会留下机器锁，而新容器判断不了锁的 runner 是否还在：用 `python3 scripts/run_lock.py release --force` 释放它。
+
 文件里写的就是上面交给 Claude Code 的那些参数，格式为 JSON。在复现之后停下的那个 issue 任务写成 `{"mode": "issue", "task": "https://github.com/sgl-project/sglang/issues/41299", "inferpilot_dir": "/workspace/inferpilot", "model_path": "<weights>", "gpu_ids": "0", "stop_after": "Reproduce"}`；用一句话描述的写成 `{"inferpilot_dir": "/workspace/inferpilot", "request": "..."}`。`exp/scan.log` 按这个模式的路线给每个阶段编号，并附上到目前为止的用量（`=== PHASE 2/3 [##-]: Dispatch ===  so far: 1 agent call, 410k tokens, 4 min`）；写出每次 agent 调用，调用里的每个工具调用开始时各写一行（执行的命令、读写的文件）；安静五分钟后写一行"仍在运行"；每次调用结束时写出用时和 token（按 CLI 的计数，含缓存），整个运行结束时写一行总结；`exp/scan.result.json` 是最终结果：其中有 `status`，以及 `next`，即运行结束后接下来做什么。日志末尾列出同样的步骤（`=== NEXT: ...`）：只有你能回答的问题；接下来可以发起的每次运行，参数写在你那个文件旁边（`exp/scan.start-1.json` 是 scan 排名第一的任务，`exp/<name>.again.json` 是同一个任务再跑一次、待你填好回答），并附上启动它的命令；以及只有你能做的事。
 
 **从 Cursor app。** 它的 agent 同样不会自己运行 `inferpilot.js`：它把任务写进文件、在后台启动 runner，并随时读取运行进展，具体做法写在 checkout 根目录的 [`AGENTS.md`](AGENTS.md) 里。把一个 InferPilot 的 checkout 作为 app 的工作区打开，Cursor 就会把这个文件当作规则加载：可以通过 Remote-SSH 打开 GPU 机器上的任意一个克隆（比如你运行 run_docker.sh 的那个），agent 会在你的容器里执行每条命令；也可以直接连接到容器，打开 `/workspace/inferpilot`。然后像对 Claude Code 一样用一句话说出任务；agent 会追问这个模式需要而你没说的内容，并告诉你运行在哪里。它默认用 Cursor CLI；想让角色跑在 `claude -p` 上，跟它说一声即可（需要 Claude Code 和 Node.js：bootstrap 加 `--cursor --claude` 或 `--runner`）。Cursor CLI 自己的对话界面（容器里的 `agent`）也读取同一个文件。
@@ -301,7 +303,7 @@ node runtime/run.mjs inferpilot.js --backend cursor \
   --args '{"mode":"scan","inferpilot_dir":"'"$PWD"'","framework_dir":"/path/to/sglang"}'
 ```
 
-`--model`、`--args-file`、`--result-file`、`--concurrency`、`--agent-timeout-ms` 和 `--schema-retries` 的说明在 `runtime/run.mjs` 开头。
+`--model`、`--args-file`、`--result-file`、`--concurrency`、`--agent-timeout-ms`、`--schema-retries` 和 `--kill-orphans` 的说明在 `runtime/run.mjs` 开头。
 
 | 参数 | 含义 |
 |---|---|
@@ -344,7 +346,7 @@ node runtime/run.mjs inferpilot.js --backend cursor \
 
 每个结果最后都有 `next`，说明运行结束后接下来做什么，对 Claude Code、Cursor 的 agent 和 runner 的日志都一样：`say` 是写给你的一句话；`ask` 是只有你能回答的问题；`rerun_with` 是再跑一次之前要设置的参数，其余参数不变（answers 会和已有的回答合并）；`start` 是它建议发起的新运行，比如 scan 排在前面的任务及其参数；`user` 是只有你能做的事：推送、发出回复、分享日报。
 
-**一台机器一个任务。** 运行在创建任何东西之前先占住这台机器：锁放在 `/dev/shm`，所有用 `--ipc=host` 启动的容器都和宿主机共用它，其他机器看不到；运行在写完报告后释放。另一个任务占着机器时，新的运行会立即以 `busy` 结束，并说明是谁占着。如果持有锁的运行已经结束，或者在两倍于最长 agent 调用的时间里（默认 12 小时）没往运行目录写过任何东西，下一个运行会直接接管。另一个容器里的运行不会因为没动静而被接管，因为这里看不到它的运行目录；确认那次运行已经不在之后，用第二条命令释放机器，和释放意外中断的运行留下的锁一样：
+**一台机器一个任务。** 运行在创建任何东西之前先占住这台机器：锁放在 `/dev/shm`，所有用 `--ipc=host` 启动的容器都和宿主机共用它，其他机器看不到；运行在写完报告后释放。另一个任务占着机器时，新的运行会立即以 `busy` 结束，并说明是谁占着。如果持有锁的运行已经结束，或者它的 runner（`runtime/run.mjs`，从同一个容器里看）已经不在，或者在两倍于最长 agent 调用的时间里（默认 12 小时）没往运行目录写过任何东西，下一个运行会直接接管。另一个容器里的运行不会因为没动静而被接管，因为这里看不到它的运行目录；确认那次运行已经不在之后，用第二条命令释放机器，和释放意外中断的运行留下的锁一样：
 
 ```bash
 python3 scripts/run_lock.py status            # 谁占着这台机器

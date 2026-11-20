@@ -46,6 +46,14 @@ user's login as their name). Ask which one when there are several, or none.
 - In the run directory, `experiment_ledger.md` holds every measurement and decision; at the end comes
   `run_report.md` or `validation_report.md`. The result file holds the final `status` and `stopped_at`.
 
+## Stop it
+
+Only when the user asks:
+
+- to stop at once, `kill <runner pid>`, the pid on the first line of `exp/<name>.log` (SIGTERM, never
+  `kill -9`): the runner stops its agents and what they started, frees the machine lock and writes
+  `"status": "interrupted"` to the result file.
+
 ## After a run
 
 The result file ends with `next`, what comes after the run, the same Claude Code gets:

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -478,6 +479,66 @@ class RunLockTest(unittest.TestCase):
         self.assertEqual(run_lock.acquire(self.lock, self.a, now=1000.0 + 48 * 3600)["status"], "busy")
         self.assertEqual(run_lock.release(self.lock, force=True)["status"], "released")
         self.assertEqual(run_lock.acquire(self.lock, self.a)["status"], "acquired")
+
+    @unittest.skipUnless(os.path.exists("/proc/self/stat"), "needs /proc")
+    def test_the_lock_of_a_runner_that_is_gone_is_taken_over_at_once(self):
+        with open("/proc/self/stat") as f:
+            stat = f.read()
+        me = "%d-%s" % (os.getpid(), stat[stat.rindex(")") + 2:].split(" ")[19])
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": me}):
+            run_lock.acquire(self.lock, self.a, now=1000.0)
+        os.utime(self.a, (1000.0, 1000.0))
+        self.assertEqual(run_lock.status(self.lock, now=1100.0)["runner"], "running")
+        self.assertEqual(run_lock.acquire(self.lock, self.b, now=1100.0)["status"], "busy")
+        self.assertEqual(run_lock.release(self.lock, run_tag="1-1")["status"], "held")
+        self.assertEqual(run_lock.release(self.lock, run_tag=me)["status"], "released")
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "%d-1" % os.getpid()}):  # this pid, another start
+            run_lock.acquire(self.lock, self.a, now=1000.0)
+        self.assertEqual(run_lock.status(self.lock, now=1100.0)["runner"], "gone")
+        took = run_lock.acquire(self.lock, self.b, now=1100.0)
+        self.assertEqual((took["status"], took["took_over"]["reason"]), ("acquired", "its runner is gone"))
+
+    @unittest.skipUnless(os.path.exists("/proc/self/stat"), "needs /proc")
+    def test_a_run_resumed_by_another_runner_is_that_runners(self):
+        with open("/proc/self/stat") as f:
+            stat = f.read()
+        me = "%d-%s" % (os.getpid(), stat[stat.rindex(")") + 2:].split(" ")[19])
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "%d-1" % os.getpid()}):  # a runner that is gone
+            run_lock.acquire(self.lock, self.a, now=1000.0)
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": me}):
+            self.assertEqual(run_lock.acquire(self.lock, self.a, now=1100.0)["holder"]["run_tag"], me)
+        os.utime(self.a, (1100.0, 1100.0))
+        self.assertEqual(run_lock.acquire(self.lock, self.b, now=1200.0)["status"], "busy")
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "1-1"}):  # a second runner for the same run
+            self.assertEqual(run_lock.acquire(self.lock, self.a, now=1200.0)["status"], "busy")
+        self.assertEqual(run_lock.release(self.lock, run_tag=me)["status"], "released")
+
+    @unittest.skipUnless(os.path.exists("/proc/self/stat"), "needs /proc")
+    def test_a_zombie_runner_is_gone(self):
+        pid = os.fork()
+        if pid == 0:
+            os._exit(0)
+        self.addCleanup(os.waitpid, pid, 0)
+        for _ in range(100):  # until it has exited, unreaped
+            with open("/proc/%d/stat" % pid) as f:
+                fields = f.read().rsplit(")", 1)[1].split()
+            if fields[0] == "Z":
+                break
+            time.sleep(0.01)
+        self.assertEqual(fields[0], "Z")
+        self.assertFalse(run_lock.runner_alive("%d-%s" % (pid, fields[19])))
+
+    def test_a_runner_in_another_pid_namespace_counts_as_running(self):
+        self.assertTrue(run_lock.runner_alive("999999999-1-1"))
+        self.assertFalse(run_lock.runner_alive("999999999-1"))
+        self.assertFalse(run_lock.runner_alive("999999999-1-%s" % run_lock.pid_ns().strip("pid:[]")))
+
+    def test_a_runner_in_another_pid_namespace_is_not_judged(self):
+        with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "999999999-1"}), \
+                mock.patch.object(run_lock, "pid_ns", return_value="pid:[1]"):
+            run_lock.acquire(self.lock, self.a, now=1000.0)
+        os.utime(self.a, (1000.0, 1000.0))
+        self.assertEqual(run_lock.acquire(self.lock, self.b, now=1100.0)["status"], "busy")
 
     def test_force_release_and_the_command_line(self):
         run_lock.acquire(self.lock, self.a)

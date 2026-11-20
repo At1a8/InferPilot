@@ -1,0 +1,171 @@
+// The processes a run started, found by the tag each of them inherits (INFERPILOT_RUN_TAG): an agent's
+// process group misses what it started with setsid or nohup, the environment does not. A process
+// started with `docker exec` carries the tag only when it was given (-e INFERPILOT_RUN_TAG). Linux only:
+// without /proc nothing is found.
+import { execFile } from 'node:child_process';
+import { readdirSync, readFileSync, readlinkSync } from 'node:fs';
+
+export const TAG = 'INFERPILOT_RUN_TAG';
+
+// A process's start time in clock ticks since boot (field 22 of /proc/<pid>/stat), or null when it is gone;
+// a zombie, which has exited and waits only to be reaped, is gone.
+export function startOf(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    return fields[0] === 'Z' || fields[0] === 'X' ? null : fields[19] || null;
+  } catch {
+    return null;
+  }
+}
+
+// The pid namespace this process sees /proc in, by its inode number.
+const nsOf = () => {
+  try {
+    return (readlinkSync('/proc/self/ns/pid').match(/\d+/) || [''])[0];
+  } catch {
+    return '';
+  }
+};
+export const PID_NS = nsOf();
+
+// <pid>-<start>-<pid namespace>: a pid alone could be reused once the runner is gone, and names another
+// process in another namespace (a host's runner seen from a container, or the other way round).
+export const runTag = (pid = process.pid) => `${pid}-${startOf(pid) || 0}-${PID_NS}`;
+
+// False only when the runner is known to be gone: one in another pid namespace cannot be looked up here.
+export function runnerAlive(tag) {
+  const [pid, start, ns] = String(tag).split('-');
+  if (ns && ns !== PID_NS) return true;
+  const now = startOf(pid);
+  return now !== null && (!start || start === '0' || now === start);
+}
+
+// Every process whose environment holds a run tag, this one excepted: [{pid, tag, cmd}].
+export function tagged() {
+  let pids;
+  try {
+    pids = readdirSync('/proc').filter((d) => /^\d+$/.test(d) && Number(d) !== process.pid);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const pid of pids) {
+    let kv;
+    try {
+      kv = readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').find((e) => e.startsWith(`${TAG}=`));
+    } catch {
+      continue;
+    }
+    if (!kv) continue;
+    let cmd = '';
+    try {
+      cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0+/g, ' ').trim();
+    } catch { /* gone meanwhile */ }
+    out.push({ pid: Number(pid), tag: kv.slice(TAG.length + 1), cmd });
+  }
+  return out;
+}
+
+// What runs that are no longer running left behind.
+export const orphans = () => tagged().filter((p) => !runnerAlive(p.tag));
+
+// With InferPilot on the host, servers run in the task's container through `docker exec -e
+// INFERPILOT_RUN_TAG`: their environments are root's there and unreadable from the host, and stopping the
+// local docker client leaves them running. The container's root finds and stops them instead, as
+// stopPids() does here: SIGTERM to each tagged process, looking again every second of graceS for ones
+// started meanwhile, then SIGKILL to those still alive, each checked by its start time first, so a reused
+// pid is never signalled. Resolves to the pids it signalled, or null when docker could not be run or abort
+// (an AbortSignal) ended the wait. One grep reads every environment: two processes per pid made each scan
+// take 8 s where /proc held 9,000 pids.
+const IN_CONTAINER = [
+  't="INFERPILOT_RUN_TAG=$1"; seen=""',
+  'start_of() { sed "s/.*) //" "/proc/$1/stat" 2>/dev/null | awk \'$1 != "Z" && $1 != "X" {print $20}\'; }',
+  'look() {',
+  '  for f in $(grep -l -s -z -x -F "$t" /proc/[0-9]*/environ); do',
+  '    p=${f#/proc/}; p=${p%/environ}',
+  '    case " $seen " in *" $p:"*) continue ;; esac',
+  '    s=$(start_of "$p"); [ -n "$s" ] || continue',
+  '    seen="$seen $p:$s"; kill -TERM "$p" 2>/dev/null',
+  '  done',
+  '}',
+  'alive() { out=""; for e in $seen; do [ "$(start_of "${e%%:*}")" = "${e#*:}" ] && out="$out ${e%%:*}"; done; echo $out; }',
+  'look; i=0',
+  'while [ "$i" -lt "$2" ]; do sleep 1; look; [ -z "$(alive)" ] && break; i=$((i + 1)); done',
+  'look; left=$(alive); [ -n "$left" ] && kill -KILL $left 2>/dev/null',
+  'for e in $seen; do printf "%s " "${e%%:*}"; done',
+].join('\n');
+
+// A script run by the container's root: its output, or null when docker could not be run.
+const dockerSh = (container, script, args, timeoutS, abort) => new Promise((resolve) => {
+  execFile('docker', ['exec', container, 'sh', '-c', script, 'sh', ...args],
+    { encoding: 'utf8', timeout: timeoutS * 1000, maxBuffer: 16 * 1024 * 1024, signal: abort },
+    (err, stdout) => resolve(err ? null : String(stdout || '')));
+});
+
+export async function stopInContainer(container, tag, graceS = 10, abort = undefined) {
+  const out = await dockerSh(container, IN_CONTAINER, [tag, String(graceS)], graceS + 30, abort);
+  return out === null ? null : out.trim().split(/\s+/).filter(Boolean);
+}
+
+const TAGGED_IN_CONTAINER = [
+  'for f in $(grep -l -s -z "^INFERPILOT_RUN_TAG=" /proc/[0-9]*/environ); do',
+  '  p=${f#/proc/}; p=${p%/environ}',
+  '  t=$(tr "\\0" "\\n" < "$f" 2>/dev/null | grep -m 1 "^INFERPILOT_RUN_TAG=") || continue',
+  '  printf "%s %s %s\\n" "$p" "${t#*=}" "$(tr "\\0" " " < "/proc/$p/cmdline" 2>/dev/null)"',
+  'done',
+].join('\n');
+
+// What runs that are gone left running in a container, found by its root: [{pid, tag, cmd}], with the pids
+// the container gives them, or null when docker could not be run. As in orphans(), a runner is judged only
+// from its own pid namespace: from the host, a runner on the host that started its task's servers there.
+export async function orphansIn(container) {
+  const out = await dockerSh(container, TAGGED_IN_CONTAINER, [], 30);
+  if (out === null) return null;
+  return out.split('\n').filter(Boolean).map((line) => {
+    const [pid, tag, ...cmd] = line.split(' ');
+    return { pid: Number(pid), tag, cmd: cmd.join(' ').trim() };
+  }).filter((p) => !runnerAlive(p.tag));
+}
+
+export function signal(pids, sig) {
+  for (const pid of pids) {
+    try {
+      process.kill(pid, sig);
+    } catch { /* already gone */ }
+  }
+}
+
+// Whether pid is still the process that started at start, and not a zombie.
+function same(pid, start) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    return fields[0] !== 'Z' && fields[19] === start;
+  } catch {
+    return false;
+  }
+}
+
+// SIGTERM to every process find() returns, looking several times: one scan can miss a process in the
+// middle of an exec, whose environment reads empty then. SIGKILL for what is left after graceMs.
+// Resolves to every process it signalled.
+export async function stopPids(find, graceMs = 10000) {
+  const seen = new Map();
+  const look = () => {
+    for (const p of find()) {
+      if (seen.has(p.pid)) continue;
+      seen.set(p.pid, { ...p, start: startOf(p.pid) });
+      signal([p.pid], 'SIGTERM');
+    }
+  };
+  const alive = () => [...seen.values()].filter((p) => same(p.pid, p.start));
+  look();
+  const deadline = Date.now() + graceMs;
+  for (let i = 0; Date.now() < deadline && (i < 3 || alive().length); i++) {
+    await new Promise((r) => setTimeout(r, 150));
+    look();
+  }
+  signal(alive().map((p) => p.pid), 'SIGKILL');
+  return [...seen.values()];
+}
