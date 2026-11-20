@@ -75,15 +75,15 @@ export const orphans = () => tagged().filter((p) => !runnerAlive(p.tag));
 // local docker client leaves them running. The container's root finds and stops them instead, as
 // stopPids() does here: SIGTERM to each tagged process, looking again every second of graceS for ones
 // started meanwhile, then SIGKILL to those still alive, each checked by its start time first, so a reused
-// pid is never signalled. Resolves to the pids it signalled, or null when docker could not be run.
+// pid is never signalled. Resolves to the pids it signalled, or null when docker could not be run. One grep
+// reads every environment: two processes per pid made each scan take 8 s where /proc held 9,000 pids.
 const IN_CONTAINER = [
   't="INFERPILOT_RUN_TAG=$1"; seen=""',
   'start_of() { sed "s/.*) //" "/proc/$1/stat" 2>/dev/null | awk \'$1 != "Z" && $1 != "X" {print $20}\'; }',
   'look() {',
-  '  for d in /proc/[0-9]*; do',
-  '    p=${d#/proc/}',
+  '  for f in $(grep -l -s -z -x -F "$t" /proc/[0-9]*/environ); do',
+  '    p=${f#/proc/}; p=${p%/environ}',
   '    case " $seen " in *" $p:"*) continue ;; esac',
-  '    tr "\\0" "\\n" < "$d/environ" 2>/dev/null | grep -qx "$t" || continue',
   '    s=$(start_of "$p"); [ -n "$s" ] || continue',
   '    seen="$seen $p:$s"; kill -TERM "$p" 2>/dev/null',
   '  done',
