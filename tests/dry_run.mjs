@@ -212,17 +212,45 @@ const scenarios = [
     });
     const tsp = timedOut.calls.find((c) => c.key === 'issue_triager:spinoff');
     check(timedOut.result.status === 'blocked' && tsp && tsp.ins.confirm_leads === false
-      && (tsp.ins.attention || []).some((a) => String(a.call).startsWith('verify_engineer')),
-      'after a timeout the spinoff confirms nothing, since the timed-out agent may still hold the GPUs, and sees why');
+      && (tsp.ins.attention || []).some((a) => String(a.call).startsWith('verify_engineer'))
+      && (tsp.ins.confirm_skipped || []).some((x) => x.startsWith('verify_engineer') && x.includes('timed out')),
+      'after a timeout the spinoff confirms nothing, since the timed-out agent may still hold the GPUs, and is told why');
+    const notAsked = await run({ mode: 'feature', task: 't', agent_timeout_ms: 100 }, {
+      'implementer:implement': (ins) => ({ wp: ins.work_package.id, status: 'done', commit: `c_${ins.work_package.id}`,
+        unit_test_cmd: 'pytest -q t.py', leads: [lead] }),
+      'verify_engineer:verify': async () => {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        return { all_pass: true, failures: [] };
+      },
+    });
+    const nsp = notAsked.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(nsp && nsp.ins.confirm_leads === false && (nsp.ins.confirm_skipped || []).length === 0,
+      'confirm_skipped stays empty when the task never asked for confirmation');
+    const atSetup = await run({ mode: 'feature', task: 't', confirm_leads: true, stop_after: 'Setup' }, {
+      'director:setup': () => ({ lock: 'acquired', run_dir: RUN, baseline_status: 'pass', baseline: 'ok', branch: 'inferpilot/task',
+        worktree: `${RUN}/wt`, gpu_ids: '0,1', leads: [lead] }),
+    });
+    const ssp = atSetup.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(ssp && ssp.ins.confirm_leads === false && (ssp.ins.confirm_skipped || []).some((x) => x.includes('Setup')),
+      'a run that stopped at Setup confirms nothing on the base commit');
     check(!(r.result.next.user || []).some((u) => u.includes('issue draft')), 'an unconfirmed lead asks the human for nothing');
     const confirmed = await run({ mode: 'feature', task: 't' }, {
       'reviewer:review': () => ({ verdict: 'approve', findings: [], review_path: `${RUN}/review.md`, leads: [lead] }),
       'issue_triager:spinoff': () => ({ spinoffs: [{ id: 'KI-009', source: 'lead', status: 'drafted', draft_path: `${RUN}/spinoff/KI-009.md`,
-        known_issue: { id: 'KI-009', title: lead.title } }] }),
+        known_issue: { id: 'KI-009', title: lead.title }, base_import: `${RUN}/spinoff/base/python/sglang/__init__.py` }] }),
     });
     const learn = confirmed.calls.find((c) => c.key === 'curator:learn');
     check(confirmed.result.known_issues.some((k) => k.id === 'KI-009') && learn && learn.ins.known_issues.some((k) => k.id === 'KI-009'),
       'a lead the base commit confirms becomes a known issue the curator records');
+    const wrongTree = await run({ mode: 'feature', task: 't' }, {
+      'reviewer:review': () => ({ verdict: 'approve', findings: [], review_path: `${RUN}/review.md`, leads: [lead] }),
+      'issue_triager:spinoff': () => ({ spinoffs: [{ id: 'KI-009', source: 'lead', status: 'drafted', draft_path: `${RUN}/spinoff/KI-009.md`,
+        known_issue: { id: 'KI-009', title: lead.title }, base_import: `${RUN}/wt/python/sglang/__init__.py` }] }),
+    });
+    const w = wrongTree.result.spinoffs[0] || {};
+    check(!wrongTree.result.known_issues.some((k) => k.id === 'KI-009') && w.status === 'unconfirmed' && !w.draft_path
+      && String(w.note).includes(`${RUN}/wt/python`) && !(wrongTree.result.next.user || []).some((u) => u.includes('issue draft')),
+      'a confirmation whose base run imported the task tree is not counted: unconfirmed, no draft to file');
     const work = r.calls.find((c) => c.key === 'verify_engineer:verify');
     const report = r.calls.find((c) => c.key === 'director:report');
     check(work.prompt.includes('do not chase it') && !report.prompt.includes('do not chase it') && !sp.prompt.includes('do not chase it'),

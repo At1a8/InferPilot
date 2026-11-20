@@ -69,16 +69,17 @@ Return:
 Inputs: `known_issues` (failures a same-pattern baseline control already proved pre-existing, in the
 `known_issues.md` format), `leads` (problems a role met that are not this task's, each with `title`,
 `observed`, `where`, `evidence`, `reproduce` and the call it came `from`), `confirm_leads`,
-`attention`, `status`, `phases`, the ledger. None of them is this task's to fix, and each is
-someone's: give a human what it takes to hand it on. Also read `knowledge/env_hygiene.md` (*The code
-under test*, and how to stop what you start).
+`confirm_skipped`, `attention`, `status`, `phases`, the ledger. None of them is this task's to fix,
+and each is someone's: give a human what it takes to hand it on. Also read `knowledge/env_hygiene.md`
+(*The code under test*, and how to stop what you start).
 
 1. **Leads first.** Drop a lead that repeats a known issue or another lead.
    - Without `confirm_leads` (the default), run nothing: the run's time is the task's. Look each lead
      up as in step 2; one tracked upstream is `tracked`, the rest `unconfirmed`, with `note` giving the
-     command that would show it on the base commit. No draft for them. `confirm_leads` also comes in
-     false when a call of this run timed out (`attention`): its agent may still hold the GPUs, and a
-     base run that fails for that would pass for a confirmed lead. Say so in each `note`.
+     command that would show it on the base commit. No draft for them. `confirm_skipped` lists why
+     confirmation is off although the task asked for it (a call that timed out may still hold the
+     GPUs; a run that stopped at Setup may have a broken environment): give that reason in each
+     `note`. When it is empty, confirmation was not asked for; say nothing about it.
    - With `confirm_leads`, check each on the base commit the ledger records, without this task's
      change, on the GPUs in `gpu_ids`, at most a few runs each, one log per run under `RUN_DIR/logs/`:
      - The tree: `RUN_DIR/base` when it is a worktree at that commit, else a throwaway one
@@ -88,7 +89,11 @@ under test*, and how to stop what you start).
        tree, so replace any `PYTHONPATH` or `TREE` in it that names another tree; one you cannot point
        at the base tree is `unconfirmed`, and `note` says why.
      - The first log of each run prints `sglang.__file__`; a run that did not import it from the base
-       tree does not count.
+       tree does not count. Return that path as `base_import` with a lead you confirm: InferPilot
+       counts the lead as confirmed only when the path lies in `RUN_DIR/base` or `RUN_DIR/spinoff/base`.
+     - It shows there only when the base run fails the way the lead's `observed` says: the same error,
+       the same test, comparable counts. A base run that fails for another reason (an import error, out
+       of memory, a port in use, a server that does not come up) confirms nothing.
      - Stop only what you started, from the PIDs you recorded when you started it (`env_hygiene.md`).
      One that shows there is a known issue now: write it in the `known_issues.md` format as
      `known_issue`, and go on with it as with the others. One that does not show, or cannot run here
@@ -116,6 +121,9 @@ Return:
 {"spinoffs": [{"id": "KI-007", "source": "known_issue", "status": "drafted", "upstream": "",
   "draft_path": "/abs/RUN_DIR/spinoff/KI-007.md",
   "task_definition": "mode=issue, task=<issue URL>, model_path=..., gpu_ids=0,1,2,3,4,5,6,7"},
+  {"id": "KI-008", "source": "lead", "status": "drafted", "draft_path": "/abs/RUN_DIR/spinoff/KI-008.md",
+   "known_issue": {"id": "KI-008", "title": "..."},
+   "base_import": "/abs/RUN_DIR/spinoff/base/python/sglang/__init__.py", "task_definition": "..."},
   {"id": "lead-1", "source": "lead", "status": "unconfirmed", "note": "<what was tried, what would confirm it>"}],
  "summary": "<one line per entry: tracked as ..., drafted, or unconfirmed>"}
 ```

@@ -533,6 +533,7 @@ const SPINOFF = S({
     draft_path: str,
     task_definition: str,
     known_issue: obj, // a lead the base commit confirmed, in the known_issues.md format
+    base_import: str, // with known_issue: sglang.__file__ from that base run's first log
     note: str,
   }, ['id', 'source', 'status'])),
   summary: str,
@@ -675,6 +676,16 @@ const DISPATCH = S({
 // ---------------------------------------------------------------------------
 // Shared stages
 // ---------------------------------------------------------------------------
+// A lead counts as confirmed only when its base run imported the framework from a base worktree of this run.
+function checkedOnBase(s) {
+  if (s.source !== 'lead' || !s.known_issue) return s;
+  const imp = String(s.base_import || '');
+  if ([`${C.run_dir}/base/`, `${C.run_dir}/spinoff/base/`].some((t) => imp.startsWith(t))) return s;
+  const { known_issue, draft_path, ...rest } = s;
+  return { ...rest, status: 'unconfirmed', note: `${s.note ? `${s.note} ` : ''}Not counted as confirmed: its base run `
+    + `imported the framework from ${imp || 'a path it did not record'}, not from a base worktree of this run.` };
+}
+
 async function finish(status, at) {
   R.status = status;
   R.stopped_at = at || '';
@@ -683,12 +694,15 @@ async function finish(status, at) {
     // Leads are run on the base commit only with confirm_leads; the GPUs are the task's.
     if (R.known_issues.length || R.leads.length) {
       enter('Spinoff');
-      // A timed-out call may still hold the GPUs: a base run that fails for that would pass for a confirmed lead.
+      // A base run that fails for another reason would pass for a confirmed lead: a timed-out agent may still
+      // hold the GPUs, and a run stopped at Setup may have a broken environment.
+      const skipped = !C.confirm_leads ? [] : [...TIMED_OUT_CALLS].map((c) => `${c} timed out`)
+        .concat(at === 'Setup' ? ['the run stopped at Setup'] : []);
       const sp = await call('issue_triager', 'spinoff', inputs({ status, stopped_at: at || '', phases: R.phases,
-        leads: R.leads, attention: R.attention, confirm_leads: C.confirm_leads && TIMED_OUT_CALLS.size === 0 }), SPINOFF);
+        leads: R.leads, attention: R.attention, confirm_leads: C.confirm_leads && !skipped.length, confirm_skipped: skipped }), SPINOFF);
       if (sp && Array.isArray(sp.spinoffs)) {
-        R.spinoffs = sp.spinoffs;
-        for (const s of sp.spinoffs) if (s && s.source === 'lead' && s.known_issue) R.known_issues.push(s.known_issue);
+        R.spinoffs = sp.spinoffs.filter(Boolean).map(checkedOnBase);
+        for (const s of R.spinoffs) if (s.source === 'lead' && s.known_issue) R.known_issues.push(s.known_issue);
       }
     }
     // The Triage draft predates every result: by now it promises steps that were done, or changed.
