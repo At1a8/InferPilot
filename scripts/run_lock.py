@@ -4,14 +4,17 @@ shares with the host (scripts/run_docker.sh starts them that way), which no othe
 which a reboot clears.
 
     python3 scripts/run_lock.py acquire --run-dir DIR --mode MODE --task TEXT [--gpus 0,1] [--idle-hours 12]
+    python3 scripts/run_lock.py acquire --run-dir DIR --whole   # the run holding DIR takes the whole machine
     python3 scripts/run_lock.py release --run-dir DIR        # or: release --run-tag TAG, release --force
     python3 scripts/run_lock.py status
 
 Tasks run at once when they share no GPU and run in different containers (a container's framework
-checkout serves one task); a task without --gpus (a scan) takes the whole machine. acquire exits 1 when
-a holder is in the way and prints who. A holder is dropped without asking when its run has finished (a
-report newer than the lock), when the runner that took it is gone, or when its run has written nothing
-in its run directory for the holder's --idle-hours. The runner is the process named by
+checkout serves one task); a task without --gpus (a scan) takes the whole machine. A run that holds GPUs
+widens its hold to the whole machine with --whole before it measures speed (knowledge/perf_evaluation.md),
+keeping its task and start; while another task holds GPUs, that exits 1 and its own hold stays as it was.
+acquire exits 1 when a holder is in the way and prints who. A holder is dropped without asking when its
+run has finished (a report newer than the lock), when the runner that took it is gone, or when its run
+has written nothing in its run directory for the holder's --idle-hours. The runner is the process named by
 INFERPILOT_RUN_TAG (<pid>-<start time>-<pid namespace>, set by runtime/run.mjs for every agent); it is
 checked only from the pid namespace it was recorded in. A run directory this container cannot see (the
 run is in another container) is never taken over for silence; a lock left by a run that died is freed
@@ -143,10 +146,10 @@ def clash(holder: dict, gpus: list, container: str) -> bool:
 
 
 def acquire(lock: str, run_dir: str, task: str = "", mode: str = "", idle_hours: float = 12,
-            now: float | None = None, gpus: list | None = None) -> dict:
+            now: float | None = None, gpus: list | None = None, whole: bool = False) -> dict:
     now = time.time() if now is None else now
     run_dir = os.path.abspath(run_dir)
-    gpus = sorted(set(gpus or []))
+    gpus = [] if whole else sorted(set(gpus or []))
     container = os.environ.get("INFERPILOT_CONTAINER", "")
     fd = _open(lock)
     try:
@@ -154,20 +157,23 @@ def acquire(lock: str, run_dir: str, task: str = "", mode: str = "", idle_hours:
         holders = _holders(_read(fd))
         tag = os.environ.get("INFERPILOT_RUN_TAG", "")
         # The same runner, container, pid namespace and GPUs asking again keep their hold. Anything else on
-        # this run directory takes a new hold below: the same runner with other GPUs at once, a resumed run
-        # (a new runner) once the old holder is stale (finished, runner gone, silent), and is busy before.
-        took = None
+        # this run directory takes a new hold below: the same runner with other GPUs or --whole at once (its
+        # task and start kept), a resumed run (a new runner) once the old holder is stale (finished, runner
+        # gone, silent), and is busy before.
+        took, kept = None, {}
         mine = next((h for h in holders if h["run_dir"] == run_dir), None)
         if mine is not None:
             same = (mine.get("run_tag", "") == tag and mine.get("container", "") == container
                     and mine.get("pid_ns", "") == pid_ns())
-            if same and (not gpus or (mine.get("gpus") or []) == gpus):
+            if same and ((not gpus and not whole) or (mine.get("gpus") or []) == gpus):
                 return {"status": "acquired", "holder": mine}
             reason = stale_reason(mine, now)
             if not same and not reason:  # someone else's live hold on this path, two containers' alike
                 return {"status": "busy", "holder": mine}
             holders = [h for h in holders if h is not mine]
             took = {"run_dir": run_dir, "reason": reason} if reason else None
+            if same and not reason:
+                kept = {k: mine[k] for k in ("mode", "task", "idle_hours", "started", "started_at") if k in mine}
         live, gone = [], []
         for h in holders:
             reason = stale_reason(h, now)
@@ -177,7 +183,7 @@ def acquire(lock: str, run_dir: str, task: str = "", mode: str = "", idle_hours:
             return {"status": "busy", "holder": in_way[0]}
         new = {"run_dir": run_dir, "mode": mode, "task": task, "gpus": gpus, "idle_hours": idle_hours, "started": now,
                "started_at": time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(now)),
-               "host": socket.gethostname(), "container": container, "run_tag": tag, "pid_ns": pid_ns()}
+               "host": socket.gethostname(), "container": container, "run_tag": tag, "pid_ns": pid_ns(), **kept}
         _write(fd, {"holders": [h for h, _ in live] + [new]})
         out = {"status": "acquired", "holder": new}
         if took or gone:
@@ -246,7 +252,10 @@ def main(argv=None) -> int:
     acq.add_argument("--run-dir", required=True)
     acq.add_argument("--mode", default="")
     acq.add_argument("--task", default="")
-    acq.add_argument("--gpus", default="", help="HIP numbers, e.g. 0,1 (default: the whole machine)")
+    held = acq.add_mutually_exclusive_group()
+    held.add_argument("--gpus", default="", help="HIP numbers, e.g. 0,1 (default: the whole machine)")
+    held.add_argument("--whole", action="store_true",
+                      help="the whole machine, also for a run that holds GPUs: before it measures speed")
     acq.add_argument("--idle-hours", type=float, default=12,
                      help="hours without a write in the run directory after which the lock counts as stale")
     rel = sub.add_parser("release", help="free the machine")
@@ -257,7 +266,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.cmd == "acquire":
         out = acquire(a.lock, a.run_dir, a.task, a.mode, a.idle_hours,
-                      gpus=[int(g) for g in a.gpus.split(",") if g.strip()])
+                      gpus=[int(g) for g in a.gpus.split(",") if g.strip()], whole=a.whole)
     elif a.cmd == "release":
         out = release(a.lock, a.run_dir, a.force, a.run_tag)
     else:

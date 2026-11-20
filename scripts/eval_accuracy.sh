@@ -47,6 +47,11 @@ TOP_P=${TOP_P:-}
 TOP_K=${TOP_K:-}
 REASONING_EFFORT=${REASONING_EFFORT-max}
 ENABLE_THINKING=${ENABLE_THINKING:-1}
+# Templates read thinking (DeepSeek) or enable_thinking (Qwen3, which thinks unless it is told not to):
+# both go, true or false, so ENABLE_THINKING=0 turns thinking off for either.
+THINK=false
+[ "${ENABLE_THINKING}" = 1 ] && THINK=true
+TEMPLATE_KWARGS="{\"thinking\":${THINK},\"enable_thinking\":${THINK}}"
 EVALSCOPE=${EVALSCOPE:-evalscope}
 SERVER_URL=${API_URL%/v1}
 SERVER_URL=${SERVER_URL%/}
@@ -123,10 +128,11 @@ if [ "${NEED_JUDGE}" = 1 ] && [ -n "${JUDGE_KEY}" ]; then
     done
 fi
 
-# A resumed work dir must not mix samples generated with other sampling settings.
+# A resumed work dir must not mix samples generated with other sampling settings. The template keywords are
+# recorded as sent, not as ENABLE_THINKING: what one value of it sends can change.
 fingerprint() {
-    echo "model=${MODEL} max_tokens=${MAX_TOKENS} effort=${REASONING_EFFORT:-none} thinking=${ENABLE_THINKING}" \
-         "top_p=${TOP_P:-server} top_k=${TOP_K:-server}"
+    echo "model=${MODEL} max_tokens=${MAX_TOKENS} effort=${REASONING_EFFORT:-none}" \
+         "chat_template_kwargs=${TEMPLATE_KWARGS} top_p=${TOP_P:-server} top_k=${TOP_K:-server}"
 }
 
 check_fingerprint() {  # <work dir>
@@ -146,7 +152,7 @@ FAILED=0
 SUMMARY=""
 
 run_one() {  # <set>
-    local ds=$1 batch work_dir log eb="" tail_cfg gen_cfg judge_args rc accept rep line think
+    local ds=$1 batch work_dir log eb="" tail_cfg gen_cfg judge_args rc accept rep line
     local -a cache_arg=() limit_arg=() args_arg=()
     dataset_profile "${ds}"
     batch=${BATCH:-${DS_BATCH}}
@@ -180,12 +186,8 @@ run_one() {  # <set>
     # extra_body is spread into the request's top level, so reasoning_effort must be a value the server
     # accepts; top_k is an sglang extension and only reaches the server through extra_body.
     [ -n "${REASONING_EFFORT}" ] && eb="\"reasoning_effort\":\"${REASONING_EFFORT}\""
-    # Templates read thinking (DeepSeek) or enable_thinking (Qwen3, which thinks unless it is told not to):
-    # both go, true or false, so ENABLE_THINKING=0 turns thinking off for either.
-    think=false
-    [ "${ENABLE_THINKING}" = 1 ] && think=true
     [ -n "${eb}" ] && eb="${eb},"
-    eb="${eb}\"chat_template_kwargs\":{\"thinking\":${think},\"enable_thinking\":${think}}"
+    eb="${eb}\"chat_template_kwargs\":${TEMPLATE_KWARGS}"
     if [ -n "${TOP_K}" ]; then
         [ -n "${eb}" ] && eb="${eb},"
         eb="${eb}\"top_k\":${TOP_K}"

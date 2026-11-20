@@ -93,7 +93,9 @@ belongs to a host user, and the rules below are about those.
   (re-check every 5 minutes, up to 30), then reporting the measurement as not run: a number measured
   next to somebody else's job is not a measurement. GPUs are numbered as HIP numbers them; rocm-smi's
   card numbers can differ. A performance measurement (throughput, TTFT, TPOT) checks every GPU of the
-  machine, `--check all`: work on another GPU moves speed numbers too (`perf_evaluation.md`).
+  machine, `--check all`: work on another GPU moves speed numbers too. Its run holds the whole machine
+  meanwhile, so that no other task starts on the other GPUs (`run_lock.py acquire --whole`,
+  `perf_evaluation.md`).
 - Running a test that needs a GPU the server occupies: stop the server first.
 
 ## Disk and tools

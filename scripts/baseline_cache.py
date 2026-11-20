@@ -9,10 +9,11 @@ scripts, workload and GPU type takes those numbers instead of measuring them aga
 
 The key is the framework commit, the model, the contents of the server and client scripts (an edited
 script misses), the workload, the accuracy sets (a gsm8k-only baseline is no baseline for a task that also
-needs gpqa_diamond and simple_qa), the GPU architecture (gfx950), the image, and --extra for anything else
-the numbers depend on (the GPU count, the sampling). lookup prints the newest entry no older than
---max-age-days, {"hit": true, "dir", "run_dir", "stored_at", "files"}, and exits 0, or {"hit": false} and
-exits 1. store copies the files and directories into <cache>/<key hash>/<time>-<random>/files/, writes
+needs gpqa_diamond and simple_qa), the contents of the accuracy harness (scripts/eval_accuracy.sh: a harness
+that sends or scores otherwise measures another number), the GPU architecture (gfx950), the image, and
+--extra for anything else the numbers depend on (the GPU count, the sampling). lookup prints the newest
+entry no older than --max-age-days, {"hit": true, "dir", "run_dir", "stored_at", "files"}, and exits 0, or
+{"hit": false} and exits 1. store copies the files and directories into <cache>/<key hash>/<time>-<random>/files/, writes
 meta.json there last, and prints the entry. Standard library only.
 """
 from __future__ import annotations
@@ -26,6 +27,8 @@ import sys
 import tempfile
 import time
 
+HARNESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval_accuracy.sh")
+
 
 def sha_of(path: str) -> str:
     if not path:
@@ -37,7 +40,7 @@ def sha_of(path: str) -> str:
 def key_of(a) -> dict:
     return {"commit": a.commit, "model": a.model, "server_script": sha_of(a.server_script),
             "client_script": sha_of(a.client_script), "workload": a.workload, "sets": " ".join(sorted(a.sets.split())),
-            "gpu": a.gpu, "image": a.image, "extra": a.extra}
+            "harness": sha_of(a.harness), "gpu": a.gpu, "image": a.image, "extra": a.extra}
 
 
 def digest(key: dict) -> str:
@@ -109,6 +112,7 @@ def main(argv=None) -> int:
         p.add_argument("--gpu", required=True, help="the GPU architecture, e.g. gfx950")
         p.add_argument("--image", default="")
         p.add_argument("--extra", default="", help="anything else the numbers depend on")
+        p.add_argument("--harness", default=HARNESS, help=argparse.SUPPRESS)  # another accuracy harness, for tests
         if name == "lookup":
             p.add_argument("--max-age-days", type=float, default=7)
         else:

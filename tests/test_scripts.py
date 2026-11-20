@@ -308,6 +308,21 @@ class EvalAccuracyTest(unittest.TestCase):
         self.assertEqual(off, {"chat_template_kwargs": {"thinking": False, "enable_thinking": False}},
                          "Qwen3 thinks unless enable_thinking is false")
 
+    def test_a_work_dir_sampled_with_other_template_keywords_is_not_resumed(self):
+        # thinking=0 is what a work dir recorded when ENABLE_THINKING=0 still left Qwen3 thinking
+        work = self.tmp / "results" / "eval_gsm8k"
+        work.mkdir(parents=True)
+        (work / "sampling_fingerprint.txt").write_text(
+            "model=fake-model max_tokens=102400 effort=none thinking=0 top_p=server top_k=server\n")
+        r = self.run_script("gsm8k", ENABLE_THINKING="0", REASONING_EFFORT="", CACHE_DIR=str(work))
+        self.assertEqual(r.returncode, 1, r.stderr + r.stdout)
+        self.assertIn("other settings", r.stderr)
+        self.assertFalse(self.calls.exists(), "evalscope resumed samples of another template setting")
+        r = self.run_script("gsm8k", ENABLE_THINKING="0", REASONING_EFFORT="", TAG="fresh")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertIn('chat_template_kwargs={"thinking":false,"enable_thinking":false}',
+                      (self.tmp / "results" / "fresh_gsm8k" / "sampling_fingerprint.txt").read_text())
+
     def test_options_reach_evalscope_whole(self):
         data = self.tmp / "long bench"
         data.mkdir()
@@ -523,6 +538,28 @@ class RunLockTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": "box2"}):
             self.assertEqual(run_lock.acquire(self.lock, self.b, gpus=[0])["status"], "acquired", "GPU 0 was let go")
 
+    def test_a_run_holding_gpus_takes_the_whole_machine_before_it_measures_speed(self):
+        def take(run_dir, container, **kw):
+            with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": container}):
+                return run_lock.acquire(self.lock, run_dir, **kw)
+        Path(self.b).mkdir()
+        take(self.a, "box1", task="port PARD-2", mode="feature", idle_hours=24, gpus=[0, 1], now=1000.0)
+        take(self.b, "box2", gpus=[2, 3], now=1000.0)
+        busy = take(self.a, "box1", whole=True, now=1100.0)
+        self.assertEqual((busy["status"], busy["holder"]["run_dir"]), ("busy", self.b))
+        self.assertEqual([h["holder"]["gpus"] for h in run_lock.status(self.lock, now=1100.0)["holders"]], [[0, 1], [2, 3]],
+                         "a run that has to wait keeps its own GPUs")
+        run_lock.release(self.lock, self.b)
+        whole = take(self.a, "box1", whole=True, now=1200.0)["holder"]
+        self.assertEqual((whole["gpus"], whole["task"], whole["mode"], whole["idle_hours"], whole["started"]),
+                         ([], "port PARD-2", "feature", 24, 1000.0))
+        self.assertEqual(take(self.b, "box2", gpus=[4], now=1300.0)["status"], "busy", "no task starts on the other GPUs")
+        self.assertEqual(take(self.a, "box1", now=1400.0)["holder"]["gpus"], [], "a retry without --gpus keeps the machine")
+        with redirect_stdout(io.StringIO()), mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": "box1"}):
+            self.assertEqual(run_lock.main(["--lock", self.lock, "acquire", "--run-dir", self.a, "--whole"]), 0)
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            run_lock.main(["--lock", self.lock, "acquire", "--run-dir", self.a, "--whole", "--gpus", "0"])
+
     def test_two_containers_on_the_same_path_without_runner_tags_do_not_share_it(self):
         with mock.patch.dict(os.environ, {"INFERPILOT_RUN_TAG": "", "INFERPILOT_CONTAINER": "box1"}):
             run_lock.acquire(self.lock, self.a, gpus=[0], now=1000.0)
@@ -585,6 +622,8 @@ class BaselineCacheTest(unittest.TestCase):
         self.root = Path(tmp.name)
         self.server = self.root / "server.sh"
         self.server.write_text("python -m sglang.launch_server --tp 1\n")
+        self.harness = self.root / "eval_accuracy.sh"
+        self.harness.write_text("evalscope eval --datasets gsm8k\n")
         self.run_dir = self.root / "run"
         (self.run_dir / "accuracy").mkdir(parents=True)
         (self.run_dir / "accuracy" / "summary.txt").write_text("baseline gsm8k: aggregate={'score': 0.91}\n")
@@ -592,7 +631,8 @@ class BaselineCacheTest(unittest.TestCase):
 
     def key(self, **over):
         a = {"commit": "a" * 40, "model": "Qwen/Qwen3-8B", "server_script": str(self.server), "client_script": "",
-             "workload": "vllm-49406 c1", "sets": "gsm8k", "gpu": "gfx950", "image": "", "extra": "tp=1", **over}
+             "workload": "vllm-49406 c1", "sets": "gsm8k", "harness": str(self.harness), "gpu": "gfx950", "image": "",
+             "extra": "tp=1", **over}
         return baseline_cache.key_of(argparse.Namespace(**a))
 
     def test_a_baseline_is_found_for_the_same_key_only(self):
@@ -606,6 +646,12 @@ class BaselineCacheTest(unittest.TestCase):
         self.assertFalse(baseline_cache.lookup(self.cache, lossy, 7, now=2000.0)["hit"], "a gsm8k-only baseline")
         self.assertEqual(lossy, self.key(sets="simple_qa gsm8k gpqa_diamond"), "the order of the sets does not matter")
         self.server.write_text("python -m sglang.launch_server --tp 2\n")  # an edited script is another key
+        self.assertFalse(baseline_cache.lookup(self.cache, self.key(), 7, now=2000.0)["hit"])
+
+    def test_a_baseline_from_another_accuracy_harness_is_not_used(self):
+        baseline_cache.store(self.cache, self.key(), str(self.run_dir), [str(self.run_dir / "accuracy")], now=1000.0)
+        self.assertTrue(baseline_cache.lookup(self.cache, self.key(), 7, now=2000.0)["hit"])
+        self.harness.write_text("sgl-eval gsm8k\n")
         self.assertFalse(baseline_cache.lookup(self.cache, self.key(), 7, now=2000.0)["hit"])
 
     def test_two_stores_in_the_same_second_keep_their_own_files(self):
@@ -682,6 +728,16 @@ class GpuStatusTest(unittest.TestCase):
         self.assertEqual((rc, out["unknown"]), (1, [1]))
         with mock.patch.object(gpu_status, "hip_devices", return_value=None), redirect_stdout(io.StringIO()):
             self.assertEqual(gpu_status.main(["--kfd", str(self.kfd), "--free", "1"]), 2)
+
+    def test_a_torch_that_finds_no_gpu_where_kfd_lists_some_checks_nothing(self):
+        self.devices.write_text("[]")
+        for args in (["--check", "all"], ["--free", "1"], []):
+            rc, out = self.run_main(*args)
+            self.assertEqual(rc, 2, "%s passed with no GPU checked" % args)
+            self.assertIn("finds no GPU", out["error"])
+        shutil.rmtree(self.kfd)  # no KFD either: nothing is known about any GPU
+        rc, out = self.run_main("--check", "all")
+        self.assertEqual((rc, out["gpus"]), (1, []))
 
     def test_unreadable_accounting_is_unknown_not_free(self):
         shutil.rmtree(self.kfd / "proc")

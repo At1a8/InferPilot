@@ -385,6 +385,37 @@ sleep 42.25 & wait`);
     check(st.status === 'free', `the lock is ${st.status}`);
     check(/=== END \(interrupted by SIGTERM in Long\)/.test(log), 'the log ends with the interruption');
   }],
+  ['run.mjs: a second SIGTERM kills at once an agent that ignores the first; the lock is freed and the result written all the same', async () => {
+    if (!existsSync('/proc/self/environ')) return;
+    const script = path.join(TMP, 'deaf.js');
+    writeFileSync(script, `phase('Long');\nawait agent('go', { label: 'deaf' });\nreturn { status: 'done' };`);
+    const lock = path.join(TMP, 'deaf.lock');
+    const cli = fakeCli('deaf.sh', `python3 ${path.join(INFERPILOT, 'scripts', 'run_lock.py')} acquire --run-dir ${path.join(TMP, 'deaf-run')} >/dev/null
+trap '' TERM
+sleep 46.25 & wait`);
+    const resultFile = path.join(TMP, 'deaf.result.json');
+    const runner = spawn(process.execPath, [path.join(INFERPILOT, 'runtime', 'run.mjs'), script, '--backend', 'cursor',
+      '--args', '{}', '--result-file', resultFile], { env: { ...process.env, INFERPILOT_CURSOR_BIN: cli, INFERPILOT_LOCK_FILE: lock },
+      stdio: ['ignore', 'ignore', 'pipe'] });
+    let log = '';
+    runner.stderr.on('data', (d) => { log += d; });
+    const running = (what) => spawnSync('pgrep', ['-f', what]).status === 0;
+    for (let i = 0; i < 100 && !(running('sleep 46.25') && existsSync(lock)); i++) await sleep(100);
+    check(running('sleep 46.25'), 'the agent started');
+    const t0 = Date.now();
+    runner.kill('SIGTERM');
+    for (let i = 0; i < 100 && !/=== SIGTERM: stopping/.test(log); i++) await sleep(20);
+    await sleep(300);
+    runner.kill('SIGTERM');
+    const code = await new Promise((r) => runner.on('exit', (c) => r(c)));
+    const took = Date.now() - t0;
+    check(code === 143 && took < 8000, `exit ${code} after ${took} ms, not the first signal's 10 s of grace`);
+    check(!running('sleep 46.25'), 'the agent that ignored SIGTERM was killed');
+    check(existsSync(resultFile) && JSON.parse(readFileSync(resultFile, 'utf8')).status === 'interrupted', 'the interrupted result was written');
+    const st = JSON.parse(execFileSync('python3', [path.join(INFERPILOT, 'scripts', 'run_lock.py'), '--lock', lock, 'status'], { encoding: 'utf8' }));
+    check(st.status === 'free', `the lock is ${st.status}`);
+    check(/=== SIGTERM again: killing them at once/.test(log), 'the log says the second signal killed them');
+  }],
   ['procs: a task with a container has its tagged processes stopped there, by the container\'s root', async () => {
     if (!existsSync('/proc/self/environ')) return;
     const bin = path.join(TMP, 'fakedocker');

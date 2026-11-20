@@ -12,8 +12,9 @@ is matched to its KFD node by PCI bus (torch's device properties), and the memor
 comes from /sys/class/kfd/kfd/proc/<pid>/vram_<gpu id>, which lists the processes of every container on the
 host (by host pid) and creates no context on any GPU. A process holding less than --min-mib (default 256)
 does not count. A GPU that matches no KFD node is never free, and without torch, whose device properties
-give the PCI bus, the script stops (exit 2) rather than guess HIP's order. Prints one JSON object; --free
-exits 1 when fewer GPUs are free, --check when one is held or unknown.
+give the PCI bus, or with a torch that finds no GPU where KFD lists some, the script stops (exit 2) rather
+than guess HIP's order. Prints one JSON object; --free exits 1 when fewer GPUs are free, --check when one is
+held or unknown, or when KFD's process accounting cannot be read.
 """
 from __future__ import annotations
 
@@ -132,6 +133,10 @@ def main(argv=None) -> int:
         print(json.dumps({"error": "torch is needed to number the GPUs as HIP does; KFD's order can differ",
                           "kfd_nodes": nodes}, indent=1))
         return 2
+    if not devices and nodes:
+        print(json.dumps({"error": "torch finds no GPU where KFD lists %d: a torch without ROCm, or HIP failed to start"
+                          % len(nodes), "kfd_nodes": nodes}, indent=1))
+        return 2
     rows = status(nodes, devices, held, a.min_mib, unknown)
     out, rc = {"gpus": rows}, 0
     if unknown is None:
@@ -146,7 +151,7 @@ def main(argv=None) -> int:
         out["busy"] = [r for r in rows if r["index"] in want and r["used_mib"]]
         out["unknown"] = [r["index"] for r in rows if r["index"] in want and r["used_mib"] is None]
         out["missing"] = sorted(want - {r["index"] for r in rows})
-        rc = 1 if out["busy"] or out["unknown"] or out["missing"] else rc
+        rc = 1 if out["busy"] or out["unknown"] or out["missing"] or unknown is None else rc
     print(json.dumps(out, indent=1))
     return rc
 

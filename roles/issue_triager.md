@@ -56,6 +56,9 @@ Inputs: the triage record, `expect_fixed` (true when the triage concluded the fi
 7. A `performance` issue: `perf_claim` is the number the fix must restore — metric, workload and value,
    from the reporter's expectation or the last good commit you measured (e.g. "decode tok/s back to
    2400 at c32, as on v0.5.21"). Without one the task stops here: a fix cannot be judged against it.
+   Its numbers are measured alone (`knowledge/perf_evaluation.md`): first the whole machine
+   (`python3 <inferpilot_dir>/scripts/run_lock.py acquire --run-dir RUN_DIR --whole`), then
+   `gpu_status.py --check all` before each measurement.
 
 Return:
 

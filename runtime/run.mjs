@@ -31,8 +31,10 @@
 // Every agent, and whatever it starts, inherits INFERPILOT_RUN_TAG, which names this runner. On SIGINT or
 // SIGTERM the runner stops them all (servers started with setsid or nohup too, and, for a task with a
 // container, those started there with docker exec -e INFERPILOT_RUN_TAG), frees the machine lock
-// (scripts/run_lock.py) and writes a result with status "interrupted" (exit 130 or 143); at its end it
-// stops what its agents left running. At the start it lists what runs that are gone left running.
+// (scripts/run_lock.py) and writes a result with status "interrupted" (exit 130 or 143). A second signal
+// kills them at once instead of waiting for them, and the lock and the result still follow; a third exits
+// at once. At its end it stops what its agents left running. At the start it lists what runs that are gone
+// left running.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -174,11 +176,15 @@ if (left.length && opts['kill-orphans']) {
 }
 
 let stopping = false;
+let hurried = false;
 async function interrupted(sig, code) {
+  if (hurried) process.exit(code);
   if (stopping) {
+    hurried = true;
+    rt.log(`=== ${sig} again: killing them at once, then freeing the lock; once more to exit without that ===`);
     backend.stopAll('SIGKILL');
     signal(mine().map((p) => p.pid), 'SIGKILL');
-    process.exit(code);
+    return;
   }
   stopping = true;
   const at = rt.current();
@@ -186,11 +192,11 @@ async function interrupted(sig, code) {
   backend.close();
   const groups = (async () => {
     const deadline = Date.now() + 10000;
-    while (backend.running && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
+    while (backend.running && !hurried && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
     backend.stopAll('SIGKILL');
   })();
   await Promise.all([groups, stopPids(mine)]);
-  inContainer();
+  inContainer(hurried ? 0 : 10);
   releaseLock();
   const result = { status: 'interrupted', signal: sig, at, summary: rt.summary(),
     next: { say: `Interrupted by ${sig}${at ? ` in ${at}` : ''}; its agents and what they started were stopped and the `
@@ -212,10 +218,10 @@ async function tidyUp() {
 }
 
 // A task with a container (InferPilot on the host) started its servers there: stop those too.
-function inContainer() {
+function inContainer(graceS = 10) {
   const box = (rt.state.container || (typeof args.container === 'string' ? args.container : '')).trim();
   if (!box) return;
-  const got = stopInContainer(box, tag);
+  const got = stopInContainer(box, tag, graceS);
   if (got === null) rt.log(`!! could not look for this run's processes in container ${box}: check it before reusing its GPUs`);
   else if (got.length) rt.log(`stopped ${got.length} process(es) of this run in container ${box}: ${got.join(' ')}`);
 }

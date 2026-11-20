@@ -5,10 +5,16 @@ conditions, at what cost", answered with an A/B that a reviewer can reproduce.
 
 **Performance is measured alone.** Throughput, TTFT, TPOT, latency and every other speed number are
 measured only while no other process uses any GPU of the machine: work on the other GPUs shares the
-CPUs, the PCIe and xGMI links, memory bandwidth and the power budget, and moves the numbers. Before each
-measurement, with this run's servers not started yet, `python3 <inferpilot_dir>/scripts/gpu_status.py
---check all` exits 0; otherwise wait (re-check every 5 minutes, up to 30), then report the measurement as
-not run. Accuracy and accept length do not depend on speed and may run next to other work.
+CPUs, the PCIe and xGMI links, memory bandwidth and the power budget, and moves the numbers. A run that
+measures speed holds the whole machine from its first measurement to its report, so that no other
+InferPilot task starts on the other GPUs in the middle of a measurement. Setup takes it for a `perf` task
+and a task with a `client_script`; a run that holds only its GPUs (a feature whose client the Spec writes,
+an issue triaged as a performance issue) widens its hold first: `python3
+<inferpilot_dir>/scripts/run_lock.py acquire --run-dir RUN_DIR --whole` (exit 1: another task holds GPUs,
+and the run keeps its own). Then, before each measurement, with this run's servers not started yet,
+`python3 <inferpilot_dir>/scripts/gpu_status.py --check all` exits 0. When either fails, wait (re-check
+every 5 minutes, up to 30), then report the measurement as not run. Accuracy and accept length do not
+depend on speed and may run next to other work.
 
 ## 1. Compare at an equal budget
 

@@ -596,8 +596,11 @@ frees them at the end of its report. Tasks in different containers run at once o
 share (HIP numbers, from `scripts/gpu_status.py`, which also says who holds memory on each); a task
 that uses no GPU, such as a scan, takes the whole machine, and so does a task that measures performance
 (a perf task, or one with a `client_script`): throughput, TTFT and TPOT have to be measured with no other
-GPU of the machine in use, since that work slows them down. While another task holds what a new run
-needs, the new run ends at once as `busy` and names the holder. A lock whose run finished, whose runner (`runtime/run.mjs`, seen from the same
+GPU of the machine in use, since that work slows them down. A task that finds out later that it measures
+performance (a feature whose client the Spec writes, an issue triaged as a performance issue) widens its
+hold to the whole machine before its first measurement (`run_lock.py acquire --whole`). While another
+task holds what a new run needs, the new run ends at once as `busy` and names the holder. A lock whose
+run finished, whose runner (`runtime/run.mjs`, seen from the same
 container) is gone, or which wrote nothing in its run directory for twice its longest agent call (12 h
 by default), is taken over by the next run. A run in another container is
 never taken over for silence, since its run directory is not visible from here; once that run is
