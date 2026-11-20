@@ -156,6 +156,132 @@ const scenarios = [
     check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
     check(r.result.known_issues.length === 1 && r.result.known_issues[0].id === 'KI-002', 'known issue recorded and passed to verify');
   }],
+  ['spinoff: a failure the baseline shares gets the upstream issue that tracks it, or an issue draft', async () => {
+    const bug = {
+      'verify_engineer:verify': (ins, n) => (n === 1
+        ? { all_pass: false, failures: [{ gate: 'G4', failure_class: 'catastrophic collapse' }] }
+        : { all_pass: true, failures: [] }),
+      'investigator:investigate': () => ({ verdict: 'baseline_bug', known_issue: { id: 'KI-007', title: 'EP>1 garbles every request' } }),
+    };
+    const r = await run({ mode: 'feature', task: 't' }, bug);
+    const sp = r.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(sp && sp.ins.known_issues.length === 1 && sp.ins.known_issues[0].id === 'KI-007', 'the spinoff sees the known issue');
+    const at = r.keys.indexOf('issue_triager:spinoff');
+    check(at >= 0 && at < r.keys.indexOf('director:report'), 'before the report');
+    const rep = r.calls.find((c) => c.key === 'director:report');
+    check(rep && rep.ins.spinoffs.length === 1 && rep.ins.spinoffs[0].draft_path === `${RUN}/spinoff/KI-007.md`
+      && r.result.spinoffs.length === 1 && r.result.spinoffs[0].id === 'KI-007', 'the report and the result list the draft');
+    check((r.result.next.user || []).some((u) => u.includes(`${RUN}/spinoff/KI-007.md`)), 'next.user asks the human to file the draft');
+    const tracked = await run({ mode: 'feature', task: 't' }, { ...bug,
+      'issue_triager:spinoff': () => ({ spinoffs: [{ id: 'KI-007', source: 'known_issue', status: 'tracked',
+        upstream: 'sgl-project/sglang#51020 (open)' }] }) });
+    check(tracked.result.spinoffs.length === 1 && tracked.result.spinoffs[0].upstream.includes('51020')
+      && !tracked.result.spinoffs[0].draft_path, 'one already tracked upstream is linked, not drafted');
+    const failed = await run({ mode: 'feature', task: 't' }, { ...bug, 'issue_triager:spinoff': () => null });
+    check(failed.result.status === 'ready_for_review' && failed.keys.includes('director:report') && failed.result.spinoffs.length === 0,
+      'a failed spinoff does not block the report');
+    const diagnosed = await run({ mode: 'issue', task: 'i' }, {
+      'investigator:diagnose': () => ({ verdict: 'baseline_bug', root_cause: 'pre-existing on main', known_issue: { id: 'KI-008' } }) });
+    const dsp = diagnosed.keys.indexOf('issue_triager:spinoff');
+    const reply = diagnosed.calls.find((c) => c.key === 'issue_triager:reply');
+    check(diagnosed.result.status === 'diagnosed' && dsp >= 0 && dsp < diagnosed.keys.indexOf('issue_triager:reply')
+      && reply.ins.spinoffs.length === 1, 'a diagnosed baseline bug: the spinoff runs before the reply, which sees it');
+    const none = await run({ mode: 'issue', task: 'i' });
+    check(!none.keys.includes('issue_triager:spinoff') && none.result.spinoffs.length === 0, 'no known issue, no spinoff');
+  }],
+  ['spinoff: a lead a role met on the way is listed, and checked on the base commit only with confirm_leads', async () => {
+    const lead = { title: 'tokenizer test fails on main', observed: '3/3 KeyError', where: 'test_tokenizer.py', reproduce: 'pytest test_tokenizer.py' };
+    const r = await run({ mode: 'feature', task: 't' }, { 'reviewer:review': () => ({ verdict: 'approve', findings: [], review_path: `${RUN}/review.md`, leads: [lead] }) });
+    const sp = r.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(sp && sp.ins.leads.length === 1 && sp.ins.leads[0].title === lead.title && String(sp.ins.leads[0].from).startsWith('reviewer'),
+      'a lead alone starts the spinoff, which sees it and where it came from');
+    check(r.result.spinoffs.length === 1 && r.result.spinoffs[0].status === 'unconfirmed' && r.result.known_issues.length === 0,
+      'an unconfirmed lead is listed, not made a known issue');
+    const asked = await run({ mode: 'feature', task: 't', confirm_leads: 'true' },
+      { 'reviewer:review': () => ({ verdict: 'approve', findings: [], review_path: `${RUN}/review.md`, leads: [lead] }) });
+    const asp = asked.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(sp.ins.confirm_leads === false && asp && asp.ins.confirm_leads === true,
+      'leads are checked on the base commit only when the task asks for it (confirm_leads)');
+    const timedOut = await run({ mode: 'feature', task: 't', confirm_leads: true, agent_timeout_ms: 100 }, {
+      'implementer:implement': (ins) => ({ wp: ins.work_package.id, status: 'done', commit: `c_${ins.work_package.id}`,
+        unit_test_cmd: 'pytest -q t.py', leads: [lead] }),
+      'verify_engineer:verify': async () => {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        return { all_pass: true, failures: [] };
+      },
+    });
+    const tsp = timedOut.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(timedOut.result.status === 'blocked' && tsp && tsp.ins.confirm_leads === false
+      && (tsp.ins.attention || []).some((a) => String(a.call).startsWith('verify_engineer'))
+      && (tsp.ins.confirm_skipped || []).some((x) => x.startsWith('verify_engineer') && x.includes('timed out')),
+      'after a timeout the spinoff confirms nothing, since the timed-out agent may still hold the GPUs, and is told why');
+    const notAsked = await run({ mode: 'feature', task: 't', agent_timeout_ms: 100 }, {
+      'implementer:implement': (ins) => ({ wp: ins.work_package.id, status: 'done', commit: `c_${ins.work_package.id}`,
+        unit_test_cmd: 'pytest -q t.py', leads: [lead] }),
+      'verify_engineer:verify': async () => {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        return { all_pass: true, failures: [] };
+      },
+    });
+    const nsp = notAsked.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(nsp && nsp.ins.confirm_leads === false && (nsp.ins.confirm_skipped || []).length === 0,
+      'confirm_skipped stays empty when the task never asked for confirmation');
+    const atSetup = await run({ mode: 'feature', task: 't', confirm_leads: true, stop_after: 'Setup' }, {
+      'director:setup': () => ({ lock: 'acquired', run_dir: RUN, baseline_status: 'pass', baseline: 'ok', branch: 'inferpilot/task',
+        worktree: `${RUN}/wt`, gpu_ids: '0,1', leads: [lead] }),
+    });
+    const ssp = atSetup.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(ssp && ssp.ins.confirm_leads === false && (ssp.ins.confirm_skipped || []).some((x) => x.includes('Setup')),
+      'a run that stopped at Setup confirms nothing on the base commit');
+    const badBase = await run({ mode: 'feature', task: 't', confirm_leads: true }, {
+      'director:setup': () => ({ lock: 'acquired', run_dir: RUN, baseline_status: 'fail', baseline: 'sgl_kernel import error',
+        branch: 'inferpilot/task', worktree: `${RUN}/wt`, gpu_ids: '0,1', leads: [lead] }),
+    });
+    const bsp = badBase.calls.find((c) => c.key === 'issue_triager:spinoff');
+    check(badBase.result.status === 'blocked' && badBase.result.stopped_at === 'Setup' && bsp && bsp.ins.confirm_leads === false
+      && (bsp.ins.confirm_skipped || []).some((x) => x.includes('Setup')),
+      'a run blocked at Setup by a failing baseline confirms nothing: every base run there would fail');
+    check(!(r.result.next.user || []).some((u) => u.includes('issue draft')), 'an unconfirmed lead asks the human for nothing');
+    const confirmed = await run({ mode: 'feature', task: 't' }, {
+      'reviewer:review': () => ({ verdict: 'approve', findings: [], review_path: `${RUN}/review.md`, leads: [lead] }),
+      'issue_triager:spinoff': () => ({ spinoffs: [{ id: 'KI-009', source: 'lead', status: 'drafted', draft_path: `${RUN}/spinoff/KI-009.md`,
+        known_issue: { id: 'KI-009', title: lead.title }, base_import: `${RUN}/spinoff/base/python/sglang/__init__.py` }] }),
+    });
+    const learn = confirmed.calls.find((c) => c.key === 'curator:learn');
+    check(confirmed.result.known_issues.some((k) => k.id === 'KI-009') && learn && learn.ins.known_issues.some((k) => k.id === 'KI-009'),
+      'a lead the base commit confirms becomes a known issue the curator records');
+    const wrongTree = await run({ mode: 'feature', task: 't' }, {
+      'reviewer:review': () => ({ verdict: 'approve', findings: [], review_path: `${RUN}/review.md`, leads: [lead] }),
+      'issue_triager:spinoff': () => ({ spinoffs: [{ id: 'KI-009', source: 'lead', status: 'drafted', draft_path: `${RUN}/spinoff/KI-009.md`,
+        known_issue: { id: 'KI-009', title: lead.title }, base_import: `${RUN}/wt/python/sglang/__init__.py` }] }),
+    });
+    const w = wrongTree.result.spinoffs[0] || {};
+    check(!wrongTree.result.known_issues.some((k) => k.id === 'KI-009') && w.status === 'unconfirmed' && !w.draft_path
+      && String(w.note).includes(`${RUN}/wt/python`) && !(wrongTree.result.next.user || []).some((u) => u.includes('issue draft')),
+      'a confirmation whose base run imported the task tree is not counted: unconfirmed, no draft to file');
+    const wrep = wrongTree.calls.find((c) => c.key === 'director:report');
+    check(w.withdrawn_draft === `${RUN}/spinoff/KI-009.md` && wrep && wrep.ins.spinoffs.some((x) => x.withdrawn_draft === w.withdrawn_draft),
+      'the draft written for it is handed to the report as withdrawn');
+    const dotdot = await run({ mode: 'feature', task: 't' }, {
+      'reviewer:review': () => ({ verdict: 'approve', findings: [], review_path: `${RUN}/review.md`, leads: [lead] }),
+      'issue_triager:spinoff': () => ({ spinoffs: [{ id: 'KI-009', source: 'lead', status: 'drafted', draft_path: `${RUN}/spinoff/KI-009.md`,
+        known_issue: { id: 'KI-009', title: lead.title }, base_import: `${RUN}/base/../wt/python/sglang/__init__.py` }] }),
+    });
+    check(!dotdot.result.known_issues.some((k) => k.id === 'KI-009') && (dotdot.result.spinoffs[0] || {}).status === 'unconfirmed',
+      'a base_import that leaves the base worktree through .. is not counted');
+    const work = r.calls.find((c) => c.key === 'verify_engineer:verify');
+    const report = r.calls.find((c) => c.key === 'director:report');
+    check(work.prompt.includes('do not chase it') && !report.prompt.includes('do not chase it') && !sp.prompt.includes('do not chase it'),
+      'working roles are told to hand leads on; the report and the spinoff are not');
+    const issue = await run({ mode: 'issue', task: 'i' },
+      { 'reviewer:review': () => ({ verdict: 'approve', findings: [], review_path: `${RUN}/review.md`, leads: [lead] }) });
+    const reply = issue.calls.find((c) => c.key === 'issue_triager:reply');
+    check(issue.keys.includes('issue_triager:spinoff') && reply && !reply.prompt.includes('do not chase it'),
+      'the reply runs after the spinoff and takes no leads: nothing would hand them on');
+    const scan = await run({ mode: 'scan' }, { 'scout:collect': () => ({ lock: 'acquired', run_dir: RUN, candidates_path: `${RUN}/c.json`,
+      counts: {}, leads: [lead] }) });
+    check(!scan.keys.includes('issue_triager:spinoff'), 'a scan takes no leads');
+  }],
   ['feature: investigation budget is bounded', async () => {
     const r = await run({ mode: 'feature', task: 't', max_investigate_rounds: 2 }, {
       'verify_engineer:verify': () => ({ all_pass: false, failures: [{ gate: 'G3' }] }),

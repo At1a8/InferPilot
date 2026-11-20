@@ -15,16 +15,21 @@ Why it exists and how it maps onto the agreed design: [`docs/design.md`](docs/de
 
 | Mode | Task | Phases | Ends with |
 |---|---|---|---|
-| `feature` | an upstream PR or design to bring to AMD | Setup → Spec → Recon → Design → Implement → (Kernel) → Verify → Performance → Review → PR → Report | branch + PR body + validation report |
-| `issue` | an AMD user issue | Setup → Triage → Reproduce → Diagnose (skipped for an existing fix PR) → Implement → (Kernel) → Verify → (Performance) → Review → PR → Reply → Report | fix PR, or a conclusion (triaged, not reproduced, fixed on main, diagnosed); always a reply draft, rewritten from how the run ended |
-| `ci` | a red AMD CI job or Failure Tracker cluster | Setup → Classify → Bisect → Implement → (Kernel) → Verify → Review → PR → Report | fix PR, or a handover for flaky/infrastructure failures |
-| `perf` | a system-level performance goal for a model and a fixed workload | Setup → Profile → Plan → Implement → (Kernel) → Verify → Performance → Review → PR → Report | PR with a measured win, or the change dropped; kernel-level items go to the kernel back end |
+| `feature` | an upstream PR or design to bring to AMD | Setup → Spec → Recon → Design → Implement → (Kernel) → Verify → Performance → Review → PR → (Spinoff) → Report | branch + PR body + validation report |
+| `issue` | an AMD user issue | Setup → Triage → Reproduce → Diagnose (skipped for an existing fix PR) → Implement → (Kernel) → Verify → (Performance) → Review → PR → (Spinoff) → Reply → Report | fix PR, or a conclusion (triaged, not reproduced, fixed on main, diagnosed); always a reply draft, rewritten from how the run ended |
+| `ci` | a red AMD CI job or Failure Tracker cluster | Setup → Classify → Bisect → Implement → (Kernel) → Verify → Review → PR → (Spinoff) → Report | fix PR, or a handover for flaky/infrastructure failures |
+| `perf` | a system-level performance goal for a model and a fixed workload | Setup → Profile → Plan → Implement → (Kernel) → Verify → Performance → Review → PR → (Spinoff) → Report | PR with a measured win, or the change dropped; kernel-level items go to the kernel back end |
 | `scan` | none — the day's state of the framework: the AMD CI on main, open AMD user issues, upstream changes AMD needs to follow (platform gates and host-sync leads on request) | Collect → Dispatch → Report | the daily report, a file for you to share, with the ranked tasks and the definition that starts each |
 
 Phases in parentheses run only when they apply: Kernel when there is a kernel hand-off and
 `kernel_backend` is not `none`; Performance in issue mode for issues triaged as `performance`. An
 issue whose reporter's code fails while main passes ends as *fixed on main*; with `bisect_fixed` a
-Bisect phase first finds the commit that fixed it.
+Bisect phase first finds the commit that fixed it. Spinoff runs when the run found problems that are
+not its own: a failure the base commit shows without the change, or a lead a role met on the way (a
+bug in code it read, a broken test or image). For each failure the base commit shows, it gives the
+upstream issue that tracks it, or an issue draft for you to file. Leads are listed with how to
+reproduce them; with `confirm_leads` it first checks each on the base commit and drafts those that
+show there.
 
 A task starts from a **task definition** ([`templates/task_definition.md`](templates/task_definition.md)):
 the fields `inferpilot.js` takes, the same names every role reads. It can be given as fields, or as a
@@ -87,7 +92,7 @@ the roles:
 | `dispatcher` | Dispatch | sets each candidate's gap type, level, CUDA dependencies with their AMD starting points, effort and priority, and ranks them into a queue |
 | `analyst` | Recon | maps every subsystem a feature needs to a file, function and hook in the target framework, and tables which assumptions of the source design hold on AMD; reads only |
 | `architect` | Design, Plan | turns the recon or the profile into work packages that can each be tested alone, with invariants, memory budget, synchronization, startup rejections and a test plan; flags designs a human must review; assigns each performance opportunity to InferPilot, the kernel back end or Hyperloom |
-| `issue_triager` | Triage, Reproduce, Reply | sets the priority and the action from the issue, its comments and linked PRs; drafts the reply; writes the reproduction that becomes the issue's gate; at the end rewrites the reply from what the run showed |
+| `issue_triager` | Triage, Reproduce, Spinoff, Reply | sets the priority and the action from the issue, its comments and linked PRs; drafts the reply; writes the reproduction that becomes the issue's gate; finds the upstream issue for each problem a run found that is not its own, or drafts one, and lists the leads (checked on the base commit with `confirm_leads`); at the end rewrites the reply from what the run showed |
 | `ci_guardian` | Classify, Bisect | classifies a red job (code regression, dependency bump, test bug, flaky, infrastructure) and hands the last two over; finds and confirms the culprit commit and plans the fix; for an issue fixed on main, with `bisect_fixed`, the commit that fixed it |
 | `implementer` | Implement | one work package at a time, smallest diff, neutral with the feature off, HIP-only or behind a switch, committed lint-clean with its tests registered; functional kernels with unit tests (tuning is a hand-off); applies existing PRs and verified kernel gains; rolls back a failed package |
 | `test_engineer` | Implement | re-runs each package's unit test on its commit, checks that the test can fail (on the parent commit when the change alters behaviour, on a broken copy when it keeps it) and that behaviour with the feature off is unchanged |
@@ -539,6 +544,7 @@ described at the top of `runtime/run.mjs`.
 | `image`, `image_ok` | the image a task must run on (default: the newest daily one of the container's ROCm and GPU; another one stops Setup to ask); `true` runs on the container's image anyway |
 | `rescan`, `upstream_repos` | `scan`: `true` scans again although a report from the last 24 hours exists; more repositories to follow upstream, as `[{"name": "vllm", "url": "https://github.com/vllm-project/vllm"}]` |
 | `bisect_fixed` | `issue`: `true` bisects between the reporter's commit and main, with the reproduction as the test, when the first fails and the second passes, and names the commit that fixed it |
+| `confirm_leads` | default `false`: leads, the problems roles met that are not the task's, are listed in the report with how to reproduce them, and Spinoff runs nothing on the GPUs; `true` checks each on the base commit before the report and drafts an issue for those that show there |
 | `stop_after` | stop after the named phase of the mode (e.g. `Design`, `Reproduce`); a phase the mode does not run comes back as a question |
 | `resume_from`, `run_dir` | `feature`: `implement` continues a run that stopped at Design once a human approved `design.md` |
 | `auto_approve_design` | `feature`, default `true`: a design the architect flags, or L3 work, goes on to Implement, and the report says no human approved the design. `false` makes such a design wait at Design for a human (`awaiting_design_review`). `stop_after` still stops |

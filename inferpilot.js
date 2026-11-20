@@ -1,7 +1,7 @@
 export const meta = {
   name: 'inferpilot',
   description: 'InferPilot: the framework agent for open-source LLM inference frameworks on AMD GPUs (sglang first). It turns one task (an upstream feature to bring to AMD, an AMD user issue, a red AMD CI job, a system-level performance gap) into a verified, reviewable pull request: correct first (independent unit gates, G0-G4 against a same-pattern baseline, an investigation loop with controls), then fast (equal-budget G5), within the community rules of knowledge/guardrails.md. mode=scan writes the day\'s report on the framework (the AMD CI on main, user issues by priority, upstream changes AMD needs to follow) and ranks the tasks in it, changing no code. InferPilot never pushes and never posts upstream: it prepares the branch, the PR body and the reply drafts for a human; the one thing it posts is the knowledge a run proved, as a pull request to its own repository for a human to merge; a scan\'s daily report is a local file for a human to share.',
-  whenToUse: 'Pass args.inferpilot_dir (absolute path of the InferPilot checkout, required) and the task, either as args.request (the user\'s words, any language; the Intake phase turns it into a task definition) or as the task-definition fields of templates/task_definition.md: args.mode (feature | issue | ci | perf | scan), args.task (the upstream PR or design, issue URL, CI job or tracker cluster, or performance goal), args.framework_dir (the framework checkout; for sglang the image\'s /sgl-workspace/sglang by default), args.model_path (required for feature and perf), args.workload (required for perf: the fixed benchmark every measurement uses), args.server_script (required for feature and perf: a script that starts the baseline server; InferPilot sets PORT, HIP_VISIBLE_DEVICES and PYTHONPATH, and EXTRA_ARGS carries the feature flags) and args.client_script (required for perf, and for a feature with a workload: runs the fixed workload against PORT and writes to OUT_DIR), args.goal (what done means), args.framework (default sglang), args.platform, args.gpu_ids, args.container, args.apply_prs (perf), args.sources, args.since, args.upstream_repos and args.rescan (scan: a report from the last 24 hours makes the run ask before scanning again), args.image (the image a task must run on; by default the newest daily one, and another stops Setup to ask) and args.image_ok, args.bisect_fixed (issue: when the reporter\'s code fails and main does not, find the commit that fixed it), args.stop_after (a phase title), args.resume_from="implement" with args.run_dir (feature: continue after a human approved design.md), args.auto_approve_design (feature, default true: a design the architect flags, or L3 work, goes on to Implement and the report says no human approved it; false makes it wait at Design for a human; stop_after still stops), args.held_out, args.guards and args.sweep (performance checks beyond the workload and goal of the task, each off by default: a held-out operating point the gain must also hold at, guard workloads InferPilot picks, and points beyond those of the workload), args.tune (feature, default false: the feature runs at the configuration of the target PR or design; true lets a work package choose its knobs by measurement), args.kernel_backend (none | geak | command) with args.kernel_backend_dir (geak: the GEAK checkout, whose kernel lane runs as an outside program) or args.kernel_backend_command (command; for geak it replaces the default command), args.kernel_budget ({budget} in the command). A definition that lacks something its mode needs returns status=needs_input and starts nothing. Every result ends with next, what comes after the run: tell the user next.say; put each question of next.ask to the user, never answering one yourself, then run inferpilot.js again with the same args plus next.rerun_with, its answers filled in from the user\'s (they merge with the answers already given); offer each of next.start (a scan\'s top tasks) as a new run with its args, and start the one the user picks; next.user is what only the user does (the push, a reply to post, the daily report to share). Operator settings: args.exp_root, args.review_model (the reviewer\'s model, where the runtime takes one per call), args.max_fix_rounds, args.max_investigate_rounds, args.max_review_rounds, args.max_work_packages, args.agent_retries, args.agent_timeout_ms.',
+  whenToUse: 'Pass args.inferpilot_dir (absolute path of the InferPilot checkout, required) and the task, either as args.request (the user\'s words, any language; the Intake phase turns it into a task definition) or as the task-definition fields of templates/task_definition.md: args.mode (feature | issue | ci | perf | scan), args.task (the upstream PR or design, issue URL, CI job or tracker cluster, or performance goal), args.framework_dir (the framework checkout; for sglang the image\'s /sgl-workspace/sglang by default), args.model_path (required for feature and perf), args.workload (required for perf: the fixed benchmark every measurement uses), args.server_script (required for feature and perf: a script that starts the baseline server; InferPilot sets PORT, HIP_VISIBLE_DEVICES and PYTHONPATH, and EXTRA_ARGS carries the feature flags) and args.client_script (required for perf, and for a feature with a workload: runs the fixed workload against PORT and writes to OUT_DIR), args.goal (what done means), args.framework (default sglang), args.platform, args.gpu_ids, args.container, args.apply_prs (perf), args.sources, args.since, args.upstream_repos and args.rescan (scan: a report from the last 24 hours makes the run ask before scanning again), args.image (the image a task must run on; by default the newest daily one, and another stops Setup to ask) and args.image_ok, args.bisect_fixed (issue: when the reporter\'s code fails and main does not, find the commit that fixed it), args.confirm_leads (default false: leads, the problems roles met that are not the task\'s, are listed with how to reproduce them; true checks each on the base commit before the report and drafts an issue for those that show there), args.stop_after (a phase title), args.resume_from="implement" with args.run_dir (feature: continue after a human approved design.md), args.auto_approve_design (feature, default true: a design the architect flags, or L3 work, goes on to Implement and the report says no human approved it; false makes it wait at Design for a human; stop_after still stops), args.held_out, args.guards and args.sweep (performance checks beyond the workload and goal of the task, each off by default: a held-out operating point the gain must also hold at, guard workloads InferPilot picks, and points beyond those of the workload), args.tune (feature, default false: the feature runs at the configuration of the target PR or design; true lets a work package choose its knobs by measurement), args.kernel_backend (none | geak | command) with args.kernel_backend_dir (geak: the GEAK checkout, whose kernel lane runs as an outside program) or args.kernel_backend_command (command; for geak it replaces the default command), args.kernel_budget ({budget} in the command). A definition that lacks something its mode needs returns status=needs_input and starts nothing. Every result ends with next, what comes after the run: tell the user next.say; put each question of next.ask to the user, never answering one yourself, then run inferpilot.js again with the same args plus next.rerun_with, its answers filled in from the user\'s (they merge with the answers already given); offer each of next.start (a scan\'s top tasks) as a new run with its args, and start the one the user picks; next.user is what only the user does (the push, a reply to post, the daily report to share). Operator settings: args.exp_root, args.review_model (the reviewer\'s model, where the runtime takes one per call), args.max_fix_rounds, args.max_investigate_rounds, args.max_review_rounds, args.max_work_packages, args.agent_retries, args.agent_timeout_ms.',
   phases: [
     { title: 'Intake', detail: 'intake: turn a request, or a definition with gaps, into a complete task definition; questions when something is missing' },
     { title: 'Setup', detail: 'director: run dir, the task\'s branch in the framework checkout, the server and client scripts, baseline (not in scan)' },
@@ -24,6 +24,7 @@ export const meta = {
     { title: 'PR', detail: 'pr_engineer: hygiene, lint, upstream sync, pr_body.md, exact push command; never pushes' },
     { title: 'Collect', detail: 'scout: the AMD CI on main, user issues, upstream changes (platform gates, host syncs on request) -> candidates; asks first when a report from the last 24 hours exists [scan]' },
     { title: 'Dispatch', detail: 'dispatcher: type, level, priority, dependencies, effort, ranking, ecosystem-matrix changes -> the daily report [scan]' },
+    { title: 'Spinoff', detail: 'issue_triager: for each problem the run found that is not its own (a failure the baseline shares, or a lead a role reported), the upstream issue that tracks it or an issue draft for a human to file, and the definition that starts it; leads are listed, and checked on the base commit only with confirm_leads [when there are any]' },
     { title: 'Reply', detail: 'issue_triager: the reply draft rewritten from how the run ended; the Triage draft is kept beside it [issue]' },
     { title: 'Report', detail: 'director: final report for every outcome of a run that has its run directory (for a scan, the daily report a human shares), then frees the machine; curator: knowledge updates, proposed as a pull request to InferPilot\'s own repository' },
   ],
@@ -37,8 +38,8 @@ export const meta = {
 const RAW = args || {};
 const MODES = ['feature', 'issue', 'ci', 'perf', 'scan'];
 // The phases a run of each mode passes when nothing stops it early, logged as its route so that the log
-// shows how far a run is (runtime/run.mjs numbers its phases from it). Intake, an issue's Bisect, Kernel and
-// Investigate come on top when needed; an issue about performance logs its route again, with Performance.
+// shows how far a run is (runtime/run.mjs numbers its phases from it). Intake, an issue's Bisect, Kernel,
+// Investigate and Spinoff come on top when needed; an issue about performance logs its route again, with Performance.
 const ROUTES = {
   feature: ['Setup', 'Spec', 'Recon', 'Design', 'Implement', 'Verify', 'Performance', 'Review', 'PR', 'Report'],
   issue: ['Setup', 'Triage', 'Reproduce', 'Diagnose', 'Implement', 'Verify', 'Review', 'PR', 'Reply', 'Report'],
@@ -109,7 +110,7 @@ const TASK_KEYS = ['mode', 'task', 'goal', 'framework', 'framework_dir', 'model_
   'container', 'workload', 'server_script', 'client_script', 'apply_prs', 'sources', 'since', 'stop_after', 'resume_from', 'run_dir',
   'auto_approve_design', 'held_out', 'guards', 'sweep', 'tune',
   'kernel_backend', 'kernel_backend_dir', 'kernel_backend_command', 'kernel_budget', 'rescan', 'upstream_repos',
-  'image', 'image_ok', 'bisect_fixed'];
+  'image', 'image_ok', 'bisect_fixed', 'confirm_leads'];
 // '' is accepted for the enums so an undecided field costs no schema retry; pick() drops it.
 const TASK_DEF = S({
   mode: { type: 'string', enum: [...MODES, ''] },
@@ -290,6 +291,8 @@ const GUARDS = on(A.guards);
 const SWEEP = on(A.sweep);
 const TUNE = on(A.tune);
 const BISECT_FIXED = on(A.bisect_fixed);
+// leads cost GPU time only when asked: by default Spinoff lists them and runs nothing
+const CONFIRM_LEADS = on(A.confirm_leads);
 const RESUME = String(A.resume_from || '').trim().toLowerCase();
 const EXP_ROOT = String(A.exp_root || `${INFERPILOT}/exp`).replace(/\/+$/, '');
 const KERNEL_BACKEND = String(A.kernel_backend || 'none').trim().toLowerCase();
@@ -314,6 +317,7 @@ const C = {
   guards: GUARDS,
   sweep: SWEEP,
   tune: TUNE,
+  confirm_leads: CONFIRM_LEADS,
   assumptions: START.assumptions || [],
   kernel_backend: KERNEL_BACKEND,
   kernel_backend_dir: KERNEL_BACKEND_DIR,
@@ -342,6 +346,8 @@ const R = {
   done: [],            // verified work packages {wp, commit, evidence}
   handoffs: [],        // {id, owner: kernel_workflow | hyperloom, source, status, ...}
   known_issues: [],    // pre-existing failures proven by a same-pattern baseline control
+  leads: [],           // problems a role met that are not this task's, not yet checked on the base commit
+  spinoffs: [],        // per known issue or lead: tracked upstream, drafted as an issue, or unconfirmed
   knowledge_updates: [],
   attention: ATTENTION, // state a human must clean up before anything else runs there
 };
@@ -364,14 +370,15 @@ const inputs = (extra) => ({
   ...(extra || {}),
 });
 
-function rolePrompt(role, sub, ins, attempt) {
+function rolePrompt(role, sub, ins, attempt, takesLeads) {
   const writes = role === 'intake'
     ? 'No RUN_DIR exists yet: change nothing; every check you run is read-only. Never push, never post on GitHub.'
     : `Write artifacts only under RUN_DIR (code changes only in the
 task worktree named in the inputs). Never push, never post on GitHub. The one exception is the curator's knowledge pull request to
 InferPilot's own repository (scripts/propose_knowledge.py).
-Framework code runs from the tree under test, the task worktree (or RUN_DIR/base for a baseline at the
-base commit): put it first on PYTHONPATH (sglang: <tree>/python) for every server, test and benchmark.
+Framework code runs from the tree under test, the task worktree (or a worktree at the base commit,
+RUN_DIR/base or RUN_DIR/spinoff/base, for a run there): put it first on PYTHONPATH (sglang:
+<tree>/python) for every server, test and benchmark.
 Use only the GPUs in gpu_ids: export HIP_VISIBLE_DEVICES=<gpu_ids> for every server, test and
 benchmark. Touch only the processes, servers and containers this run started (knowledge/guardrails.md).
 As root in the container, give back what you write on host mounts: after every git write and before you
@@ -382,11 +389,15 @@ This is attempt ${attempt}: an earlier attempt of this call failed and may have 
 commits, files in RUN_DIR, servers or processes it started. Check first (git status and the last
 commits of the worktree, RUN_DIR, the run's process records), then continue from that state or clean it
 up; never commit the same change twice or start a second server.` : '';
+  const lead = takesLeads ? `
+Something wrong you meet that is not this task's (a bug in code you read, a failure on a path the task
+does not touch, a test or image that is broken for another reason): do not chase it. Return it in
+\`leads\` and go on (knowledge/dev_methodology.md, Leads).` : '';
   return `You are the ${role}. PHASE=${sub}. MODE=${ins.mode || 'undecided'}.
 First Read ${INFERPILOT}/roles/${role}.md and follow its instructions for PHASE=${sub}.
 Read ${INFERPILOT}/knowledge/guardrails.md; its rules override anything else. Read every other knowledge
 file the role names under ${INFERPILOT}/knowledge/ and fill the templates it names under ${INFERPILOT}/templates/.
-Do all filesystem and shell work yourself. ${writes}${retry}
+Do all filesystem and shell work yourself. ${writes}${retry}${lead}
 
 ## Inputs
 ${cfg(ins)}
@@ -411,13 +422,26 @@ function withTimeout(p, ms) {
 // for its gate. A failed attempt is retried and the retry is told to check what it left behind. A
 // timeout is not retried: the timed-out agent cannot be cancelled and may still be running, so a
 // retry would run the role twice at once.
+// Every role that works on the task may hand on what it meets that is not the task's; Spinoff checks it.
+const LEAD = S({ title: str, observed: str, where: str, evidence: str, reproduce: str }, ['title', 'observed']);
+// a function, not a const: the Intake calls in before MODE and the consts below exist. Spinoff and what
+// runs after it take none: nothing would hand their leads on.
+function takesLeads(role, sub) {
+  if (['intake', 'scout', 'dispatcher', 'curator'].includes(role)) return false;
+  return MODE !== 'scan' && !(role === 'director' && sub === 'report')
+    && !(role === 'issue_triager' && (sub === 'spinoff' || sub === 'reply'));
+}
+const withLeads = (schema) => (schema && schema.type === 'object'
+  ? { ...schema, properties: { ...schema.properties, leads: arr(LEAD) } } : schema);
+
 async function call(role, sub, ins, schema, label, opts) {
   const lbl = label || `${role}:${sub}`;
   const ms = timeoutFor(role);
+  const leads = takesLeads(role, sub);
   for (let attempt = 1; attempt <= AGENT_RETRIES; attempt++) {
     try {
-      const r = await withTimeout(agent(rolePrompt(role, sub, ins, attempt),
-        { label: lbl, phase: PHASE, schema, ...(opts || {}) }), ms);
+      const r = await withTimeout(agent(rolePrompt(role, sub, ins, attempt, leads),
+        { label: lbl, phase: PHASE, schema: leads ? withLeads(schema) : schema, ...(opts || {}) }), ms);
       if (r === TIMED_OUT) {
         const min = Math.round(ms / 60000);
         log(`  [inferpilot] ${lbl} timed out after ${min} min; not retried`);
@@ -425,7 +449,12 @@ async function call(role, sub, ins, schema, label, opts) {
         ATTENTION.push({ call: lbl, issue: `timed out after ${min} min and may still be running: check its servers and GPUs before reusing them` });
         return null;
       }
-      if (r) return r;
+      if (r) {
+        if (leads && Array.isArray(r.leads)) {
+          for (const l of r.leads) if (l && l.title) R.leads.push({ ...l, from: lbl });
+        }
+        return r;
+      }
       log(`  [inferpilot] ${lbl} returned nothing (attempt ${attempt}/${AGENT_RETRIES})`);
     } catch (e) {
       log(`  [inferpilot] ${lbl} failed (attempt ${attempt}/${AGENT_RETRIES}): ` +
@@ -493,6 +522,22 @@ const TRIAGE = S({
 const REPRO = S({ reproduced: bool, reproduced_on_reporter: bool, repro_cmd: str, perf_claim: str, evidence: str },
   ['reproduced', 'repro_cmd', 'evidence']);
 const REPLY = S({ reply_draft_path: str, summary: str }, ['reply_draft_path']);
+// tracked: upstream names the issue or PR that already tracks it; drafted: draft_path, an issue for a
+// human to file; unconfirmed: a lead the base commit did not show, note says what would.
+const SPINOFF = S({
+  spinoffs: arr(S({
+    id: str,
+    source: { type: 'string', enum: ['known_issue', 'lead'] },
+    status: { type: 'string', enum: ['tracked', 'drafted', 'unconfirmed'] },
+    upstream: str,
+    draft_path: str,
+    task_definition: str,
+    known_issue: obj, // a lead the base commit confirmed, in the known_issues.md format
+    base_import: str, // with known_issue: sglang.__file__ from that base run's first log
+    note: str,
+  }, ['id', 'source', 'status'])),
+  summary: str,
+}, ['spinoffs']);
 const DIAG = S({
   verdict: { type: 'string', enum: ['fix_needed', 'baseline_bug', 'not_amd_side', 'inconclusive'] },
   root_cause: str,
@@ -631,20 +676,50 @@ const DISPATCH = S({
 // ---------------------------------------------------------------------------
 // Shared stages
 // ---------------------------------------------------------------------------
+// A lead counts as confirmed only when its base run imported the framework from a base worktree of this run.
+// A path with '..' could start with a base worktree and still leave it.
+function checkedOnBase(s) {
+  if (s.source !== 'lead' || !s.known_issue) return s;
+  const imp = String(s.base_import || '');
+  const inBase = [`${C.run_dir}/base/`, `${C.run_dir}/spinoff/base/`].some((t) => imp.startsWith(t));
+  if (inBase && !/(^|\/)\.\.(\/|$)/.test(imp)) return s;
+  const { known_issue, draft_path, ...rest } = s;
+  return { ...rest, status: 'unconfirmed', ...(draft_path ? { withdrawn_draft: draft_path } : {}),
+    note: `${s.note ? `${s.note} ` : ''}Not counted as confirmed: its base run imported the framework from `
+      + `${imp || 'a path it did not record'}, not from a base worktree of this run.` };
+}
+
 async function finish(status, at) {
   R.status = status;
   R.stopped_at = at || '';
   if (C.run_dir) {
+    // What the run found that is not its own to fix is someone's: find it upstream or draft the issue.
+    // Leads are run on the base commit only with confirm_leads; the GPUs are the task's.
+    if (R.known_issues.length || R.leads.length) {
+      enter('Spinoff');
+      // A base run that fails for another reason would pass for a confirmed lead: a timed-out agent may still
+      // hold the GPUs, and a run that ended at Setup never showed the environment works.
+      const skipped = !C.confirm_leads ? [] : [...TIMED_OUT_CALLS].map((c) => `${c} timed out`)
+        .concat(at === 'Setup' ? ['the run stopped at Setup'] : []);
+      const sp = await call('issue_triager', 'spinoff', inputs({ status, stopped_at: at || '', phases: R.phases,
+        leads: R.leads, attention: R.attention, confirm_leads: C.confirm_leads && !skipped.length, confirm_skipped: skipped }), SPINOFF);
+      if (sp && Array.isArray(sp.spinoffs)) {
+        R.spinoffs = sp.spinoffs.filter(Boolean).map(checkedOnBase);
+        for (const s of R.spinoffs) if (s.source === 'lead' && s.known_issue) R.known_issues.push(s.known_issue);
+      }
+    }
     // The Triage draft predates every result: by now it promises steps that were done, or changed.
     if (MODE === 'issue' && C.triage_path && at !== 'Triage') {
       enter('Reply');
-      const rp = await call('issue_triager', 'reply', inputs({ status, stopped_at: at || '', phases: R.phases }), REPLY);
+      const rp = await call('issue_triager', 'reply',
+        inputs({ status, stopped_at: at || '', phases: R.phases, spinoffs: R.spinoffs }), REPLY);
       if (rp && String(rp.reply_draft_path || '').trim()) C.reply_draft_path = rp.reply_draft_path;
     }
     if (MODE === 'issue') R.reply_draft_path = C.reply_draft_path || '';
     enter('Report');
     const rep = await call('director', 'report',
-      inputs({ status, stopped_at: at || '', phases: R.phases, handoffs: R.handoffs, attention: R.attention }), REPORT);
+      inputs({ status, stopped_at: at || '', phases: R.phases, handoffs: R.handoffs, attention: R.attention,
+        spinoffs: R.spinoffs }), REPORT);
     if (rep) {
       R.report_path = rep.report_path;
       R.summary = rep.summary || '';
@@ -697,6 +772,7 @@ function nextSteps(status, at) {
   if (status === 'ready_for_review' && R.pr) user.push(R.pr.push_command || `push ${R.pr.branch}: the report has the command`);
   if (status === 'queued') user.push(`share ${C.run_dir}/daily_report.md as a new issue in InferPilot's repository (README step 5)`);
   if (R.reply_draft_path) user.push(`post the reply draft on the issue: ${R.reply_draft_path}`);
+  for (const s of R.spinoffs) if (s && s.status === 'drafted' && s.draft_path) user.push(`file the issue draft upstream: ${s.draft_path}`);
   if (R.knowledge_pr) user.push(`review the curator's pull request to InferPilot: ${R.knowledge_pr}`);
   for (const a of R.attention) user.push(`clean up before anything else runs there: ${a.issue}${a.worktree ? ` (${a.worktree})` : ''}`);
   if (user.length) out.user = user;

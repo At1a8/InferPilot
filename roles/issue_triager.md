@@ -64,6 +64,70 @@ Return:
  "perf_claim": "<performance issues only>", "evidence": "<counts, logs, environment>"}
 ```
 
+## PHASE=spinoff (any mode, before the report, when the run has `known_issues` or `leads`)
+
+Inputs: `known_issues` (failures a same-pattern baseline control already proved pre-existing, in the
+`known_issues.md` format), `leads` (problems a role met that are not this task's, each with `title`,
+`observed`, `where`, `evidence`, `reproduce` and the call it came `from`), `confirm_leads`,
+`confirm_skipped`, `attention`, `status`, `phases`, the ledger. None of them is this task's to fix,
+and each is someone's: give a human what it takes to hand it on. Also read `knowledge/env_hygiene.md`
+(*The code under test*, and how to stop what you start).
+
+1. **Leads first.** Drop a lead that repeats a known issue or another lead.
+   - Without `confirm_leads` (the default), run nothing: the run's time is the task's. Look each lead
+     up as in step 2; one tracked upstream is `tracked`, the rest `unconfirmed`, with `note` giving the
+     command that would show it on the base commit. No draft for them. `confirm_skipped` lists why
+     confirmation is off although the task asked for it (a call that timed out may still hold the
+     GPUs; a run that ended at Setup never showed the environment works): give that reason in each
+     `note`. When it is empty, confirmation was not asked for; say nothing about it.
+   - With `confirm_leads`, check each on the base commit the ledger records, without this task's
+     change, on the GPUs in `gpu_ids`, at most a few runs each, one log per run under `RUN_DIR/logs/`:
+     - The tree: `RUN_DIR/base` when it is a worktree at that commit, else a throwaway one
+       (`git -C <framework_dir> worktree add --detach RUN_DIR/spinoff/base <base>`, removed when done).
+     - The command: the lead's `reproduce`, else the one in its evidence, with the base tree first on
+       `PYTHONPATH` (sglang: `<base tree>/python`). A lead was written by a role working on the task
+       tree, so replace any `PYTHONPATH` or `TREE` in it that names another tree; one you cannot point
+       at the base tree is `unconfirmed`, and `note` says why.
+     - The first log of each run prints `sglang.__file__`; a run that did not import it from the base
+       tree does not count. Return that path as `base_import` with a lead you confirm: InferPilot
+       counts the lead as confirmed only when the path lies in `RUN_DIR/base` or `RUN_DIR/spinoff/base`.
+     - It shows there only when the base run fails the way the lead's `observed` says: the same error,
+       the same test, comparable counts. A base run that fails for another reason (an import error, out
+       of memory, a port in use, a server that does not come up) confirms nothing.
+     - Stop only what you started, from the PIDs you recorded when you started it (`env_hygiene.md`).
+     One that shows there is a known issue now: write it in the `known_issues.md` format as
+     `known_issue`, and go on with it as with the others. One that does not show, or cannot run here
+     (another model, platform or scale), is `unconfirmed`, with `note` saying what was tried and what
+     would confirm it.
+2. **Tracked already?** For each known issue: its entry in `knowledge/known_issues.md` if it has one,
+   then the framework's open issues and PRs (`scripts/scan_issues.py`, or the search API with
+   `GITHUB_TOKEN`) by component, symptom and error text. An issue or PR that matches the symptom and
+   the configuration: `tracked`, in `upstream` with its state; write no draft for it.
+3. **Otherwise draft it.** `RUN_DIR/spinoff/<id>.md`, an issue for a human to file, in the framework's
+   bug report form (sglang: its issue template and `[Bug] [AMD] <scope>: ...` titles): the symptom; the
+   smallest reproduction, with the command, model, flags and environment (image, commit, GPU,
+   versions); the run on the base commit that shows it without this task's change; counts and short
+   log excerpts, never paths or names of this machine (`guardrails.md`). A mechanism no experiment
+   confirmed is written as a hypothesis. `drafted`.
+4. `task_definition` for `tracked` and `drafted`: the line that starts InferPilot on it, `mode=issue,
+   task=<issue URL>` with the model and GPUs this run used: the upstream issue, or the draft's once a
+   human files it. An open PR that fixes it is then Triage's to find (`push_existing_pr`).
+
+Never file or comment upstream: the drafts are a human's to post.
+
+Return:
+
+```json
+{"spinoffs": [{"id": "KI-007", "source": "known_issue", "status": "drafted", "upstream": "",
+  "draft_path": "/abs/RUN_DIR/spinoff/KI-007.md",
+  "task_definition": "mode=issue, task=<issue URL>, model_path=..., gpu_ids=0,1,2,3,4,5,6,7"},
+  {"id": "KI-008", "source": "lead", "status": "drafted", "draft_path": "/abs/RUN_DIR/spinoff/KI-008.md",
+   "known_issue": {"id": "KI-008", "title": "..."},
+   "base_import": "/abs/RUN_DIR/spinoff/base/python/sglang/__init__.py", "task_definition": "..."},
+  {"id": "lead-1", "source": "lead", "status": "unconfirmed", "note": "<what was tried, what would confirm it>"}],
+ "summary": "<one line per entry: tracked as ..., drafted, or unconfirmed>"}
+```
+
 ## PHASE=reply (before the report)
 
 Inputs: `status`, `stopped_at`, `phases`, the triage record, the reproduction (`repro_cmd` and its
