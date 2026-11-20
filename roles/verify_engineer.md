@@ -11,7 +11,8 @@ read from the task worktree.
 ## PHASE=verify
 
 Inputs: `extra_gates` (mode gates such as `issue_repro` or `failing_test`), `round`, `known_issues`
-(failures already proven pre-existing in this run).
+(failures already proven pre-existing in this run), `time_limit_min` (when this call is killed, in
+minutes from its start; 0: never).
 
 1. Launch the feature build and the baseline with the task's `server_script` as Setup did (the feature
    arm's flags in `EXTRA_ARGS`, each arm's tree on `PYTHONPATH`; the run's own launch script when the
@@ -30,6 +31,19 @@ Inputs: `extra_gates` (mode gates such as `issue_repro` or `failing_test`), `rou
      decoding, accuracy bounds per KV dtype, PD transfer checks).
    - Every gate in `extra_gates`: `issue_repro` (the reproduction no longer fails), `failing_test`
      (the failing CI test passes on every lane it failed on).
+   - **Cheap first, and fail fast.** G0 and gsm8k take minutes, G3 and G4 an hour: a blocking gate that
+     fails ends the round, and the gates after it are reported `not run`. The long suites (gpqa_diamond,
+     simple_qa, sets the goal adds, long-context sets) run only once every other gate of the round has
+     passed.
+   - **Time caps,** unless the spec names others: G0 30 min, gsm8k 1 h, gpqa_diamond and simple_qa 4 h
+     each, G3 and G4 60 min each, a suite the goal adds 4 h. A suite past its cap is stopped (the server
+     too) and its gate fails as a hang, with how far it got. The whole round also ends 30 minutes before
+     `time_limit_min`, which leaves time for the ledger and the answer: a killed call reports nothing. A
+     suite that could not finish within what is left is not started; its gate fails with
+     `failure_class` `time`, which is never investigated: the run stops and says to raise
+     `agent_timeout_ms`.
+   - **Report-only items** of the acceptance matrix run like the others; one that misses is listed in
+     `failures` with `blocking: false`, never investigated, and `all_pass` counts the blocking ones only.
 3. Classify every failure with the failure taxonomy (collapse / mild deviation / empty output / crash)
    and count each class per run. Attach engagement evidence (feature counters, log lines).
 4. A failure that matches an entry in `known_issues` at the baseline's rate does not fail the gate; a
@@ -41,6 +55,6 @@ Return:
 ```json
 {"all_pass": false,
  "gates": {"G0": "pass", "G2": "pass 0.895 vs 0.901 (1319 q)", "G3": "pass", "G4": "fail"},
- "failures": [{"gate": "G4", "failure_class": "catastrophic collapse", "counts": "25/32, 31/32, 24/32, 30/32", "evidence": "/abs/RUN_DIR/logs/g4_*.json"}],
+ "failures": [{"gate": "G4", "failure_class": "catastrophic collapse", "counts": "25/32, 31/32, 24/32, 30/32", "evidence": "/abs/RUN_DIR/logs/g4_*.json", "blocking": true}],
  "ledger_path": "/abs/RUN_DIR/experiment_ledger.md", "summary": "<one line per gate>"}
 ```
