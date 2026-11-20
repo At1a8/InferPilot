@@ -401,6 +401,11 @@ nohup node runtime/run.mjs inferpilot.js --backend cursor --args-file exp/scan.j
 tail -f exp/scan.log    # Ctrl-C leaves the log; the run goes on
 ```
 
+**Watching a run.** `exp/scan.status.json` is rewritten every 30 s while the runner lives (state, phase,
+the agent calls under way with the last line of each); an `updated` more than two minutes old means the
+runner is gone. `exp/scan.agents/` keeps each agent call's prompt, whole output stream and stderr
+(`--agent-log-dir` puts them elsewhere), and `--show-text` adds what the agents write to the log.
+
 **Moving a run's stop.** The runner reads `exp/scan.control.json` (the arguments file's name with
 `.control.json`; `--control-file` names another) at every phase boundary: `{"stop_after": "Verify"}`
 stops after Verify, `{"stop_after": "now"}` after the phase now running, `{"stop_after": ""}` runs to the
@@ -529,7 +534,8 @@ node runtime/run.mjs inferpilot.js --backend cursor \
 ```
 
 `--model`, `--args-file`, `--result-file`, `--concurrency`, `--agent-timeout-ms`, `--schema-retries`,
-`--kill-orphans` and `--control-file` are described at the top of `runtime/run.mjs`.
+`--kill-orphans`, `--control-file`, `--agent-log-dir` and `--show-text` are described at the top of
+`runtime/run.mjs`.
 
 | Argument | Meaning |
 |---|---|
