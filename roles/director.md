@@ -97,15 +97,12 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
      inference); other suites or more runs only when `goal` asks. Never decide it yourself.
      Performance is the task's `client_script` with `OUT_DIR=RUN_DIR/bench/<tag>`, at least twice, and
      the spread recorded (`validation_doctrine.md`). The baseline passes when repeat runs agree within
-     the recorded spread.
+     the recorded spread. Record how long each launch, set and client run took: the verify engineer's
+     time limits come from them.
    - `perf`, and a feature with a workload: the `client_script` and `workload` are the task's fixed
      benchmark. Record them in `RUN_DIR/run.json` as given; every later measurement runs them unchanged.
      With `held_out` on, record the held-out operating point next to them (`perf_evaluation.md` §3:
      half the concurrency, when the client reads `CONCURRENCY`), before any number is seen.
-   - A feature that ports an upstream PR is measured on that PR's own scenarios (PHASE=spec, step 1):
-     Setup runs the task's `client_script` only when it reproduces them or `goal` names its workload;
-     otherwise the baseline's performance is measured on the scenarios the spec fixes, in the
-     Performance phase, and `baseline` says so.
    - `issue`, `ci`: prepare the environment the reproduction needs; run a baseline only if the task
      needs one now. Report `baseline_status: "skip"` with the reason otherwise.
 5. **Artifact:** the environment and baseline sections of `RUN_DIR/experiment_ledger.md`
@@ -125,8 +122,18 @@ Return:
 1. Identify the source of truth (upstream PR, design or paper) and its commit; list unmerged
    dependencies and the commits to cherry-pick. Write down the scenarios it reports: data sets, input
    and output lengths, concurrency, sampling, thinking on or off, hardware and its numbers. **A port is
-   measured on the source's own scenarios**: they are its workload, and the source's gain on them,
-   reproduced here, is its claim.
+   measured on the source's own scenarios, with the user's server and client.** Its claim is a gain
+   beyond the noise band there, with the source's numbers beside it for reference: the hardware differs,
+   and so may the size of the gain. The feature's own metric, which the hardware does not change (accept
+   length for speculative decoding), stays within a tolerance of the source's that the spec names.
+   - **The user's workload, or a question.** When the source claims a gain, `goal` neither names the
+     task's own workload nor drops the claim, and the task's `client_script` does not run the source's
+     scenarios (there is none, or it runs others), return `workload_gap`: what the source measured, what
+     the task's client runs, what is missing. The run then stops and asks the user; nothing is built on a
+     workload the user did not give. A client of your own for the source's scenarios is only a fallback
+     the user may take: write it to `RUN_DIR/scripts/fallback_client.sh` and return it as
+     `fallback_client`. It need not reproduce the source's numbers, so what it measures is reported,
+     never a claim; once the user takes it (`client_script`), there is no gap to return.
    - **Out of scope by default.** A scenario the source did not consider, the task's own workload
      included, is not measured unless `goal` names it; it goes under Non-goals with the reason (the
      PARD-2 port: vLLM's PR measured 256-token answers at concurrency 1 and its drafts were trained on
@@ -141,17 +148,15 @@ Return:
    acceptance criteria per gate with a named suite and a threshold relative to the same-pattern
    baseline, non-goals, unsupported combinations (each with a startup rejection), constraints, time-box.
 4. `perf_claim`: the measurable performance benefit the feature promises (workload, budget, metric,
-   size), or empty when it claims none. For a port, the claim is the source's gain on its own scenarios
-   (step 1), measured with a client that reproduces them: the task's `client_script` when it does,
-   otherwise one written to `RUN_DIR/scripts/` and recorded in `run.json`. Performance is measured on
-   these and the workloads `goal` names, nothing more by default: with `guards` on, add guard workloads of your
+   size), or empty when it claims none. Performance is measured on the task's workload and the guard
+   workloads its `goal` names, nothing more by default: with `guards` on, add guard workloads of your
    own (`perf_evaluation.md` §2); with `sweep` on, points beyond the workload's own (more concurrencies
    or lengths, `acceptance.md` §1); with `held_out` on, the claim also names its held-out operating
-   point (`perf_evaluation.md` §3), fixed here with the workload.
+   point (`perf_evaluation.md` §3), fixed here with the workload. For a port, the claim is step 1's.
 5. Accuracy: the sets Setup measured, from `goal` (`acceptance.md` §1.1: gsm8k 1319, and gpqa_diamond
    and simple_qa when `goal` says the change may lose accuracy), each once per arm, at most 1 point below
    the baseline, with no token-level comparison (`validation_doctrine.md`, G2). Performance: one
-   A/B round on the workload of step 4 (`perf_evaluation.md` §3). A result that misses is reproduced at
+   A/B round on the task's workload (`perf_evaluation.md` §3). A result that misses is reproduced at
    most twice and judged on the median. The feature's knobs take the values of the target PR or design;
    only with `tune` on are they chosen by measurement (`perf_evaluation.md` §3).
 
@@ -160,7 +165,9 @@ Return:
 ```json
 {"spec_path": "/abs/RUN_DIR/feature_spec.md", "gates_measurable": true,
  "perf_claim": "+20% output tok/s vs HiCache-only at equal HBM, 32 x 30k tokens, c32 | ''",
- "skill": "hisparse-v2 (validated) | ''", "notes": "<anything not measurable and why>"}
+ "skill": "hisparse-v2 (validated) | ''", "notes": "<anything not measurable and why>",
+ "workload_gap": "<what the source measured, what the task's client runs, what is missing> | ''",
+ "fallback_client": "/abs/RUN_DIR/scripts/fallback_client.sh | ''"}
 ```
 
 `gates_measurable` is true only when every acceptance criterion names a suite and a threshold.

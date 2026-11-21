@@ -8,7 +8,8 @@
 //   --args <json> | --args-file <path>
 //   --result-file <path>          also write the run's result there (it always goes to stdout)
 //   --concurrency <n>             agent calls at once (default 4)
-//   --agent-timeout-ms <ms>       kill an agent run after this long (default 0: inferpilot.js's own timeouts)
+//   --agent-timeout-ms <ms>       kill an agent run after this long (default 0: inferpilot.js's own timeouts);
+//                                 the script gets it as its agent_timeout_ms unless it gave a shorter one
 //   --schema-retries <n>          asks again for an answer that does not match its schema (default 2)
 //   --kill-orphans                first stop what runs that are gone left running (agents, servers)
 //   --control-file <path>         read at every phase boundary (default with --args-file: <name>.control.json
@@ -289,8 +290,13 @@ async function inContainer() {
   else if (got.length) rt.log(`stopped ${got.length} process(es) of this run in container ${box}: ${got.join(' ')}`);
 }
 
+// The limits the script tells its agents never go past the one this runner kills them at.
+const killAt = int(opts['agent-timeout-ms'], 0);
+const given = int(args.agent_timeout_ms, 0);
+const scriptArgs = killAt > 0 && !(given > 0 && given <= killAt) ? { ...args, agent_timeout_ms: killAt } : args;
+
 try {
-  const result = await rt.runScript(resolve(script), args);
+  const result = await rt.runScript(resolve(script), scriptArgs);
   ended = true;
   if (stopping) await new Promise(() => {});
   await tidyUp();

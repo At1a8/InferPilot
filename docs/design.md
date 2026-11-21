@@ -157,7 +157,8 @@ directory is not visible: `run_lock.py release --force` frees a lock whose run i
 - The PR phase changes no code: hygiene and lint happen in Implement, gaps found at PR come back as work
   packages through Implement, Verify and Review, and main is only trial-merged to report conflicts, so
   the pushed branch is the one that was verified.
-- Human checkpoints: the intake's questions (`needs_input`); `stop_after` any phase; with
+- Human checkpoints: the intake's questions (`needs_input`), and Spec's when a port's client does not run
+  its source's scenarios; `stop_after` any phase; with
   `auto_approve_design: false`, L3 tasks and designs the architect flags stop at Design
   (`awaiting_design_review`) and continue with `resume_from: "implement"` (by default they go on, and
   the report says no human approved the design); the PR is prepared, never

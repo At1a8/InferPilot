@@ -315,15 +315,56 @@ const scenarios = [
     const inv = mixed.calls.find((c) => c.key === 'investigator:investigate');
     check(inv && eqList(inv.ins.failures.map((f) => f.gate), ['G2']), 'the investigator gets the blocking failures only');
   }],
-  ['feature: the verify call knows its time limit; a suite that cannot finish within it stops the run, uninvestigated', async () => {
+  ['feature: a verify round that would not fit says what it needs and runs again with it, once; nobody chooses a time', async () => {
     const r = await run({ mode: 'feature', task: 't' }, {
-      'verify_engineer:verify': () => ({ all_pass: false, failures: [{ gate: 'ACC-3 simple_qa', failure_class: 'time' }] }),
+      'verify_engineer:verify': (ins, n) => (n === 1 ? { all_pass: false, failures: [], needs_min: 500 } : { all_pass: true, failures: [] }),
     });
-    const ver = r.calls.find((c) => c.key === 'verify_engineer:verify');
-    check(ver && ver.ins.time_limit_min === 360, `the default limit of a long role, in minutes: ${ver && ver.ins.time_limit_min}`);
-    check(!r.keys.includes('investigator:investigate'), 'no investigation for a suite out of time');
-    check(r.result.status === 'blocked' && r.result.stopped_at === 'Verify', `status ${r.result.status} at ${r.result.stopped_at}`);
-    check(r.result.phases.some((p) => p.phase === 'Verify' && /larger agent_timeout_ms/.test(p.summary)), 'the note says what to raise');
+    const limits = r.calls.filter((c) => c.key === 'verify_engineer:verify').map((c) => c.ins.time_limit_min);
+    check(eqList(limits, [360, 500]), `the default limit of a long role, then the one asked for: ${limits}`);
+    check(!r.keys.includes('investigator:investigate'), 'a round cut short for time is no defect to investigate');
+    check(r.result.status === 'ready_for_review', `status ${r.result.status}`);
+    const short = await run({ mode: 'feature', task: 't' }, {
+      'verify_engineer:verify': () => ({ all_pass: false, failures: [{ gate: 'ACC-2', blocking: false }], needs_min: 500 }),
+    });
+    const calls = short.keys.filter((k) => k === 'verify_engineer:verify').length;
+    check(calls === 2 && !short.keys.includes('investigator:investigate'), `more time once only, uninvestigated: ${calls} verify calls`);
+    check(short.result.status === 'blocked' && short.result.stopped_at === 'Verify' && short.result.phases.some((p) => p.phase === 'Verify'
+      && /needs 500 min; its limit is 500 min \(the limit it asked for\)/.test(p.summary)), `still short: ${short.result.status}`);
+    const failing = await run({ mode: 'feature', task: 't', max_investigate_rounds: 0 }, {
+      'verify_engineer:verify': () => ({ all_pass: false, failures: [{ gate: 'G2' }], needs_min: 500 }),
+    });
+    check(failing.keys.filter((k) => k === 'verify_engineer:verify').length === 1, 'a blocking failure is no reason to ask for time');
+  }],
+  ['feature: a timeout the user gave stays the verify limit; a round that needs more stops the run with how long it needs', async () => {
+    const r = await run({ mode: 'feature', task: 't', agent_timeout_ms: 7200000 }, {
+      'verify_engineer:verify': () => ({ all_pass: false, failures: [], needs_min: 500 }),
+    });
+    const ver = r.calls.filter((c) => c.key === 'verify_engineer:verify');
+    check(ver.length === 1 && ver[0].ins.time_limit_min === 120, `one call, told 120 min: ${ver.map((c) => c.ins.time_limit_min)}`);
+    check(r.result.status === 'blocked' && r.result.phases.some((p) => p.phase === 'Verify'
+      && /needs 500 min; its limit is 120 min \(agent_timeout_ms\)/.test(p.summary)), `status ${r.result.status}`);
+    const told = async (ms) => (await run({ mode: 'feature', task: 't', agent_timeout_ms: ms })).calls
+      .find((c) => c.key === 'verify_engineer:verify').ins.time_limit_min;
+    check(await told(0) === 0 && await told(20000) === 1, 'no limit reads 0, and a short one never does');
+  }],
+  ['feature: when the task\'s client does not run the source\'s scenarios, the run stops at Spec and asks; nothing is built', async () => {
+    const gap = "vLLM's PR measured 256-token answers at concurrency 1; the task's client runs 8k in / 1k out.";
+    const fallback = `${RUN}/scripts/fallback_client.sh`;
+    const spec = (extra) => () => ({ spec_path: `${RUN}/feature_spec.md`, gates_measurable: true, perf_claim: '+30% output tok/s', workload_gap: gap, ...extra });
+    const r = await run({ mode: 'feature', task: 't', workload: '8k/1k c64', client_script: '/s/client.sh' },
+      { 'director:spec': spec({ fallback_client: fallback }) });
+    check(r.result.status === 'needs_input' && r.result.stopped_at === 'Spec', `status ${r.result.status} at ${r.result.stopped_at}`);
+    check(!r.keys.includes('analyst:recon') && !r.keys.includes('implementer:implement') && r.keys.includes('director:report'),
+      `nothing built, the run directory reported: ${r.keys}`);
+    const n = r.result.next || {};
+    const q = (n.ask || [])[0] || {};
+    check(q.field === 'client_script' && String(q.question).startsWith(gap) && eqList(q.options, [fallback]), `the question: ${JSON.stringify(q)}`);
+    check(n.rerun_with && n.rerun_with.client_script === '' && 'client_script' in (n.rerun_with.answers || {}),
+      `the answer replaces the task's client: ${JSON.stringify(n.rerun_with)}`);
+    const taken = await run({ mode: 'feature', task: 't', exp_root: path.dirname(RUN), client_script: fallback }, { 'director:spec': spec({}) });
+    const perf = taken.calls.find((c) => c.key === 'perf_engineer:perf_eval');
+    check(taken.result.status === 'ready_for_review' && perf && !perf.ins.claim,
+      `InferPilot's own client, once taken, is measured and reported, never claimed: ${taken.result.status}, claim ${perf && perf.ins.claim}`);
   }],
   ['feature: with auto_approve_design false, L3 waits for a human-approved design', async () => {
     const r = await run({ mode: 'feature', task: 't', auto_approve_design: false }, {

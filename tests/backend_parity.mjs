@@ -176,6 +176,17 @@ return { status: 'done' };`);
     const why = (r) => (/(?:claude|cursor) \[slow\] (timed out after \d+ s)/.exec(r.err) || [])[1];
     check(why(c) && why(c) === why(k), `the same reason: ${why(c)} | ${why(k)}`);
   }],
+  ['the script gets the runner\'s --agent-timeout-ms as its agent_timeout_ms, unless it gave a shorter one', async () => {
+    const script = path.join(TMP, 'limit.js');
+    writeFileSync(script, `export const meta = { name: 'limit', description: 'the limit a script gets', phases: [] };
+return { got: args.agent_timeout_ms === undefined ? null : args.agent_timeout_ms };`);
+    const got = async (args, flags) => ((await runOn('claude', script, args, { flags })).result || {}).got;
+    check(await got({}, []) === null, 'without the flag the script keeps its own');
+    for (const [args, want] of [[{}, 400], [{ agent_timeout_ms: 100 }, 100], [{ agent_timeout_ms: 1000 }, 400], [{ agent_timeout_ms: 0 }, 400]]) {
+      const g = await got(args, ['--agent-timeout-ms', '400']);
+      check(g === want, `${JSON.stringify(args)} under --agent-timeout-ms 400: ${g}, not ${want}`);
+    }
+  }],
   ['the log ends with what comes next, alike on both backends, and each run it names gets its arguments file', async () => {
     const cases = [['scan', taskArgs({ mode: 'scan', framework_dir: '' }), 'start-1'], ['perf', taskArgs({ mode: 'perf', task: 'p', workload: '' }), 'again']];
     for (const [name, args, tag] of cases) {

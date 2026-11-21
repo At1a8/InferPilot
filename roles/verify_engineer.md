@@ -11,41 +11,46 @@ read from the task worktree.
 ## PHASE=verify
 
 Inputs: `extra_gates` (mode gates such as `issue_repro` or `failing_test`), `round`, `known_issues`
-(failures already proven pre-existing in this run), `time_limit_min` (when this call is killed, in
-minutes from its start; 0: never).
+(failures already proven pre-existing in this run), `time_limit_min` (minutes from this call's start
+after which InferPilot stops waiting and never reads the answer; 0: no limit).
 
 1. Launch the feature build and the baseline with the task's `server_script` as Setup did (the feature
    arm's flags in `EXTRA_ARGS`, each arm's tree on `PYTHONPATH`; the run's own launch script when the
    task has none); confirm the effective flags from the `server_args=` line of each log.
-2. Run the gates the spec or the plan names, in this order, each against the baseline **in the same
-   scheduling pattern**:
-   - G0 feature off; G2 accuracy with `<inferpilot_dir>/scripts/eval_accuracy.sh`, once per arm, every
-     set at most 1 point below the baseline, with no token-level comparison: gsm8k (1319), and
-     gpqa_diamond and simple_qa as well (all through evalscope) when `goal` says the change may lose
-     accuracy; a set that misses is reproduced at most twice and
-     judged on the median of its runs (other suites or more runs only when `goal` or the acceptance
-     matrix asks); G3 long context sized so the feature engages; G4 stability under capacity
-     pressure. G3/G4 at two or more concurrencies, at least 4 runs each (6 when an intermittent failure
-     is being judged), fixed seeds, prefix cache flushed between runs.
-   - Composability gates for every dimension the task touches (acceptance length for speculative
-     decoding, accuracy bounds per KV dtype, PD transfer checks).
-   - Every gate in `extra_gates`: `issue_repro` (the reproduction no longer fails), `failing_test`
-     (the failing CI test passes on every lane it failed on).
-   - **Cheap first, and fail fast.** G0 and gsm8k take minutes, G3 and G4 an hour: a blocking gate that
-     fails ends the round, and the gates after it are reported `not run`. The long suites (gpqa_diamond,
-     simple_qa, sets the goal adds, long-context sets) run only once every other gate of the round has
-     passed.
-   - **Time caps,** unless the spec names others: G0 30 min, gsm8k 1 h, gpqa_diamond and simple_qa 4 h
-     each, G3 and G4 60 min each, a suite the goal adds 4 h. A suite past its cap is stopped (the server
-     too) and its gate fails as a hang, with how far it got. The whole round also ends 30 minutes before
-     `time_limit_min`, which leaves time for the ledger and the answer: a killed call reports nothing. A
-     suite that could not finish within what is left is not started; its gate fails with
-     `failure_class` `time`, which is never investigated: the run stops and says to raise
-     `agent_timeout_ms`.
+2. Run the gates the spec or the plan names, each against the baseline **in the same scheduling
+   pattern**, in this order. A blocking gate that fails ends the round, and the gates after it are
+   reported `not run`; a report-only item that misses stops nothing.
+   - **gsm8k (1319) first**, G2's first set, with `<inferpilot_dir>/scripts/eval_accuracy.sh`: once per
+     arm, at most 1 point below the baseline, with no token-level comparison.
+   - G0 feature off; every gate in `extra_gates`: `issue_repro` (the reproduction no longer fails),
+     `failing_test` (the failing CI test passes on every lane it failed on); composability gates for every
+     dimension the task touches (acceptance length for speculative decoding, accuracy bounds per KV dtype,
+     PD transfer checks).
+   - G3 long context sized so the feature engages; G4 stability under capacity pressure. G3/G4 at two or
+     more concurrencies, at least 4 runs each (6 when an intermittent failure is being judged), fixed
+     seeds, prefix cache flushed between runs.
+   - **Other data sets last, one after another, and only when `goal` or the acceptance matrix asks:**
+     gpqa_diamond and simple_qa (through evalscope) when `goal` says the change may lose accuracy, and the
+     sets the goal adds; each once per arm, at most 1 point below the baseline.
+   - A set that misses is reproduced at most twice and judged on the median of its runs.
    - **Report-only items** of the acceptance matrix run like the others; one that misses is listed in
      `failures` with `blocking: false`, never investigated, and `all_pass` counts the blocking ones only.
-3. Classify every failure with the failure taxonomy (collapse / mild deviation / empty output / crash)
-   and count each class per run. Attach engagement evidence (feature counters, log lines).
+   - **Time comes from this run's measurements, never from a fixed cap.** A suite on the feature arm may
+     take three times what the same suite took on the baseline (at Setup, or on the baseline arm of this
+     round); past that it is stopped and its gate fails as `slow`, with both times: a regression, which is
+     investigated. A server that makes no progress (no request completes, its log adds nothing) for three
+     times the longest such pause on the baseline is hung: it is stopped, and its gate fails as a hang,
+     with how far it got.
+   - **The round fits in `time_limit_min`, or says what it needs.** With `time_limit_min` above 0, the
+     round ends 30 minutes before it, which leaves time for the ledger and the answer. Estimate the round
+     before its first suite, from the times Setup measured (a suite Setup did not run, from its size in
+     the spec), and again before each suite, from the times of this round. When the rest does not fit,
+     start nothing more and return `all_pass` false with `needs_min`: the limit, in minutes from the
+     round's start, that the whole round needs (the estimate and half as much again, and the 30 minutes).
+     InferPilot runs the round again with that limit, once; nobody is asked to choose a time.
+3. Classify every failure with the failure taxonomy (collapse / mild deviation / empty output / crash or
+   hang; `slow` for a suite past its limit) and count each class per run. Attach engagement evidence
+   (feature counters, log lines).
 4. A failure that matches an entry in `known_issues` at the baseline's rate does not fail the gate; a
    rate or a class beyond the baseline's does.
 5. Record everything in the Run log and Controls sections of `RUN_DIR/experiment_ledger.md`.
@@ -58,3 +63,6 @@ Return:
  "failures": [{"gate": "G4", "failure_class": "catastrophic collapse", "counts": "25/32, 31/32, 24/32, 30/32", "evidence": "/abs/RUN_DIR/logs/g4_*.json", "blocking": true}],
  "ledger_path": "/abs/RUN_DIR/experiment_ledger.md", "summary": "<one line per gate>"}
 ```
+
+A round that stopped for time adds `"needs_min": <minutes>`; it has no blocking failure, and the gates it
+did not run are `not run`.
