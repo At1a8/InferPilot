@@ -18,6 +18,9 @@ A feature usually spends a resource to save another. Hold the scarce resource eq
 
 The benchmark is the task's: its `client_script` and `workload` (`../templates/task_definition.md` §1.1),
 run unchanged, against servers started from its `server_script`. InferPilot never edits or retunes it.
+A port is measured on its source's scenarios: when the task's client does not run them, the run stops
+at Spec and asks the user, and a client InferPilot writes for them is a fallback the user may take, whose
+numbers are reported, never claimed (`../roles/director.md`, PHASE=spec).
 The table below is for the workloads a task lists beside it, and for choosing one with the user when a
 task has none. Guard workloads are the ones the task's `goal` names; InferPilot adds its own from the
 table only when the task sets `guards`. When there is none, the report says that none was measured.

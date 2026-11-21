@@ -74,7 +74,12 @@ const TIMEOUT_GIVEN = RAW.agent_timeout_ms != null && String(RAW.agent_timeout_m
 const AGENT_TIMEOUT_MS = int(RAW.agent_timeout_ms, 3 * 3600 * 1000);
 // Roles that run whole suites or benchmarks get twice the default, unless a timeout is given.
 const LONG_ROLES = new Set(['verify_engineer', 'perf_engineer', 'investigator']);
-const timeoutFor = (role) => (!TIMEOUT_GIVEN && LONG_ROLES.has(role) ? 2 * AGENT_TIMEOUT_MS : AGENT_TIMEOUT_MS);
+// A longer limit InferPilot gave a role that showed it needs one (verifyLoop); never past a given timeout.
+const GRANTED_MS = {};
+const timeoutFor = (role) => GRANTED_MS[role]
+  || (!TIMEOUT_GIVEN && LONG_ROLES.has(role) ? 2 * AGENT_TIMEOUT_MS : AGENT_TIMEOUT_MS);
+// What a role is told of its limit: 0 only when there is none.
+const minutes = (ms) => (ms > 0 ? Math.max(1, Math.floor(ms / 60000)) : 0);
 // One task per machine (scripts/run_lock.py): a run that wrote nothing in its run directory for twice
 // its longest agent call has died, and its lock may be taken over.
 const MAX_CALL_MS = TIMEOUT_GIVEN ? AGENT_TIMEOUT_MS : 2 * AGENT_TIMEOUT_MS;
@@ -526,8 +531,9 @@ const SETUP = S({
   gpu_ids: str, // the GPU set every later role uses
   notes: str,
 }, ['lock', 'run_dir', 'baseline_status', 'gpu_ids']);
-const SPEC = S({ spec_path: str, gates_measurable: bool, perf_claim: str, skill: str, notes: str },
-  ['spec_path', 'gates_measurable']);
+// workload_gap: the task's client does not run the scenarios the source measured its gain on; the run asks.
+const SPEC = S({ spec_path: str, gates_measurable: bool, perf_claim: str, skill: str, notes: str,
+  workload_gap: str, fallback_client: str }, ['spec_path', 'gates_measurable']);
 const RECON = S({
   design_path: str,
   subsystems: arr(S({ name: str, files: strs, hook: str }, ['name'])),
@@ -639,7 +645,9 @@ const ROLLBACK = S({ wp: str, reset_to: str, clean: bool }, ['reset_to', 'clean'
 const VERIFY = S({
   all_pass: bool,
   gates: obj,
-  failures: arr(S({ gate: str, failure_class: str, counts: str, evidence: str }, ['gate'])),
+  // blocking false: a report-only item of the acceptance matrix, which is reported and never investigated
+  failures: arr(S({ gate: str, failure_class: str, counts: str, evidence: str, blocking: bool }, ['gate'])),
+  needs_min: num, // the round stopped before a suite that would not fit: the limit it needs, from its start
   ledger_path: str,
   summary: str,
 }, ['all_pass', 'failures']);
@@ -814,6 +822,14 @@ function nextSteps(status, at) {
   } else if (status === 'busy') {
     out.say = `${last || 'Another InferPilot task holds this machine'}. Run again when it ends; python3 scripts/run_lock.py status names it.`;
     out.rerun_with = {};
+  } else if (status === 'needs_input' && at === 'Spec') {
+    const fallback = (((R.questions || [])[0] || {}).options || [])[0];
+    out.say = `The run stopped at Spec: ${last}. Give a client that runs the source's scenarios${fallback
+      ? `, or take InferPilot's own (${fallback}): it need not reproduce the source's numbers, so what it measures is reported, never a gate` : ''}. `
+      + `To measure the task's own workload anyway, or to go on without a performance claim, say so in goal and run the task again.${report}`;
+    out.ask = R.questions;
+    // The answer replaces the client the task gave, which would otherwise win over it.
+    out.rerun_with = { client_script: '', answers: { client_script: null } };
   }
   const user = [];
   if (status === 'ready_for_review' && R.pr) user.push(R.pr.push_command || `push ${R.pr.branch}: the report has the command`);
@@ -865,6 +881,17 @@ function askImage(img) {
       ask: questions, rerun_with: { answers: { image_ok: true } } } });
   log(`[inferpilot] mode=${MODE} status=needs_input: ${why}`);
   return R;
+}
+
+// A port is measured on its source's scenarios with the user's own server and client: when the task's
+// client does not run them, the run stops at Spec and asks, before anything is built on a workload nobody gave.
+function askWorkload(spec) {
+  const gap = String(spec.workload_gap).trim();
+  const fallback = String(spec.fallback_client || '').trim();
+  note('Spec', 'needs_input', gap);
+  R.questions = [{ field: 'client_script', question: `${gap} Which client runs the source's scenarios against the server (absolute path)?`,
+    why: "a port is measured on its source's scenarios with the user's own server and client", ...(fallback ? { options: [fallback] } : {}) }];
+  return finish('needs_input', 'Spec');
 }
 
 // true, false, 'busy' when another InferPilot task holds the machine, or {ask} when the image check stopped
@@ -980,18 +1007,37 @@ async function implementAll(wps) {
 async function verifyLoop(extraGates) {
   for (let round = 0; ; round++) {
     enter('Verify');
-    const v = await call('verify_engineer', 'verify', inputs({ extra_gates: extraGates || [], round }),
-      VERIFY, `verify_engineer#${round}`);
+    // A round that stopped before a suite that would not fit runs again, once, with the limit it asked for;
+    // nobody is asked to choose a time. A timeout the user gave stays the limit.
+    let v = null;
+    for (let again = false; ; again = true) {
+      const limit = minutes(timeoutFor('verify_engineer'));
+      v = await call('verify_engineer', 'verify', inputs({ extra_gates: extraGates || [], round, time_limit_min: limit }),
+        VERIFY, `verify_engineer#${round}${again ? '+time' : ''}`);
+      const needs = limit && v && v.all_pass !== true && !(v.failures || []).some((f) => f.blocking !== false)
+        ? Math.ceil(Number(v.needs_min) || 0) : 0;
+      if (!needs) break;
+      if (again || TIMEOUT_GIVEN) {
+        note('Verify', 'fail', `the round needs ${needs} min; its limit is ${limit} min (${again ? 'the limit it asked for' : 'agent_timeout_ms'})`);
+        return { ok: false, reason: `out of time: the round needs ${needs} min` };
+      }
+      const grant = Math.max(needs, limit);
+      GRANTED_MS.verify_engineer = grant * 60000;
+      note('Verify', 'more_time', `the round needs ${needs} min and had ${limit}: run again with a ${grant}-min limit`);
+    }
     if (!v) {
       note('Verify', 'fail', 'the verify engineer returned nothing');
       return { ok: false, reason: 'no verification result' };
     }
     if (v.ledger_path) C.ledger_path = v.ledger_path;
-    if (v.all_pass === true) {
-      note('Verify', 'pass', v.summary || 'all gates pass');
+    const failures = v.failures || [];
+    const blocking = failures.filter((f) => f.blocking !== false);
+    if (v.all_pass === true || (failures.length && !blocking.length)) {
+      const missed = failures.filter((f) => f.blocking === false).map((f) => f.gate).join(', ');
+      note('Verify', 'pass', `${v.summary || 'all blocking gates pass'}${missed ? `; report-only items missed: ${missed}` : ''}`);
       return { ok: true };
     }
-    const failing = (v.failures || []).map((f) => `${f.gate}${f.failure_class ? `:${f.failure_class}` : ''}`).join(', ');
+    const failing = blocking.map((f) => `${f.gate}${f.failure_class ? `:${f.failure_class}` : ''}`).join(', ');
     note('Verify', 'fail', failing || v.summary || 'gates failed');
     if (round >= MAX_INVESTIGATE) return { ok: false, reason: `investigation budget exhausted (${failing})` };
 
@@ -999,7 +1045,7 @@ async function verifyLoop(extraGates) {
     const integratedKernels = R.handoffs.filter((h) => h.status === 'integrated')
       .map((h) => ({ handoff: h.id, wp: h.integrated_wp, commit: h.commit }));
     const inv = await call('investigator', 'investigate',
-      inputs({ failures: v.failures || [], round, integrated_kernels: integratedKernels }),
+      inputs({ failures: blocking, round, integrated_kernels: integratedKernels }),
       INVESTIGATE, `investigator#${round}`);
     if (!inv) {
       note('Investigate', 'fail', 'the investigator returned nothing');
@@ -1259,6 +1305,10 @@ async function deliver(wps, extraGates, perfClaim, runPerf) {
 async function runFeature() {
   const early = await start(true);
   if (early) return early;
+  // The client InferPilot wrote for the source's scenarios, taken by the user when Spec asked, need not
+  // reproduce the source's numbers: what it measures is reported, never a claim.
+  const fallback = C.client_script.startsWith(`${EXP_ROOT}/`) && /\/scripts\/fallback_client\.\w+$/.test(C.client_script);
+  const claimOf = (c) => (fallback ? '' : c || '');
 
   // Resume after a human approved design.md (a run that stopped at Design).
   if (RESUME === 'implement') {
@@ -1273,7 +1323,7 @@ async function runFeature() {
       return finish('blocked', 'Design');
     }
     note('Design', 'approved', `${approved.work_packages.length} work package(s) from the approved design`);
-    return deliver(approved.work_packages, [], approved.perf_claim || '', true);
+    return deliver(approved.work_packages, [], claimOf(approved.perf_claim), true);
   }
 
   enter('Spec');
@@ -1283,6 +1333,7 @@ async function runFeature() {
     return finish('blocked', 'Spec');
   }
   C.spec_path = spec.spec_path;
+  if (!fallback && String(spec.workload_gap || '').trim()) return askWorkload(spec);
   note('Spec', 'pass', `${spec.spec_path}${spec.skill ? `; skill ${spec.skill}` : ''}`);
   if (stopHere('Spec')) return finish('stopped', 'Spec');
 
@@ -1317,7 +1368,7 @@ async function runFeature() {
       + ` that no human gave; ${C.design_path} goes to the PR's reviewer${design.summary ? `; ${design.summary}` : ''}`);
   }
 
-  return deliver(design.work_packages, [], spec.perf_claim || '', true);
+  return deliver(design.work_packages, [], claimOf(spec.perf_claim), true);
 }
 
 async function runIssue() {

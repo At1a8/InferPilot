@@ -97,7 +97,8 @@ asked for, the newest daily one or the resumed run's) and `verdict` (`mismatch`,
      inference); other suites or more runs only when `goal` asks. Never decide it yourself.
      Performance is the task's `client_script` with `OUT_DIR=RUN_DIR/bench/<tag>`, at least twice, and
      the spread recorded (`validation_doctrine.md`). The baseline passes when repeat runs agree within
-     the recorded spread.
+     the recorded spread. Record how long each launch, set and client run took: the verify engineer's
+     time limits come from them.
    - `perf`, and a feature with a workload: the `client_script` and `workload` are the task's fixed
      benchmark. Record them in `RUN_DIR/run.json` as given; every later measurement runs them unchanged.
      With `held_out` on, record the held-out operating point next to them (`perf_evaluation.md` §3:
@@ -119,7 +120,26 @@ Return:
 ## PHASE=spec (feature)
 
 1. Identify the source of truth (upstream PR, design or paper) and its commit; list unmerged
-   dependencies and the commits to cherry-pick.
+   dependencies and the commits to cherry-pick. Write down the scenarios it reports: data sets, input
+   and output lengths, concurrency, sampling, thinking on or off, hardware and its numbers. **A port is
+   measured on the source's own scenarios, with the user's server and client.** Its claim is a gain
+   beyond the noise band there, with the source's numbers beside it for reference: the hardware differs,
+   and so may the size of the gain. The feature's own metric, which the hardware does not change (accept
+   length for speculative decoding), stays within a tolerance of the source's that the spec names.
+   - **The user's workload, or a question.** When the source claims a gain, `goal` neither names the
+     task's own workload nor drops the claim, and the task's `client_script` does not run the source's
+     scenarios (there is none, or it runs others), return `workload_gap`: what the source measured, what
+     the task's client runs, what is missing. The run then stops and asks the user; nothing is built on a
+     workload the user did not give. A client of your own for the source's scenarios is only a fallback
+     the user may take: write it to `RUN_DIR/scripts/fallback_client.sh` and return it as
+     `fallback_client`. It need not reproduce the source's numbers, so what it measures is reported,
+     never a claim; once the user takes it (`client_script`), there is no gap to return.
+   - **Out of scope by default.** A scenario the source did not consider, the task's own workload
+     included, is not measured unless `goal` names it; it goes under Non-goals with the reason (the
+     PARD-2 port: vLLM's PR measured 256-token answers at concurrency 1 and its drafts were trained on
+     1k-token sequences, so 8k/1k is no target). Read the documented range of every model the feature
+     uses (model cards and configs: the context a draft model was trained at,
+     `max_position_embeddings`, the checkpoint's precision) for that reason, in the Feasibility section.
 2. Select feature skills: `python3 <inferpilot_dir>/scripts/find_skill.py "<task title, request, goal>"`
    lists the candidates by tag; keep those whose `match` fits (`feature_skills/README.md`) and read a
    matching skill in full. A near match is the start of a port, not a plan to reuse blindly.
@@ -132,7 +152,7 @@ Return:
    workloads its `goal` names, nothing more by default: with `guards` on, add guard workloads of your
    own (`perf_evaluation.md` §2); with `sweep` on, points beyond the workload's own (more concurrencies
    or lengths, `acceptance.md` §1); with `held_out` on, the claim also names its held-out operating
-   point (`perf_evaluation.md` §3), fixed here with the workload.
+   point (`perf_evaluation.md` §3), fixed here with the workload. For a port, the claim is step 1's.
 5. Accuracy: the sets Setup measured, from `goal` (`acceptance.md` §1.1: gsm8k 1319, and gpqa_diamond
    and simple_qa when `goal` says the change may lose accuracy), each once per arm, at most 1 point below
    the baseline, with no token-level comparison (`validation_doctrine.md`, G2). Performance: one
@@ -145,7 +165,9 @@ Return:
 ```json
 {"spec_path": "/abs/RUN_DIR/feature_spec.md", "gates_measurable": true,
  "perf_claim": "+20% output tok/s vs HiCache-only at equal HBM, 32 x 30k tokens, c32 | ''",
- "skill": "hisparse-v2 (validated) | ''", "notes": "<anything not measurable and why>"}
+ "skill": "hisparse-v2 (validated) | ''", "notes": "<anything not measurable and why>",
+ "workload_gap": "<what the source measured, what the task's client runs, what is missing> | ''",
+ "fallback_client": "/abs/RUN_DIR/scripts/fallback_client.sh | ''"}
 ```
 
 `gates_measurable` is true only when every acceptance criterion names a suite and a threshold.

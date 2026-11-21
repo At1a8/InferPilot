@@ -35,7 +35,8 @@ Return:
 1. Read the diffs of the commits merged in the window that touch the failing test's import graph
    first; the common AMD breakages are listed in `ci_triage.md` §3.
 2. If reading does not settle it, `git bisect run` the failing test in a throwaway worktree.
-3. Confirm: the test fails at the culprit and passes at its parent, on the failing lane's image.
+3. Confirm: the test fails at the culprit and passes at its parent, on the failing lane's image. Record
+   how long it took where it passed: the verify engineer's time limits for the test come from it.
 4. Plan the fix forward as work packages; the package's `test` is the failing test. For a
    `dependency_bump`, the package pins or adapts and the triage record says what to report upstream.
 

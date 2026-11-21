@@ -576,13 +576,14 @@ node runtime/run.mjs inferpilot.js --backend cursor \
 | `tune` | `feature`, default `false`: the feature runs at the configuration of the target PR or design (for FLy, vLLM's window 2, threshold 0.3, top-k 3) and has to work there; `true` adds a work package that chooses its knobs by measurement |
 | `review_model` | the reviewer's model, passed with its agent call (InferPilot's runner gives it to the CLI as `--model`; in Claude Code it depends on the Workflow tool) |
 | `max_fix_rounds`, `max_investigate_rounds`, `max_review_rounds`, `max_work_packages` | budgets |
-| `agent_retries`, `agent_timeout_ms` | an agent call is retried after an error (the retry checks what the failed attempt left), never after a timeout: the timed-out agent may still be running, so it goes on the report's attention list, and its work package gets no further round and no rollback. Default timeout 3 h, 6 h for the verify and performance engineers and the investigator |
+| `agent_retries`, `agent_timeout_ms` | an agent call is retried after an error (the retry checks what the failed attempt left), never after a timeout: the timed-out agent may still be running, so it goes on the report's attention list, and its work package gets no further round and no rollback. Default timeout 3 h, 6 h for the verify and performance engineers and the investigator; a Verify round that needs longer says how long and gets it, once, unless `agent_timeout_ms` is given |
 
 Everything but `inferpilot_dir`, `request`, `answers`, `exp_root`, `review_model` and the budgets is the task
 definition; the result of every run that started records the definition it used (`task_def`), where
 each field came from (`provenance`) and the intake's `assumptions`.
 
-Human checkpoints: questions from the Intake (`needs_input`); any `stop_after`; with `auto_approve_design`
+Human checkpoints: questions from the Intake (`needs_input`), and from Spec when a port's client does not
+run its source's scenarios; any `stop_after`; with `auto_approve_design`
 set to `false`, L3 tasks and designs the architect flags stop at Design (`awaiting_design_review`; by
 default they go on, and the report says no human approved the design); a review the reviewer marks `blocked`
 stops before the PR; the PR engineer returns the exact `git push` instead of pushing; issue replies

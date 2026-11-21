@@ -8,6 +8,18 @@
 - Upstream design: <PR / paper / design doc link>, at commit <sha>
 - Dependencies that are not merged yet: <PR links, commits to cherry-pick>
 - Matching feature skill, if any: `knowledge/feature_skills/<id>/SKILL.md` (status: <validated / stale>)
+- Scenarios the source reports: <data sets, input / output lengths, concurrency, sampling, thinking,
+  hardware, and its numbers>; the port is measured on these with the user's server and client. Claim: a
+  gain beyond the noise band there, the source's numbers for reference; the feature's own metric (e.g.
+  accept length) within <tolerance> of the source's
+
+## Feasibility
+
+<!-- The documented range of each model the feature uses (model card, config: training context of a
+     draft model, max_position_embeddings, checkpoint precision) and the range the source was tested
+     on. A scenario outside the source's, the task's own workload included, is a non-goal unless the
+     goal names it: say why here and list it under Non-goals. A task whose client does not run the
+     source's scenarios stops at Spec and asks the user (`roles/director.md`, PHASE=spec). -->
 
 ## Target
 
