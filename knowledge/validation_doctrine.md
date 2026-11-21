@@ -24,8 +24,9 @@ Notes per gate:
 - **gsm8k first.** gsm8k (1319) runs before every other gate, and a blocking failure ends the round: an
   hour of long-context runs on a build that already fails accuracy is wasted. Other data sets run last,
   one after another, only when the goal or the matrix asks. No gate has a fixed time cap: every limit
-  comes from this run's own measurements (`roles/verify_engineer.md`). A report-only item that misses is
-  reported, never investigated, and stops nothing.
+  comes from this run's measurements of healthy runs, never from the arm that fails (an issue's or a
+  failing test's baseline), and a hang is judged on progress (`roles/verify_engineer.md`). A report-only
+  item that misses is reported, never investigated, and stops nothing.
 - **G2 does not prove a long-context feature works.** Short prompts may never engage it (HiSparse V2
   only admits requests longer than its 5120-token reservation; GSM8K prompts are ~1k tokens). G2 is a
   regression check for the non-feature path; G3 must exercise the feature path.

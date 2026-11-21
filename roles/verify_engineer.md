@@ -35,19 +35,25 @@ after which InferPilot stops waiting and never reads the answer; 0: no limit).
    - A set that misses is reproduced at most twice and judged on the median of its runs.
    - **Report-only items** of the acceptance matrix run like the others; one that misses is listed in
      `failures` with `blocking: false`, never investigated, and `all_pass` counts the blocking ones only.
-   - **Time comes from this run's measurements, never from a fixed cap.** A suite on the feature arm may
-     take three times what the same suite took on the baseline (at Setup, or on the baseline arm of this
-     round); past that it is stopped and its gate fails as `slow`, with both times: a regression, which is
-     investigated. A server that makes no progress (no request completes, its log adds nothing) for three
-     times the longest such pause on the baseline is hung: it is stopped, and its gate fails as a hang,
-     with how far it got.
+   - **Time comes from this run's measurements of healthy runs, never from a fixed cap, and never from the
+     arm that fails.** A suite's reference is a healthy run of the same work: for a feature, the baseline
+     arm (at Setup, or in this round); for `failing_test`, the test where it last passed (Bisect's run at
+     the culprit's parent, or its CI history); for `issue_repro`, the reproduction on a configuration that
+     does not trigger the issue, when there is one. A suite without a reference gets one first: a short,
+     timed run of the same kind of work (a server launch and a few requests) on a configuration known to
+     be healthy. On the arm under test a suite may take three times its reference, scaled to its size;
+     past that it is stopped and its gate fails as `slow`, with both times: a regression, which is
+     investigated.
+   - **A hang is judged on progress.** A run that makes no progress (no request completes, its log and
+     output add nothing) for three times the longest such pause in this run's healthy runs is hung, however
+     much of the round is left: it is stopped, and its gate fails as a hang, with how far it got.
    - **The round fits in `time_limit_min`, or says what it needs.** With `time_limit_min` above 0, the
      round ends 30 minutes before it, which leaves time for the ledger and the answer. Estimate the round
-     before its first suite, from the times Setup measured (a suite Setup did not run, from its size in
-     the spec), and again before each suite, from the times of this round. When the rest does not fit,
-     start nothing more and return `all_pass` false with `needs_min`: the limit, in minutes from the
-     round's start, that the whole round needs (the estimate and half as much again, and the 30 minutes).
-     InferPilot runs the round again with that limit, once; nobody is asked to choose a time.
+     before its first suite, from the references, and again before each suite, from the times of this
+     round. When the rest does not fit, start nothing more and return `all_pass` false with `needs_min`:
+     the limit, in minutes from the round's start, that the whole round needs (the estimate and half as
+     much again, and the 30 minutes). InferPilot runs the round again with that limit, once; nobody is
+     asked to choose a time. A suite that stopped making progress is a hang, never a reason for more time.
 3. Classify every failure with the failure taxonomy (collapse / mild deviation / empty output / crash or
    hang; `slow` for a suite past its limit) and count each class per run. Attach engagement evidence
    (feature counters, log lines).
